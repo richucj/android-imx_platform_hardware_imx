@@ -17,6 +17,8 @@
 #define LOG_TAG "android.hardware.power@-service.imx"
 #define ATRACE_TAG (ATRACE_TAG_POWER | ATRACE_TAG_HAL)
 
+#include "InteractionHandler.h"
+
 #include <fcntl.h>
 #include <poll.h>
 #include <sys/eventfd.h>
@@ -24,9 +26,8 @@
 #include <unistd.h>
 #include <utils/Log.h>
 #include <utils/Trace.h>
-#include <memory>
 
-#include "InteractionHandler.h"
+#include <memory>
 
 #define MAX_LENGTH 64
 
@@ -37,15 +38,15 @@ static const std::vector<std::string> fb_idle_patch = {"/sys/class/drm/card0/dev
                                                        "/sys/class/graphics/fb0/idle_state"};
 
 InteractionHandler::InteractionHandler(std::shared_ptr<HintManager> const &hint_manager)
-    : mState(INTERACTION_STATE_UNINITIALIZED),
-      mIdleFd(0),
-      mEventFd(0),
-      mWaitMs(100),
-      mMinDurationMs(1400),
-      mMaxDurationMs(5650),
-      mDurationMs(0),
-      mLastTimespec({0,0}),
-      mHintManager(hint_manager) {}
+      : mState(INTERACTION_STATE_UNINITIALIZED),
+        mIdleFd(0),
+        mEventFd(0),
+        mWaitMs(100),
+        mMinDurationMs(1400),
+        mMaxDurationMs(5650),
+        mDurationMs(0),
+        mLastTimespec({0, 0}),
+        mHintManager(hint_manager) {}
 
 InteractionHandler::~InteractionHandler() {
     Exit();

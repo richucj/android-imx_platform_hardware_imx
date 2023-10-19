@@ -17,25 +17,24 @@
 #ifndef EVS_VTS_STREAMHANDLER_H
 #define EVS_VTS_STREAMHANDLER_H
 
+#include <android/hardware/automotive/evs/1.1/IEvsCamera.h>
+#include <android/hardware/automotive/evs/1.1/IEvsCameraStream.h>
+#include <android/hardware/automotive/evs/1.1/IEvsDisplay.h>
+
 #include <queue>
 
 #include "ui/GraphicBuffer.h"
 
-#include <android/hardware/automotive/evs/1.1/IEvsCameraStream.h>
-#include <android/hardware/automotive/evs/1.1/IEvsCamera.h>
-#include <android/hardware/automotive/evs/1.1/IEvsDisplay.h>
-
 using namespace ::android::hardware::automotive::evs::V1_1;
+using ::android::sp;
+using ::android::hardware::hidl_handle;
+using ::android::hardware::hidl_vec;
 using ::android::hardware::Return;
 using ::android::hardware::Void;
-using ::android::hardware::hidl_vec;
-using ::android::hardware::hidl_handle;
-using ::android::sp;
 using ::android::hardware::automotive::evs::V1_1::IEvsDisplay;
 using EvsDisplayState = ::android::hardware::automotive::evs::V1_0::DisplayState;
 using BufferDesc_1_0  = ::android::hardware::automotive::evs::V1_0::BufferDesc;
 using BufferDesc_1_1  = ::android::hardware::automotive::evs::V1_1::BufferDesc;
-
 
 /*
  * StreamHandler:
@@ -48,7 +47,7 @@ class StreamHandler : public IEvsCameraStream {
 public:
     virtual ~StreamHandler() { shutdown(); };
 
-    StreamHandler(android::sp <IEvsCamera> pCamera);
+    StreamHandler(android::sp<IEvsCamera> pCamera);
     void shutdown();
 
     bool startStream();
@@ -63,27 +62,26 @@ public:
 
 private:
     // Implementation for ::android::hardware::automotive::evs::V1_0::IEvsCameraStream
-    Return<void> deliverFrame(const BufferDesc_1_0& buffer)  override;
+    Return<void> deliverFrame(const BufferDesc_1_0& buffer) override;
 
     // Implementation for ::android::hardware::automotive::evs::V1_1::IEvsCameraStream
-    Return<void> deliverFrame_1_1(const hidl_vec<BufferDesc_1_1>& buffer)  override;
+    Return<void> deliverFrame_1_1(const hidl_vec<BufferDesc_1_1>& buffer) override;
     Return<void> notify(const EvsEventDesc& event) override;
 
     // Values initialized as startup
-    android::sp <IEvsCamera>    mCamera;
+    android::sp<IEvsCamera> mCamera;
 
     // Since we get frames delivered to us asnchronously via the ICarCameraStream interface,
     // we need to protect all member variables that may be modified while we're streaming
     // (ie: those below)
-    std::mutex                  mLock;
-    std::condition_variable     mSignal;
+    std::mutex mLock;
+    std::condition_variable mSignal;
 
-    bool                        mRunning = false;
+    bool mRunning = false;
 
-    BufferDesc                  mBuffers[2];
-    int                         mHeldBuffer = -1;   // Index of the one currently held by the client
-    int                         mReadyBuffer = -1;  // Index of the newest available buffer
+    BufferDesc mBuffers[2];
+    int mHeldBuffer = -1;  // Index of the one currently held by the client
+    int mReadyBuffer = -1; // Index of the newest available buffer
 };
 
-
-#endif //EVS_VTS_STREAMHANDLER_H
+#endif // EVS_VTS_STREAMHANDLER_H

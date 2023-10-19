@@ -1,5 +1,6 @@
 /*
  * Copyright (C) 2018 The Android Open Source Project
+ * Copyright 2023 NXP
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -14,19 +15,9 @@
  * limitations under the License.
  */
 
-#include <algorithm>
-#include <string_view>
-
-#include <android-base/file.h>
-#include <android-base/logging.h>
-#include <android-base/strings.h>
 #include "thermal_files.h"
 
-namespace android {
-namespace hardware {
-namespace thermal {
-namespace V2_0 {
-namespace implementation {
+namespace aidl::android::hardware::thermal::impl::imx {
 
 std::string ThermalFiles::getThermalFilePath(std::string_view thermal_name) const {
     auto sensor_itr = thermal_name_to_path_map_.find(thermal_name.data());
@@ -58,8 +49,4 @@ bool ThermalFiles::readThermalFile(std::string_view thermal_name, std::string *d
     return true;
 }
 
-}  // namespace implementation
-}  // namespace V2_0
-}  // namespace thermal
-}  // namespace hardware
-}  // namespace android
+} // namespace aidl::android::hardware::thermal::impl::imx

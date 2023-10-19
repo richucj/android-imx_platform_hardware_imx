@@ -15,25 +15,26 @@
  */
 
 #define LOG_TAG "firmware_loader_client"
+#include <BufferAllocator/BufferAllocator.h>
+#include <android-base/logging.h>
+#include <android-base/unique_fd.h>
 #include <errno.h>
+#include <firmware_loader_client.h>
+#include <getopt.h>
+#include <log/log.h>
 #include <stdarg.h>
 #include <stdbool.h>
-#include <stdlib.h>
 #include <stdint.h>
+#include <stdlib.h>
 #include <string.h>
-#include <sys/uio.h>
-#include <sys/stat.h>
 #include <sys/mman.h>
 #include <sys/sendfile.h>
-#include <android-base/unique_fd.h>
-#include <android-base/logging.h>
-#include <BufferAllocator/BufferAllocator.h>
-#include <unistd.h>
-#include <algorithm>
-#include <firmware_loader_client.h>
-#include <log/log.h>
+#include <sys/stat.h>
+#include <sys/uio.h>
 #include <trusty/tipc.h>
-#include <getopt.h>
+#include <unistd.h>
+
+#include <algorithm>
 
 #define TRUSTY_DEVICE_NAME "/dev/trusty-ipc-dev0"
 
@@ -47,13 +48,12 @@ static const struct option _lopts[] = {
         {0, 0, 0, 0},
 };
 
-static const char* usage =
-        "Usage: %s [options] package-file\n"
-        "\n"
-        "options:\n"
-        "  -h, --help            prints this message and exit\n"
-        "  -D, --dev name        Trusty device name\n"
-        "\n";
+static const char* usage = "Usage: %s [options] package-file\n"
+                           "\n"
+                           "options:\n"
+                           "  -h, --help            prints this message and exit\n"
+                           "  -D, --dev name        Trusty device name\n"
+                           "\n";
 
 static void print_usage_and_exit(const char* prog, int code) {
     fprintf(stderr, usage, prog);
@@ -64,13 +64,13 @@ using android::base::unique_fd;
 using std::string;
 
 static unique_fd read_file(const char* file_name, off64_t* out_file_size) {
-   int rc;
-   long page_size = sysconf(_SC_PAGESIZE);
-   off64_t file_size, file_page_offset, file_page_size;
-   struct stat64 st;
+    int rc;
+    long page_size = sysconf(_SC_PAGESIZE);
+    off64_t file_size, file_page_offset, file_page_size;
+    struct stat64 st;
 
-   unique_fd file_fd(TEMP_FAILURE_RETRY(open(file_name, O_RDONLY)));
-   if (!file_fd.ok()) {
+    unique_fd file_fd(TEMP_FAILURE_RETRY(open(file_name, O_RDONLY)));
+    if (!file_fd.ok()) {
         ALOGE("Error opening file =%s", file_name);
         return {};
     }
@@ -112,7 +112,7 @@ static unique_fd read_file(const char* file_name, off64_t* out_file_size) {
                 pread(file_fd, (char*)shm + file_offset, file_size - file_offset, file_offset));
 
         if (num_read < 0) {
-            ALOGE("Error reading firmware file %s" ,file_name);
+            ALOGE("Error reading firmware file %s", file_name);
             break;
         }
 
@@ -180,8 +180,8 @@ static ssize_t read_response(int tipc_fd) {
         default:
             ALOGE("Unrecognized error: %d", resp.error);
             break;
-   }
-   return static_cast<ssize_t>(resp.error);
+    }
+    return static_cast<ssize_t>(resp.error);
 }
 
 ssize_t load_firmware_package(const char* firmware_file_name) {
@@ -197,7 +197,7 @@ ssize_t load_firmware_package(const char* firmware_file_name) {
 
     tipc_fd = tipc_connect(TRUSTY_DEVICE_NAME, FIRMWARE_LOADER_PORT);
     if (tipc_fd < 0) {
-        ALOGE("Failed to connect to firmware loader: %s",strerror(-tipc_fd));
+        ALOGE("Failed to connect to firmware loader: %s", strerror(-tipc_fd));
         ALOGE("Failed to connect to firmware loader: %s", strerror(-tipc_fd));
         rc = tipc_fd;
         goto err_tipc_connect;
@@ -220,11 +220,12 @@ err_read_file:
 
 static void parse_options(int argc, char** argv) {
     int c;
-    int oidx = 0;
 
     while (1) {
-        c = getopt_long(argc, argv, _sopts, _lopts, &oidx);
+        c = getopt_long(argc, argv, _sopts, _lopts, nullptr);
         if (c == -1) {
+            fprintf(stderr, "please input correct option parameters\n");
+            print_usage_and_exit(argv[0], EXIT_SUCCESS);
             break; /* done */
         }
 

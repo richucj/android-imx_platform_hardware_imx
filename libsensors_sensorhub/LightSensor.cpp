@@ -15,36 +15,35 @@
  * limitations under the License.
  */
 
-#include <fcntl.h>
-#include <errno.h>
-#include <math.h>
-#include <stdlib.h>
-#include <poll.h>
-#include <unistd.h>
-#include <dirent.h>
-#include <sys/select.h>
-#include <cutils/log.h>
-#include <cutils/properties.h>
-
 #include "LightSensor.h"
 
-//#define SENSOR_DEBUG
+#include <cutils/log.h>
+#include <cutils/properties.h>
+#include <dirent.h>
+#include <errno.h>
+#include <fcntl.h>
+#include <math.h>
+#include <poll.h>
+#include <stdlib.h>
+#include <sys/select.h>
+#include <unistd.h>
+
+// #define SENSOR_DEBUG
 
 #ifdef SENSOR_DEBUG
-#define DEBUG(format, ...) ALOGD((format), ## __VA_ARGS__)
+#define DEBUG(format, ...) ALOGD((format), ##__VA_ARGS__)
 #else
 #define DEBUG(format, ...)
 #endif
 
 /*****************************************************************************/
 LightSensor::LightSensor()
-    : SensorBase(NULL, "isl29023 light sensor"),
-      mEnabled(0),
-      mInputReader(4),
-      mHasPendingEvent(false),
-      mThresholdLux(10)
-{
-    char  buffer[PROPERTY_VALUE_MAX];
+      : SensorBase(NULL, "isl29023 light sensor"),
+        mEnabled(0),
+        mInputReader(4),
+        mHasPendingEvent(false),
+        mThresholdLux(10) {
+    char buffer[PROPERTY_VALUE_MAX];
 
     mPendingEvent.version = sizeof(sensors_event_t);
     mPendingEvent.sensor = ID_L;
@@ -70,21 +69,20 @@ LightSensor::~LightSensor() {
     }
 }
 
-int LightSensor::setDelay(__attribute__((unused))int32_t handle, __attribute__((unused))int64_t ns)
-{
-    //dummy due to not support in driver....
+int LightSensor::setDelay(__attribute__((unused)) int32_t handle,
+                          __attribute__((unused)) int64_t ns) {
+    // dummy due to not support in driver....
     return 0;
 }
 
-int LightSensor::enable(__attribute__((unused))int32_t handle, int en)
-{
+int LightSensor::enable(__attribute__((unused)) int32_t handle, int en) {
     char buf[2];
     int n;
     int flags = en ? 1 : 0;
 
     mPreviousLight = -1;
     if (flags != mEnabled) {
-        FILE *fd = NULL;
+        FILE* fd = NULL;
         strcpy(&ls_sysfs_path[ls_sysfs_path_len], "mode");
         fd = fopen(ls_sysfs_path, "r+");
 
@@ -108,9 +106,8 @@ int LightSensor::enable(__attribute__((unused))int32_t handle, int en)
     return 0;
 }
 
-int LightSensor::setIntLux()
-{
-    FILE *fd = NULL;
+int LightSensor::setIntLux() {
+    FILE* fd = NULL;
     char buf[6];
     int n, lux, int_ht_lux, int_lt_lux;
 
@@ -164,8 +161,7 @@ bool LightSensor::hasPendingEvents() const {
     return mHasPendingEvent;
 }
 
-int LightSensor::readEvents(sensors_event_t* data, int count)
-{
+int LightSensor::readEvents(sensors_event_t* data, int count) {
     if (count < 1)
         return -EINVAL;
 
@@ -199,8 +195,7 @@ int LightSensor::readEvents(sensors_event_t* data, int count)
                 mPreviousLight = mPendingEvent.light;
             }
         } else {
-            ALOGE("LightSensor: unknown event (type=%d, code=%d)",
-                    type, event->code);
+            ALOGE("LightSensor: unknown event (type=%d, code=%d)", type, event->code);
         }
         mInputReader.next();
     }
@@ -208,6 +203,5 @@ int LightSensor::readEvents(sensors_event_t* data, int count)
     return numEventReceived;
 }
 
-void LightSensor::processEvent(__attribute__((unused))int code, __attribute__((unused))int value)
-{
-}
+void LightSensor::processEvent(__attribute__((unused)) int code,
+                               __attribute__((unused)) int value) {}

@@ -13,32 +13,34 @@
  *  See the License for the specific language governing permissions and
  *  limitations under the License.
  */
-//#define LOG_NDEBUG 0
+// #define LOG_NDEBUG 0
 #define LOG_TAG "CameraDeviceSessionHwlImpl"
 
-#include "CameraUtils.h"
-#include "CameraMetadata.h"
 #include "CameraDeviceSessionHWLImpl.h"
-#include "ISPCameraDeviceHWLImpl.h"
-#include "ImageProcess.h"
 
+#include <binder/MemoryHeapBase.h>
+#include <hardware/camera3.h>
 #include <hardware/gralloc.h>
 #include <inttypes.h>
 #include <log/log.h>
-#include <utils/Trace.h>
-#include <binder/MemoryHeapBase.h>
-#include <hardware/camera3.h>
 #include <sync/sync.h>
+#include <utils/Trace.h>
 
-//using namespace fsl;
+#include "CameraMetadata.h"
+#include "CameraUtils.h"
+#include "ISPCameraDeviceHWLImpl.h"
+#include "ImageProcess.h"
+
+// using namespace fsl;
 using namespace cameraconfigparser;
 namespace android {
 
 static uint32_t importCount;
 static uint32_t freeCount;
-// ImportFence and closeFence are refed from hardware/interfaces/camera/common/1.0/default/HandleImporter.cpp.
-// If use functions from HandleImporter.cpp, will lead to add a series of libs.
-static int importFence(const native_handle_t* handle, bool debug) {
+// ImportFence and closeFence are refed from
+// hardware/interfaces/camera/common/1.0/default/HandleImporter.cpp. If use functions from
+// HandleImporter.cpp, will lead to add a series of libs.
+static int importFence(const native_handle_t *handle, bool debug) {
     if (handle == nullptr || handle->numFds == 0)
         return -1;
 
@@ -65,32 +67,29 @@ static void closeFence(int fd, bool debug) {
             ALOGI("freeFence, fd %d, importCount %u, freeCount %u", fd, importCount, freeCount);
 
         close(fd);
-
     }
 }
 
-static void  ItvlStat(uint64_t &preTime, char *name)
-{
+static void ItvlStat(uint64_t &preTime, char *name) {
     uint64_t curTime = systemTime();
 
     if (preTime > 0)
-        ALOGI("%s itvl is %ld ms", name, (curTime - preTime)/1000000);
+        ALOGI("%s itvl is %ld ms", name, (curTime - preTime) / 1000000);
 
     preTime = curTime;
 
     return;
 }
 
-std::unique_ptr<CameraDeviceSessionHwlImpl>
-CameraDeviceSessionHwlImpl::Create(
-    uint32_t camera_id, std::unique_ptr<HalCameraMetadata> pMeta, CameraDeviceHwlImpl *pDev, PhysicalMetaMapPtr physical_devices)
-{
+std::unique_ptr<CameraDeviceSessionHwlImpl> CameraDeviceSessionHwlImpl::Create(
+        uint32_t camera_id, std::unique_ptr<HalCameraMetadata> pMeta, CameraDeviceHwlImpl *pDev,
+        PhysicalMetaMapPtr physical_devices) {
     if (pMeta.get() == nullptr) {
         return nullptr;
     }
 
     auto session = std::unique_ptr<CameraDeviceSessionHwlImpl>(
-        new CameraDeviceSessionHwlImpl(std::move(physical_devices)));
+            new CameraDeviceSessionHwlImpl(std::move(physical_devices)));
     if (session == nullptr) {
         ALOGE("%s: Creating CameraDeviceSessionHwlImpl failed", __func__);
         return nullptr;
@@ -98,17 +97,16 @@ CameraDeviceSessionHwlImpl::Create(
 
     status_t res = session->Initialize(camera_id, std::move(pMeta), pDev);
     if (res != OK) {
-        ALOGE("%s: session->Initialize  failed: %s(%d)",
-                __func__, strerror(-res), res);
+        ALOGE("%s: session->Initialize  failed: %s(%d)", __func__, strerror(-res), res);
         return nullptr;
     }
 
     return session;
 }
 
-status_t CameraDeviceSessionHwlImpl::Initialize(
-    uint32_t camera_id, std::unique_ptr<HalCameraMetadata> pMeta, CameraDeviceHwlImpl *pDev)
-{
+status_t CameraDeviceSessionHwlImpl::Initialize(uint32_t camera_id,
+                                                std::unique_ptr<HalCameraMetadata> pMeta,
+                                                CameraDeviceHwlImpl *pDev) {
     int ret;
     camera_id_ = camera_id;
 
@@ -119,7 +117,8 @@ status_t CameraDeviceSessionHwlImpl::Initialize(
 
     m_meta = pDev->m_meta->Clone();
 
-    ALOGI("Initialize, meta %p, entry count %zu", static_metadata_.get(), static_metadata_->GetEntryCount());
+    ALOGI("Initialize, meta %p, entry count %zu", static_metadata_.get(),
+          static_metadata_->GetEntryCount());
 
     mDevPath = pDev->mDevPath;
     mPhysicalIds = pDev->mPhysicalIds;
@@ -128,15 +127,12 @@ status_t CameraDeviceSessionHwlImpl::Initialize(
     pVideoStreams.resize(mDevPath.size());
     for (int i = 0; i < (int)mDevPath.size(); ++i) {
         ALOGI("%s: create video stream for camera %s, buffer type %d, path %s, physical id %d",
-                __func__,
-                cam_metadata->camera_name,
-                cam_metadata->buffer_type,
-                *mDevPath[i],
-                mPhysicalIds[i]);
+              __func__, cam_metadata->camera_name, cam_metadata->buffer_type, *mDevPath[i],
+              mPhysicalIds[i]);
 
         if (strstr(cam_metadata->camera_name, UVC_NAME)) {
             pVideoStreams[i] = new UvcStream(*mDevPath[i], this);
-        } else if(strstr(cam_metadata->camera_name, ISP_SENSOR_NAME)) {
+        } else if (strstr(cam_metadata->camera_name, ISP_SENSOR_NAME)) {
             pVideoStreams[i] = new ISPCameraMMAPStream(this);
             ((ISPCameraMMAPStream *)pVideoStreams[i])->createISPWrapper(*mDevPath[i], &mSensorData);
         } else if (cam_metadata->buffer_type == CameraSensorMetadata::kMmap) {
@@ -144,18 +140,20 @@ status_t CameraDeviceSessionHwlImpl::Initialize(
         } else if (cam_metadata->buffer_type == CameraSensorMetadata::kDma) {
             pVideoStreams[i] = new DMAStream((bool)cam_metadata->mplane, this);
         } else {
-            ALOGE("%s: unsupported camera %s, or unsupported buffer type %d", __func__, cam_metadata->camera_name, cam_metadata->buffer_type);
+            ALOGE("%s: unsupported camera %s, or unsupported buffer type %d", __func__,
+                  cam_metadata->camera_name, cam_metadata->buffer_type);
             return BAD_VALUE;
         }
 
-        ALOGI("%s: VideoStream[%d] %p created, device path %s", __func__, i, pVideoStreams[i], *mDevPath[i]);
+        ALOGI("%s: VideoStream[%d] %p created, device path %s", __func__, i, pVideoStreams[i],
+              *mDevPath[i]);
 
         if (pVideoStreams[i] == NULL)
             return BAD_VALUE;
 
         ret = pVideoStreams[i]->openDev(*mDevPath[i]);
         if (ret) {
-            ALOGE("pVideoStreams[%d]->openDev failed, ret %d",i, ret);
+            ALOGE("pVideoStreams[%d]->openDev failed, ret %d", i, ret);
             return BAD_VALUE;
         }
 
@@ -170,11 +168,13 @@ status_t CameraDeviceSessionHwlImpl::Initialize(
         if ((ret == OK) && (logical_entry.count > 0)) {
             for (size_t i = 0; i < logical_entry.count; i++) {
                 for (const auto &it : *physical_meta_map_) {
-                    ret = it.second->Get(ANDROID_LENS_INFO_AVAILABLE_FOCAL_LENGTHS, &physical_entry);
+                    ret = it.second->Get(ANDROID_LENS_INFO_AVAILABLE_FOCAL_LENGTHS,
+                                         &physical_entry);
                     if ((ret == OK) && (physical_entry.count > 0)) {
                         if (logical_entry.data.f[i] == physical_entry.data.f[0]) {
                             physical_focal_length_map_[physical_entry.data.f[0]] = it.first;
-                            ALOGI("%s: current_focal_length_ camera id: %d\n", __FUNCTION__, it.first);
+                            ALOGI("%s: current_focal_length_ camera id: %d\n", __FUNCTION__,
+                                  it.first);
                             break;
                         }
                     }
@@ -224,9 +224,9 @@ status_t CameraDeviceSessionHwlImpl::Initialize(
     mSensorData = pDev->mSensorData;
 
     mPreviewResolutionCount = pDev->mPreviewResolutionCount;
-    memcpy(mPreviewResolutions, pDev->mPreviewResolutions, MAX_RESOLUTION_SIZE*sizeof(int));
+    memcpy(mPreviewResolutions, pDev->mPreviewResolutions, MAX_RESOLUTION_SIZE * sizeof(int));
     mPictureResolutionCount = pDev->mPictureResolutionCount;
-    memcpy(mPictureResolutions, pDev->mPictureResolutions, MAX_RESOLUTION_SIZE*sizeof(int));
+    memcpy(mPictureResolutions, pDev->mPictureResolutions, MAX_RESOLUTION_SIZE * sizeof(int));
 
     mMaxWidth = pDev->mMaxWidth;
     mMaxHeight = pDev->mMaxHeight;
@@ -237,8 +237,7 @@ status_t CameraDeviceSessionHwlImpl::Initialize(
     return OK;
 }
 
-CameraDeviceSessionHwlImpl::CameraDeviceSessionHwlImpl(PhysicalMetaMapPtr physical_devices)
-{
+CameraDeviceSessionHwlImpl::CameraDeviceSessionHwlImpl(PhysicalMetaMapPtr physical_devices) {
     ALOGI("%s: this %p", __func__, this);
 
     memset(&m3aState, 0, sizeof(m3aState));
@@ -258,16 +257,15 @@ CameraDeviceSessionHwlImpl::CameraDeviceSessionHwlImpl(PhysicalMetaMapPtr physic
     physical_meta_map_ = std::move(physical_devices);
 }
 
-CameraDeviceSessionHwlImpl::~CameraDeviceSessionHwlImpl()
-{
+CameraDeviceSessionHwlImpl::~CameraDeviceSessionHwlImpl() {
     ALOGI("%s: this %p, %p, %p", __func__, this, mWorkThread.get(), &mWorkThread);
 
-    if(mImgProcThread != NULL) {
+    if (mImgProcThread != NULL) {
         mImgProcThread->requestExitAndWait();
         ALOGI("%s, mImgProcThread exited", __func__);
     }
 
-    if(mWorkThread != NULL) {
+    if (mWorkThread != NULL) {
         mWorkThread->requestExitAndWait();
         ALOGI("%s, mWorkThread exited", __func__);
     }
@@ -285,18 +283,17 @@ CameraDeviceSessionHwlImpl::~CameraDeviceSessionHwlImpl()
     if (mJpegBuilder != NULL)
         mJpegBuilder.clear();
 
-    if(mSettings != NULL)
+    if (mSettings != NULL)
         mSettings.reset();
 
-    if(m_meta) {
+    if (m_meta) {
         delete m_meta;
         m_meta = NULL;
     }
     setDstPhyAddr.clear();
 }
 
-PipelineInfo* CameraDeviceSessionHwlImpl::GetPipelineInfo(uint32_t id)
-{
+PipelineInfo *CameraDeviceSessionHwlImpl::GetPipelineInfo(uint32_t id) {
     auto it = map_pipeline_info.find(id);
     if (it != map_pipeline_info.end())
         return it->second;
@@ -304,8 +301,7 @@ PipelineInfo* CameraDeviceSessionHwlImpl::GetPipelineInfo(uint32_t id)
     return NULL;
 }
 
-int CameraDeviceSessionHwlImpl::HandleIntent(HwlPipelineRequest *hwReq)
-{
+int CameraDeviceSessionHwlImpl::HandleIntent(HwlPipelineRequest *hwReq) {
     camera_metadata_ro_entry entry;
     int ret = 0;
     int retSceneMode = 0;
@@ -350,47 +346,49 @@ int CameraDeviceSessionHwlImpl::HandleIntent(HwlPipelineRequest *hwReq)
 
     PipelineInfo *pipeline_info = GetPipelineInfo(pipeline_id);
     if (pipeline_info == NULL) {
-        ALOGW("%s: Unexpected, pipeline %d is invalid",__func__, pipeline_id);
+        ALOGW("%s: Unexpected, pipeline %d is invalid", __func__, pipeline_id);
         return 0;
     }
 
-    //TODO need to refine for logical's configIdx ?
-    if(is_logical_request_) {
+    // TODO need to refine for logical's configIdx ?
+    if (is_logical_request_) {
         auto stat = hwReq->settings->Get(ANDROID_LENS_FOCAL_LENGTH, &entry);
         if ((stat == OK) && (entry.count == 1)) {
             current_focal_length_ = entry.data.f[0];
-            ALOGI("%s: requests' focal length set: %5.2f",__FUNCTION__, entry.data.f[0]);
+            ALOGI("%s: requests' focal length set: %5.2f", __FUNCTION__, entry.data.f[0]);
         } else {
             ALOGW("%s: Focal length absent from request!", __FUNCTION__);
         }
 
         ret = 0;
         for (size_t index = 0; index < pVideoStreams.size(); index++) {
-            pVideoStreams[index]->SetBufferNumber(pipeline_info->hal_streams->at(0).max_buffers + 1);
+            pVideoStreams[index]->SetBufferNumber(pipeline_info->hal_streams->at(0).max_buffers +
+                                                  1);
             ret += pVideoStreams[index]->ConfigAndStart(HAL_PIXEL_FORMAT_YCbCr_422_I,
-                                        pipeline_info->streams->at(0).width,
-                                        pipeline_info->streams->at(0).height,
-                                        fps, captureIntent, sceneMode);
+                                                        pipeline_info->streams->at(0).width,
+                                                        pipeline_info->streams->at(0).height, fps,
+                                                        captureIntent, sceneMode);
             if (ret)
-                ALOGE("%s: pVideoStreams[%zu]->ConfigAndStart failed, ret %d", __func__, index, ret);
+                ALOGE("%s: pVideoStreams[%zu]->ConfigAndStart failed, ret %d", __func__, index,
+                      ret);
         }
     } else {
-        pVideoStreams[0]->SetBufferNumber(pipeline_info->hal_streams->at(configIdx).max_buffers + 1);
+        pVideoStreams[0]->SetBufferNumber(pipeline_info->hal_streams->at(configIdx).max_buffers +
+                                          1);
 
         uint32_t format = HAL_PIXEL_FORMAT_YCbCr_422_I;
         if (strcmp(mSensorData.v4l2_format, "nv12") == 0)
             format = HAL_PIXEL_FORMAT_YCbCr_420_SP;
 
-        if(pipeline_info->hal_streams->at(configIdx).override_format == HAL_PIXEL_FORMAT_RAW16) {
+        if (pipeline_info->hal_streams->at(configIdx).override_format == HAL_PIXEL_FORMAT_RAW16) {
             format = HAL_PIXEL_FORMAT_RAW16;
         }
 
-
-        // v4l2 hard code to use yuv422i. If in future other foramts are used, need refine code, maybe configed in json
-        ret = pVideoStreams[0]->ConfigAndStart(format,
-                                            pipeline_info->streams->at(configIdx).width,
-                                            pipeline_info->streams->at(configIdx).height,
-                                            fps, captureIntent, sceneMode);
+        // v4l2 hard code to use yuv422i. If in future other foramts are used, need refine code,
+        // maybe configed in json
+        ret = pVideoStreams[0]->ConfigAndStart(format, pipeline_info->streams->at(configIdx).width,
+                                               pipeline_info->streams->at(configIdx).height, fps,
+                                               captureIntent, sceneMode);
         if (ret)
             ALOGE("%s: pVideoStreams[0]->ConfigAndStart failed, ret %d", __func__, ret);
     }
@@ -398,11 +396,9 @@ int CameraDeviceSessionHwlImpl::HandleIntent(HwlPipelineRequest *hwReq)
     return ret;
 }
 
+#define WAIT_TIME_OUT 100000000LL // unit ns, wait 100ms
 
-#define WAIT_TIME_OUT 100000000LL  // unit ns, wait 100ms
-
-void CameraDeviceSessionHwlImpl::DumpRequest()
-{
+void CameraDeviceSessionHwlImpl::DumpRequest() {
     ALOGI("%s: map_frame_request size %zu", __func__, map_frame_request.size());
 
     for (auto it = map_frame_request.begin(); it != map_frame_request.end(); it++) {
@@ -411,8 +407,7 @@ void CameraDeviceSessionHwlImpl::DumpRequest()
     }
 }
 
-void CameraDeviceSessionHwlImpl::ReleaseFrameRequest(FrameRequest &frameRequest)
-{
+void CameraDeviceSessionHwlImpl::ReleaseFrameRequest(FrameRequest &frameRequest) {
     HwlPipelineRequest &hwReq = frameRequest.hwlReq;
 
     // clear hwReq
@@ -435,12 +430,11 @@ void CameraDeviceSessionHwlImpl::ReleaseFrameRequest(FrameRequest &frameRequest)
     return;
 }
 
-int CameraDeviceSessionHwlImpl::HandleRequest()
-{
+int CameraDeviceSessionHwlImpl::HandleRequest() {
     mLock.lock();
 
     if (mDebug)
-       DumpRequest();
+        DumpRequest();
 
     if (map_frame_request.empty()) {
         ALOGV("map_frame_request empty, wait");
@@ -471,17 +465,14 @@ int CameraDeviceSessionHwlImpl::HandleRequest()
     for (uint32_t i = 0; i < reqNum; i++) {
         FrameRequest *frameRequest = &(request->at(i));
         HwlPipelineRequest *hwReq = &(request->at(i).hwlReq);
-        std::vector<FenceFdInfo> outFences  = request->at(i).outBufferFences;
+        std::vector<FenceFdInfo> outFences = request->at(i).outBufferFences;
         uint32_t pipeline_id = hwReq->pipeline_id;
-        ALOGV("%s: request: pipeline_id %d, output buffer num %d, meta %p",
-                __func__,
-                (int)pipeline_id,
-                (int)hwReq->output_buffers.size(),
-                hwReq->settings.get());
+        ALOGV("%s: request: pipeline_id %d, output buffer num %d, meta %p", __func__,
+              (int)pipeline_id, (int)hwReq->output_buffers.size(), hwReq->settings.get());
 
         PipelineInfo *pInfo = GetPipelineInfo(pipeline_id);
-        if(pInfo == NULL) {
-            ALOGW("%s: Unexpected, pipeline %d is invalid",__func__, pipeline_id);
+        if (pInfo == NULL) {
+            ALOGW("%s: Unexpected, pipeline %d is invalid", __func__, pipeline_id);
             continue;
         }
 
@@ -508,8 +499,7 @@ int CameraDeviceSessionHwlImpl::HandleRequest()
     return OK;
 }
 
-VideoStream* CameraDeviceSessionHwlImpl::GetVideoStreamByPhysicalId(uint32_t physical_id)
-{
+VideoStream *CameraDeviceSessionHwlImpl::GetVideoStreamByPhysicalId(uint32_t physical_id) {
     for (int i = 0; i < (int)pVideoStreams.size(); i++) {
         if (physical_id == pVideoStreams[i]->mPhysicalId) {
             return pVideoStreams[i];
@@ -520,8 +510,7 @@ VideoStream* CameraDeviceSessionHwlImpl::GetVideoStreamByPhysicalId(uint32_t phy
     return NULL;
 }
 
-status_t CameraDeviceSessionHwlImpl::CapAndFeed(uint32_t frame, FrameRequest *frameRequest)
-{
+status_t CameraDeviceSessionHwlImpl::CapAndFeed(uint32_t frame, FrameRequest *frameRequest) {
     ImxStreamBuffer *pImxStreamBuffer = NULL;
     std::vector<ImxStreamBuffer *> v4l2BufferList;
     ImageFeed *imgFeed = NULL;
@@ -538,9 +527,10 @@ status_t CameraDeviceSessionHwlImpl::CapAndFeed(uint32_t frame, FrameRequest *fr
         int outbufNum = (int)output_buffers.size();
 
         for (int outBufIdx = 0; outBufIdx < outbufNum; outBufIdx++) {
-             Stream *pStream = GetStreamFromStreamBuffer(&output_buffers[outBufIdx]);
-             if (pStream == NULL) {
-                ALOGE("%s, dst buf belong to stream %d, but the stream is not configured", __func__, output_buffers[outBufIdx].stream_id);
+            Stream *pStream = GetStreamFromStreamBuffer(&output_buffers[outBufIdx]);
+            if (pStream == NULL) {
+                ALOGE("%s, dst buf belong to stream %d, but the stream is not configured", __func__,
+                      output_buffers[outBufIdx].stream_id);
                 goto fail;
             }
 
@@ -558,15 +548,16 @@ status_t CameraDeviceSessionHwlImpl::CapAndFeed(uint32_t frame, FrameRequest *fr
             }
 
             if (bCaptured) {
-                ALOGV("%s: physical_camera_id %d already captured, outBufIdx %d", __func__, physical_id, outBufIdx);
+                ALOGV("%s: physical_camera_id %d already captured, outBufIdx %d", __func__,
+                      physical_id, outBufIdx);
                 continue;
             }
 
             VideoStream *pVideoStream = GetVideoStreamByPhysicalId(physical_id);
 
             if (pVideoStream == NULL) {
-                ALOGW("%s: pVideoStream is NULL for physical_camera_id %u, outBufIdx %d",
-                    __func__, physical_id, outBufIdx);
+                ALOGW("%s: pVideoStream is NULL for physical_camera_id %u, outBufIdx %d", __func__,
+                      physical_id, outBufIdx);
                 goto fail;
             }
 
@@ -576,8 +567,8 @@ status_t CameraDeviceSessionHwlImpl::CapAndFeed(uint32_t frame, FrameRequest *fr
 
             pImxStreamBuffer = pVideoStream->onFrameAcquire();
             if (pImxStreamBuffer == NULL) {
-                ALOGW("%s: onFrameAcquire failed, physical_camera_id %u, outBufIdx %d",
-                    __func__, physical_id, outBufIdx);
+                ALOGW("%s: onFrameAcquire failed, physical_camera_id %u, outBufIdx %d", __func__,
+                      physical_id, outBufIdx);
                 goto fail;
             }
 
@@ -603,18 +594,22 @@ status_t CameraDeviceSessionHwlImpl::CapAndFeed(uint32_t frame, FrameRequest *fr
 
     readTime = readout_timestamp_ns - timestamp_ns;
     if (strstr(mSensorData.camera_name, ISP_SENSOR_NAME)) {
-        std::unique_ptr<ISPWrapper>& ispWrapper = ((ISPCameraMMAPStream *)pVideoStreams[0])->getIspWrapper();
+        std::unique_ptr<ISPWrapper> &ispWrapper =
+                ((ISPCameraMMAPStream *)pVideoStreams[0])->getIspWrapper();
         uint64_t exposure_time = ispWrapper->getExposureTime();
 
         if (readTime < exposure_time) {
-            ALOGW("%s: frame %d readTime %lu is less than exposure_time %lu, adjust", __func__, frame, readTime, exposure_time);
+            ALOGW("%s: frame %d readTime %lu is less than exposure_time %lu, adjust", __func__,
+                  frame, readTime, exposure_time);
             readout_timestamp_ns = timestamp_ns + exposure_time;
         }
 
-        if (readTime >= exposure_time + mSensorData.minframeduration/2) {
-            ALOGW("%s: frame %d readTime %lu is great than exposure_time %lu + (mSensorData.minframeduration/2) %lu, adjust",
-                __func__, frame, readTime, exposure_time, mSensorData.minframeduration/2);
-            readout_timestamp_ns = timestamp_ns + exposure_time + mSensorData.minframeduration/2 - 1;
+        if (readTime >= exposure_time + mSensorData.minframeduration / 2) {
+            ALOGW("%s: frame %d readTime %lu is great than exposure_time %lu + "
+                  "(mSensorData.minframeduration/2) %lu, adjust",
+                  __func__, frame, readTime, exposure_time, mSensorData.minframeduration / 2);
+            readout_timestamp_ns =
+                    timestamp_ns + exposure_time + mSensorData.minframeduration / 2 - 1;
         }
     }
 
@@ -631,15 +626,14 @@ status_t CameraDeviceSessionHwlImpl::CapAndFeed(uint32_t frame, FrameRequest *fr
     memset(imgFeed, 0, sizeof(ImageFeed));
 
     if (is_logical_request_)
-      imgFeed->v4l2BufferList.assign(v4l2BufferList.begin(), v4l2BufferList.end());
+        imgFeed->v4l2BufferList.assign(v4l2BufferList.begin(), v4l2BufferList.end());
     else
-      imgFeed->v4l2Buffer = pImxStreamBuffer;
+        imgFeed->v4l2Buffer = pImxStreamBuffer;
 
     imgFeed->frameRequest = frameRequest;
     imgFeed->frame = frame;
     imgFeed->timestamp_ns = timestamp_ns;
     imgFeed->readout_timestamp_ns = readout_timestamp_ns;
-
 
     mImgProcThread->feed(imgFeed);
     return 0;
@@ -648,8 +642,7 @@ fail:
     return BAD_VALUE;
 }
 
-int CameraDeviceSessionHwlImpl::ImgProcThread::feed(ImageFeed *imgFeed)
-{
+int CameraDeviceSessionHwlImpl::ImgProcThread::feed(ImageFeed *imgFeed) {
     Mutex::Autolock _l(mImageListLock);
     mImageList.push_back(imgFeed);
     mLatestImageIdx++;
@@ -659,14 +652,13 @@ int CameraDeviceSessionHwlImpl::ImgProcThread::feed(ImageFeed *imgFeed)
     return 0;
 }
 
-void CameraDeviceSessionHwlImpl::ImgProcThread::releaseImgFeed(ImageFeed *imgFeed)
-{
+void CameraDeviceSessionHwlImpl::ImgProcThread::releaseImgFeed(ImageFeed *imgFeed) {
     if (imgFeed == NULL)
         return;
 
     FrameRequest *frameRequest = imgFeed->frameRequest;
     if (frameRequest == NULL)
-      return;
+        return;
 
     mSession->ReleaseFrameRequest(*frameRequest);
 
@@ -683,10 +675,10 @@ void CameraDeviceSessionHwlImpl::ImgProcThread::releaseImgFeed(ImageFeed *imgFee
     return;
 }
 
-void CameraDeviceSessionHwlImpl::ImgProcThread::DumpImage()
-{
-    ALOGI("%s: mImageList size %zu, mLatestImageIdx %lu, mProcdImageIdx %lu, mLatestFrame %u, mProcdFrame %u",
-        __func__, mImageList.size(), mLatestImageIdx, mProcdImageIdx, mLatestFrame, mProcdFrame);
+void CameraDeviceSessionHwlImpl::ImgProcThread::DumpImage() {
+    ALOGI("%s: mImageList size %zu, mLatestImageIdx %lu, mProcdImageIdx %lu, mLatestFrame %u, "
+          "mProcdFrame %u",
+          __func__, mImageList.size(), mLatestImageIdx, mProcdImageIdx, mLatestFrame, mProcdFrame);
 
     for (auto it = mImageList.begin(); it != mImageList.end(); it++) {
         ImageFeed *imgFeed = *it;
@@ -695,15 +687,14 @@ void CameraDeviceSessionHwlImpl::ImgProcThread::DumpImage()
 
         // If driver has issue, v4l2Buffer can be NULL, ref CapAndFeed().
         if (imgFeed->v4l2Buffer)
-            ALOGI("%s: frame %u, v4l2 buffer addr virt %p, phy 0x%lx",
-                __func__, imgFeed->frame, imgFeed->v4l2Buffer->mVirtAddr, imgFeed->v4l2Buffer->mPhyAddr);
+            ALOGI("%s: frame %u, v4l2 buffer addr virt %p, phy 0x%lx", __func__, imgFeed->frame,
+                  imgFeed->v4l2Buffer->mVirtAddr, imgFeed->v4l2Buffer->mPhyAddr);
         else
             ALOGI("%s: frame %u", __func__, imgFeed->frame);
     }
 }
 
-int CameraDeviceSessionHwlImpl::HandleImage()
-{
+int CameraDeviceSessionHwlImpl::HandleImage() {
     int ret = 0;
 
     if (mImgProcThread == NULL) {
@@ -733,8 +724,7 @@ int CameraDeviceSessionHwlImpl::HandleImage()
     mImgProcThread->mImageListLock.unlock();
 
     if ((imgFeed == NULL) || (imgFeed->frameRequest == NULL)) {
-        ALOGE("%s: unexpected!!! imgFeed %p, or imgFeed->frameRequest is NULL",
-            __func__, imgFeed);
+        ALOGE("%s: unexpected!!! imgFeed %p, or imgFeed->frameRequest is NULL", __func__, imgFeed);
         return 0;
     }
 
@@ -744,8 +734,8 @@ int CameraDeviceSessionHwlImpl::HandleImage()
 
     uint32_t pipeline_id = hwReq.pipeline_id;
     PipelineInfo *pInfo = GetPipelineInfo(pipeline_id);
-    if(pInfo == NULL) {
-        ALOGE("%s: Unexpected, pipeline %d is invalid",__func__, pipeline_id);
+    if (pInfo == NULL) {
+        ALOGE("%s: Unexpected, pipeline %d is invalid", __func__, pipeline_id);
         return 0;
     }
 
@@ -759,12 +749,10 @@ int CameraDeviceSessionHwlImpl::HandleImage()
         mImgProcThread->mImageListLock.unlock();
 
         if (pInfo->pipeline_callback.notify) {
-            NotifyMessage msg{
-                .type = MessageType::kError,
-                .message.error = {
-                .frame_number = frame,
-                .error_stream_id = -1,
-                .error_code = ErrorCode::kErrorDevice}};
+            NotifyMessage msg{.type = MessageType::kError,
+                              .message.error = {.frame_number = frame,
+                                                .error_stream_id = -1,
+                                                .error_code = ErrorCode::kErrorDevice}};
 
             pInfo->pipeline_callback.notify(pipeline_id, msg);
         }
@@ -775,19 +763,18 @@ int CameraDeviceSessionHwlImpl::HandleImage()
 
     // notify shutter
     if (pInfo->pipeline_callback.notify) {
-        NotifyMessage msg{
-            .type = MessageType::kShutter,
-            .message.shutter = {
-                .frame_number = frame,
-                .timestamp_ns = imgFeed->timestamp_ns,
-                .readout_timestamp_ns = imgFeed->readout_timestamp_ns}};
+        NotifyMessage msg{.type = MessageType::kShutter,
+                          .message.shutter = {.frame_number = frame,
+                                              .timestamp_ns = imgFeed->timestamp_ns,
+                                              .readout_timestamp_ns =
+                                                      imgFeed->readout_timestamp_ns}};
 
         pInfo->pipeline_callback.notify(pipeline_id, msg);
     }
 
     // save the latest meta
     if (hwReq.settings != NULL) {
-        if(mSettings != NULL)
+        if (mSettings != NULL)
             mSettings.reset();
 
         mSettings = HalCameraMetadata::Clone(hwReq.settings.get());
@@ -799,7 +786,6 @@ int CameraDeviceSessionHwlImpl::HandleImage()
         result->result_metadata = HalCameraMetadata::Clone(mSettings.get());
     else
         result->result_metadata = HalCameraMetadata::Create(1, 10);
-
 
     // Set zoom ratio for ISP camera
     CameraMetadata requestMeta(result->result_metadata.get());
@@ -813,7 +799,7 @@ int CameraDeviceSessionHwlImpl::HandleImage()
 
     // Image process
     int outBufNum = (int)hwReq.output_buffers.size();
-    if(is_logical_request_) {
+    if (is_logical_request_) {
         for (int outBufIdx = 0; outBufIdx < outBufNum; outBufIdx++) {
             Stream *pStream = GetStreamFromStreamBuffer(&hwReq.output_buffers[outBufIdx]);
             if (pStream == NULL) {
@@ -826,22 +812,20 @@ int CameraDeviceSessionHwlImpl::HandleImage()
             // Find a v4l2 buffer bind to physical_id, then process to the output buffer.
             for (int j = 0; j < (int)imgFeed->v4l2BufferList.size(); j++) {
                 if (imgFeed->v4l2BufferList[j]->mStream->mPhysicalId == physical_id) {
-                    ProcessCapbuf2Outbuf(imgFeed->v4l2BufferList[j], hwReq.output_buffers[outBufIdx], frameRequest->outBufferFences[outBufIdx], requestMeta);
+                    ProcessCapbuf2Outbuf(imgFeed->v4l2BufferList[j],
+                                         hwReq.output_buffers[outBufIdx],
+                                         frameRequest->outBufferFences[outBufIdx], requestMeta);
                     break;
                 }
             }
         }
     } else {
-        ProcessCapbuf2MultiOutbuf(imgFeed->v4l2Buffer, hwReq.output_buffers, frameRequest->outBufferFences, requestMeta);
+        ProcessCapbuf2MultiOutbuf(imgFeed->v4l2Buffer, hwReq.output_buffers,
+                                  frameRequest->outBufferFences, requestMeta);
     }
 
-    mImgProcThread->mImageListLock.lock();
-    mImgProcThread->mProcdImageIdx++;
-    mImgProcThread->mProcdFrame = frame;
-    mImgProcThread->mImageListLock.unlock();
-
     // return v4l2 buffer
-    if(is_logical_request_) {
+    if (is_logical_request_) {
         for (int i = 0; i < (int)imgFeed->v4l2BufferList.size(); i++) {
             VideoStream *pVideoStream = (VideoStream *)imgFeed->v4l2BufferList[i]->mStream;
             pVideoStream->onFrameReturn(*(imgFeed->v4l2BufferList[i]));
@@ -856,8 +840,9 @@ int CameraDeviceSessionHwlImpl::HandleImage()
     result->frame_number = frame;
     result->partial_result = 1;
 
-    if(is_logical_request_) {
-        std::unique_ptr<std::set<uint32_t>> physical_camera_output_ids = std::make_unique<std::set<uint32_t>>();
+    if (is_logical_request_) {
+        std::unique_ptr<std::set<uint32_t>> physical_camera_output_ids =
+                std::make_unique<std::set<uint32_t>>();
 
         int output_buffers_size = (int)hwReq.output_buffers.size();
         for (int output_buf_id = 0; output_buf_id < output_buffers_size; output_buf_id++) {
@@ -871,13 +856,14 @@ int CameraDeviceSessionHwlImpl::HandleImage()
             (!physical_camera_output_ids->empty())) {
             result->physical_camera_results.reserve(physical_camera_output_ids->size());
 
-            for(int id = 0; id < (int)hwReq.output_buffers.size(); id++) {
+            for (int id = 0; id < (int)hwReq.output_buffers.size(); id++) {
                 auto phy_result = std::make_unique<HwlPipelineResult>();
                 // return physical buffer
                 phy_result->camera_id = camera_ids[id];
                 phy_result->pipeline_id = pipeline_id;
                 phy_result->frame_number = frame;
-                // This value must be set to 0 when a capture result contains buffers only and no metadata.
+                // This value must be set to 0 when a capture result contains buffers only and no
+                // metadata.
                 phy_result->partial_result = 0;
                 phy_result->output_buffers.push_back(hwReq.output_buffers[id]);
 
@@ -906,20 +892,20 @@ int CameraDeviceSessionHwlImpl::HandleImage()
         result->physical_camera_results.reserve(0);
     }
 
-    ALOGV("result->regsult_metadata %p, entry count %d",
-            result->result_metadata.get(),
-            (int)result->result_metadata->GetEntryCount());
+    ALOGV("result->regsult_metadata %p, entry count %d", result->result_metadata.get(),
+          (int)result->result_metadata->GetEntryCount());
 
-    if(is_logical_device_) {
+    if (is_logical_device_) {
         auto physical_device_id = std::to_string(physical_focal_length_map_[current_focal_length_]);
-        ALOGV("%s: ANDROID_LOGICAL_MULTI_CAMERA_ACTIVE_PHYSICAL_ID is %s",__func__, physical_device_id.c_str());
+        ALOGV("%s: ANDROID_LOGICAL_MULTI_CAMERA_ACTIVE_PHYSICAL_ID is %s", __func__,
+              physical_device_id.c_str());
 
         std::vector<uint8_t> ret;
         ret.reserve(physical_device_id.size() + 1);
         ret.insert(ret.end(), physical_device_id.begin(), physical_device_id.end());
         ret.push_back('\0');
-        result->result_metadata->Set(ANDROID_LOGICAL_MULTI_CAMERA_ACTIVE_PHYSICAL_ID,
-                                ret.data(), ret.size());
+        result->result_metadata->Set(ANDROID_LOGICAL_MULTI_CAMERA_ACTIVE_PHYSICAL_ID, ret.data(),
+                                     ret.size());
     }
 
     HandleMetaLocked(result->result_metadata, imgFeed->timestamp_ns);
@@ -928,6 +914,11 @@ int CameraDeviceSessionHwlImpl::HandleImage()
     if (pInfo->pipeline_callback.process_pipeline_result) {
         pInfo->pipeline_callback.process_pipeline_result(std::move(result));
     }
+
+    mImgProcThread->mImageListLock.lock();
+    mImgProcThread->mProcdImageIdx++;
+    mImgProcThread->mProcdFrame = frame;
+    mImgProcThread->mImageListLock.unlock();
 
     if (mDebug)
         ItvlStat(mPreHandleImageTime, (char *)"HandleImage(), process_pipeline_result");
@@ -938,8 +929,8 @@ int CameraDeviceSessionHwlImpl::HandleImage()
     return 0;
 }
 
-ImxStreamBuffer *CameraDeviceSessionHwlImpl::CreateImxStreamBufferFromStreamBuffer(StreamBuffer *buf, Stream *stream)
-{
+ImxStreamBuffer *CameraDeviceSessionHwlImpl::CreateImxStreamBufferFromStreamBuffer(
+        StreamBuffer *buf, Stream *stream) {
     void *pBuf = NULL;
     fsl::Memory *handle = NULL;
 
@@ -958,27 +949,22 @@ ImxStreamBuffer *CameraDeviceSessionHwlImpl::CreateImxStreamBufferFromStreamBuff
     imxBuf->mSize = handle->size;
     imxBuf->buffer = buf->buffer;
     imxBuf->mFormatSize = getSizeByForamtRes(handle->format, stream->width, stream->height, false);
-    if(imxBuf->mFormatSize == 0)
+    if (imxBuf->mFormatSize == 0)
         imxBuf->mFormatSize = imxBuf->mSize;
 
-    ALOGV("%s, buffer: virt %p, phy 0x%lx, size %zu, format 0x%x, acquire_fence %p, release_fence %p, stream: res %dx%d, format 0x%x, size %d",
-            __func__,
-            imxBuf->mVirtAddr,
-            imxBuf->mPhyAddr,
-            imxBuf->mSize,
-            handle->format,
-            buf->acquire_fence,
-            buf->release_fence,
-            stream->width,
-            stream->height,
-            stream->format,
-            stream->buffer_size);
+    ALOGV("%s, buffer: virt %p, phy 0x%lx, size %zu, format 0x%x, acquire_fence %p, release_fence "
+          "%p, stream: res %dx%d, format 0x%x, size %d",
+          __func__, imxBuf->mVirtAddr, imxBuf->mPhyAddr, imxBuf->mSize, handle->format,
+          buf->acquire_fence, buf->release_fence, stream->width, stream->height, stream->format,
+          stream->buffer_size);
 
     bool bPreview = false;
-    if ( (stream->format == HAL_PIXEL_FORMAT_IMPLEMENTATION_DEFINED) && ((stream->usage & GRALLOC_USAGE_HW_VIDEO_ENCODER) == 0) )
+    if ((stream->format == HAL_PIXEL_FORMAT_IMPLEMENTATION_DEFINED) &&
+        ((stream->usage & GRALLOC_USAGE_HW_VIDEO_ENCODER) == 0))
         bPreview = true;
 
-    imxBuf->mStream = new ImxStream(stream->width, stream->height, handle->format, stream->usage, stream->id, bPreview);
+    imxBuf->mStream = new ImxStream(stream->width, stream->height, handle->format, stream->usage,
+                                    stream->id, bPreview);
 
     if (imxBuf->mStream == NULL)
         goto error;
@@ -998,8 +984,7 @@ finish:
     return imxBuf;
 }
 
-void CameraDeviceSessionHwlImpl::ReleaseImxStreamBuffer(ImxStreamBuffer *imxBuf)
-{
+void CameraDeviceSessionHwlImpl::ReleaseImxStreamBuffer(ImxStreamBuffer *imxBuf) {
     if (imxBuf == NULL)
         return;
 
@@ -1012,8 +997,7 @@ void CameraDeviceSessionHwlImpl::ReleaseImxStreamBuffer(ImxStreamBuffer *imxBuf)
     delete imxBuf;
 }
 
-Stream *CameraDeviceSessionHwlImpl::GetStreamFromStreamBuffer(StreamBuffer *buf)
-{
+Stream *CameraDeviceSessionHwlImpl::GetStreamFromStreamBuffer(StreamBuffer *buf) {
     if (buf == NULL)
         return NULL;
 
@@ -1036,23 +1020,21 @@ Stream *CameraDeviceSessionHwlImpl::GetStreamFromStreamBuffer(StreamBuffer *buf)
     return NULL;
 }
 
-static void DumpStream(void *src, uint32_t srcSize, void *dst, uint32_t dstSize, int32_t id)
-{
+static void DumpStream(void *src, uint32_t srcSize, void *dst, uint32_t dstSize, int32_t id) {
     char value[PROPERTY_VALUE_MAX];
-    int  fdSrc = -1;
+    int fdSrc = -1;
     int fdDst = -1;
     int32_t streamIdBitVal = 0;
 
     if ((src == NULL) || (srcSize == 0) || (dst == NULL) || (dstSize == 0))
         return;
 
-
     property_get("vendor.rw.camera.test", value, "");
     if (strcmp(value, "") == 0)
         return;
 
     streamIdBitVal = atoi(value);
-    if ((streamIdBitVal & (1<<id)) == 0)
+    if ((streamIdBitVal & (1 << id)) == 0)
         return;
 
     ALOGI("%s: src size %d, dst size %d, stream id %d", __func__, srcSize, dstSize, id);
@@ -1065,12 +1047,12 @@ static void DumpStream(void *src, uint32_t srcSize, void *dst, uint32_t dstSize,
     snprintf(dstFile, 32, "/data/%d-dst.data", id);
     dstFile[31] = 0;
 
-    fdSrc = open(srcFile, O_CREAT|O_APPEND|O_WRONLY, S_IRWXU|S_IRWXG);
-    fdDst = open(dstFile, O_CREAT|O_APPEND|O_WRONLY, S_IRWXU|S_IRWXG);
+    fdSrc = open(srcFile, O_CREAT | O_APPEND | O_WRONLY, S_IRWXU | S_IRWXG);
+    fdDst = open(dstFile, O_CREAT | O_APPEND | O_WRONLY, S_IRWXU | S_IRWXG);
 
     if ((fdSrc < 0) || (fdDst < 0)) {
-        ALOGW("%s: file open error, srcFile: %s, fd %d, dstFile: %s, fd %d",
-                __func__, srcFile, fdSrc, dstFile, fdDst);
+        ALOGW("%s: file open error, srcFile: %s, fd %d, dstFile: %s, fd %d", __func__, srcFile,
+              fdSrc, dstFile, fdDst);
         return;
     }
 
@@ -1083,8 +1065,10 @@ static void DumpStream(void *src, uint32_t srcSize, void *dst, uint32_t dstSize,
     return;
 }
 
-status_t CameraDeviceSessionHwlImpl::ProcessCapbuf2Outbuf(ImxStreamBuffer *srcBuf, StreamBuffer &output_buffers, FenceFdInfo &outFences, CameraMetadata &requestMeta)
-{
+status_t CameraDeviceSessionHwlImpl::ProcessCapbuf2Outbuf(ImxStreamBuffer *srcBuf,
+                                                          StreamBuffer &output_buffers,
+                                                          FenceFdInfo &outFences,
+                                                          CameraMetadata &requestMeta) {
     int ret = 0;
     bool isSkipHandle = false;
     if (srcBuf == NULL)
@@ -1101,13 +1085,15 @@ status_t CameraDeviceSessionHwlImpl::ProcessCapbuf2Outbuf(ImxStreamBuffer *srcBu
         closeFence(acquire_fence_fd, mDebug);
         outFences.acquire_fence_fd = -1;
         if (ret != OK) {
-            ALOGW("%s: Timeout waiting on acquire fence %d, on stream %d, buffer %lu", __func__, acquire_fence_fd, it->stream_id, it->buffer_id);
+            ALOGW("%s: Timeout waiting on acquire fence %d, on stream %d, buffer %lu", __func__,
+                  acquire_fence_fd, it->stream_id, it->buffer_id);
         }
     }
 
     Stream *pStream = GetStreamFromStreamBuffer(it);
     if (pStream == NULL) {
-        ALOGE("%s, dst buf belong to stream %d, but the stream is not configured", __func__, it->stream_id);
+        ALOGE("%s, dst buf belong to stream %d, but the stream is not configured", __func__,
+              it->stream_id);
         return BAD_VALUE;
     }
 
@@ -1124,15 +1110,19 @@ status_t CameraDeviceSessionHwlImpl::ProcessCapbuf2Outbuf(ImxStreamBuffer *srcBu
     }
 
     // Adapt for Camra2.apk. The picture resolution may differ from preview resolution.
-    // If resize for preview stream, there will be obvious changes in the preview when taking picture.
-    // And if there is a new dst addr, the process will not be skipped, otherwise it will flash green.
-    if ((src->width() != dst->width()) || (src->height() != dst->height()) &&
-        dst->isPreview() && src->isPictureIntent()) {
-        if (!setDstPhyAddr.empty() && (setDstPhyAddr.find(dstBuf->mPhyAddr) != setDstPhyAddr.end())) {
+    // If resize for preview stream, there will be obvious changes in the preview when taking
+    // picture. And if there is a new dst addr, the process will not be skipped, otherwise it will
+    // flash green.
+    if ((src->width() != dst->width()) ||
+        (src->height() != dst->height()) && dst->isPreview() && src->isPictureIntent()) {
+        if (!setDstPhyAddr.empty() &&
+            (setDstPhyAddr.find(dstBuf->mPhyAddr) != setDstPhyAddr.end())) {
             isSkipHandle = true;
-            ALOGW("%s: resize from %dx%d to %dx%d, skip preview stream while taking picture", __func__, src->width(), src->height(), dst->width(), dst->height());
+            ALOGW("%s: resize from %dx%d to %dx%d, skip preview stream while taking picture",
+                  __func__, src->width(), src->height(), dst->width(), dst->height());
         } else {
-            ALOGW("%s: Don't skip the preview stream handle, new dst phy addr 0x%lx appear", __func__, dstBuf->mPhyAddr);
+            ALOGW("%s: Don't skip the preview stream handle, new dst phy addr 0x%lx appear",
+                  __func__, dstBuf->mPhyAddr);
         }
     }
     setDstPhyAddr.insert(dstBuf->mPhyAddr);
@@ -1151,20 +1141,24 @@ status_t CameraDeviceSessionHwlImpl::ProcessCapbuf2Outbuf(ImxStreamBuffer *srcBu
     uint64_t t2 = systemTime();
 
     if (mDebug) {
-        ALOGI("%s: use %lu ms, src: virt %p, phy 0x%lx, size %dx%d, format 0x%x, dst: virt %p, phy 0x%lx, size %dx%d, format 0x%x",
-            __func__, (t2-t1)/1000000,
-            srcBuf->mVirtAddr, srcBuf->mPhyAddr, srcBuf->mStream->width(), srcBuf->mStream->height(), srcBuf->mStream->format(),
-            dstBuf->mVirtAddr, dstBuf->mPhyAddr, dstBuf->mStream->width(), dstBuf->mStream->height(), dstBuf->mStream->format());
+        ALOGI("%s: use %lu ms, src: virt %p, phy 0x%lx, size %dx%d, format 0x%x, dst: virt %p, phy "
+              "0x%lx, size %dx%d, format 0x%x",
+              __func__, (t2 - t1) / 1000000, srcBuf->mVirtAddr, srcBuf->mPhyAddr,
+              srcBuf->mStream->width(), srcBuf->mStream->height(), srcBuf->mStream->format(),
+              dstBuf->mVirtAddr, dstBuf->mPhyAddr, dstBuf->mStream->width(),
+              dstBuf->mStream->height(), dstBuf->mStream->format());
     }
 
-    DumpStream(srcBuf->mVirtAddr, srcBuf->mFormatSize, dstBuf->mVirtAddr, dstBuf->mFormatSize, dstBuf->mStream->id());
+    DumpStream(srcBuf->mVirtAddr, srcBuf->mFormatSize, dstBuf->mVirtAddr, dstBuf->mFormatSize,
+               dstBuf->mStream->id());
 
     ReleaseImxStreamBuffer(dstBuf);
     return 0;
 }
 
-status_t CameraDeviceSessionHwlImpl::ProcessCapbuf2MultiOutbuf(ImxStreamBuffer *srcBuf, std::vector<StreamBuffer> &output_buffers, std::vector<FenceFdInfo> &outFences, CameraMetadata &requestMeta)
-{
+status_t CameraDeviceSessionHwlImpl::ProcessCapbuf2MultiOutbuf(
+        ImxStreamBuffer *srcBuf, std::vector<StreamBuffer> &output_buffers,
+        std::vector<FenceFdInfo> &outFences, CameraMetadata &requestMeta) {
     int ret = 0;
 
     if (srcBuf == NULL)
@@ -1173,7 +1167,7 @@ status_t CameraDeviceSessionHwlImpl::ProcessCapbuf2MultiOutbuf(ImxStreamBuffer *
     int outBufSize = output_buffers.size();
     int outFencesSize = outFences.size();
 
-    if(outBufSize != outFencesSize) {
+    if (outBufSize != outFencesSize) {
         ALOGE("%s: outBufSize(%d) != outFencesSize(%d)", __func__, outBufSize, outFencesSize);
         return BAD_VALUE;
     }
@@ -1181,14 +1175,15 @@ status_t CameraDeviceSessionHwlImpl::ProcessCapbuf2MultiOutbuf(ImxStreamBuffer *
     for (int i = 0; i < outBufSize; i++) {
         int status = ProcessCapbuf2Outbuf(srcBuf, output_buffers[i], outFences[i], requestMeta);
         if (status)
-          ret = BAD_VALUE;
+            ret = BAD_VALUE;
     }
 
     return ret;
 }
 
-int32_t CameraDeviceSessionHwlImpl::processFrameBuffer(ImxStreamBuffer *srcBuf, ImxStreamBuffer *dstBuf, CameraMetadata *meta)
-{
+int32_t CameraDeviceSessionHwlImpl::processFrameBuffer(ImxStreamBuffer *srcBuf,
+                                                       ImxStreamBuffer *dstBuf,
+                                                       CameraMetadata *meta) {
     if ((srcBuf == NULL) || (dstBuf == NULL) || (meta == NULL)) {
         ALOGE("%s srcBuf %p, dstBuf %p, meta %p", __func__, srcBuf, dstBuf, meta);
         return BAD_VALUE;
@@ -1200,10 +1195,8 @@ int32_t CameraDeviceSessionHwlImpl::processFrameBuffer(ImxStreamBuffer *srcBuf, 
     ImxStream *srcStream = srcBuf->mStream;
     ImxStream *dstStream = dstBuf->mStream;
 
-    if (srcStream->mWidth == dstStream->mWidth &&
-        srcStream->mHeight == dstStream->mHeight &&
-        srcStream->format() == dstStream->format() &&
-        srcStream->mZoomRatio <= 1.0)
+    if (srcStream->mWidth == dstStream->mWidth && srcStream->mHeight == dstStream->mHeight &&
+        srcStream->format() == dstStream->format() && srcStream->mZoomRatio <= 1.0)
         csc_hw = mCamBlitCopyType;
     else
         csc_hw = mCamBlitCscType;
@@ -1211,8 +1204,9 @@ int32_t CameraDeviceSessionHwlImpl::processFrameBuffer(ImxStreamBuffer *srcBuf, 
     return imageProcess->handleFrame(*dstBuf, *srcBuf, csc_hw);
 }
 
-int32_t CameraDeviceSessionHwlImpl::processJpegBuffer(ImxStreamBuffer *srcBuf, ImxStreamBuffer *dstBuf, CameraMetadata *meta)
-{
+int32_t CameraDeviceSessionHwlImpl::processJpegBuffer(ImxStreamBuffer *srcBuf,
+                                                      ImxStreamBuffer *dstBuf,
+                                                      CameraMetadata *meta) {
     int32_t ret = 0;
     int32_t encodeQuality = 100, thumbQuality = 100;
     int32_t thumbWidth = 0, thumbHeight = 0;
@@ -1294,16 +1288,14 @@ int32_t CameraDeviceSessionHwlImpl::processJpegBuffer(ImxStreamBuffer *srcBuf, I
             ALOGE("Error: %s format 0x%x not supported", __func__, srcStream->format());
     }
 
-    sp<MemoryHeapBase> rawFrame(
-        new MemoryHeapBase(captureSize, 0, "rawFrame"));
+    sp<MemoryHeapBase> rawFrame(new MemoryHeapBase(captureSize, 0, "rawFrame"));
     rawBuf = rawFrame->getBase();
     if (rawBuf == MAP_FAILED) {
         ALOGE("%s new MemoryHeapBase failed", __func__);
         return BAD_VALUE;
     }
 
-    sp<MemoryHeapBase> thumbFrame(
-        new MemoryHeapBase(captureSize, 0, "thumbFrame"));
+    sp<MemoryHeapBase> thumbFrame(new MemoryHeapBase(captureSize, 0, "thumbFrame"));
     thumbBuf = thumbFrame->getBase();
     if (thumbBuf == MAP_FAILED) {
         ALOGE("%s new MemoryHeapBase failed", __func__);
@@ -1327,19 +1319,10 @@ int32_t CameraDeviceSessionHwlImpl::processJpegBuffer(ImxStreamBuffer *srcBuf, I
         SwitchImxBuf(*srcBuf, resizeBuf);
     }
 
-    mainJpeg = new JpegParams((uint8_t *)srcBuf->mVirtAddr,
-                                (uint8_t *)(uintptr_t)srcBuf->mPhyAddr,
-                                srcBuf->mSize,
-                                srcBuf->mFd,
-                                srcBuf->buffer,
-                                (uint8_t *)rawBuf,
-                                captureSize,
-                                encodeQuality,
-                                srcStream->mWidth,
-                                srcStream->mHeight,
-                                capture->mWidth,
-                                capture->mHeight,
-                                srcStream->format());
+    mainJpeg = new JpegParams((uint8_t *)srcBuf->mVirtAddr, (uint8_t *)(uintptr_t)srcBuf->mPhyAddr,
+                              srcBuf->mSize, srcBuf->mFd, srcBuf->buffer, (uint8_t *)rawBuf,
+                              captureSize, encodeQuality, srcStream->mWidth, srcStream->mHeight,
+                              capture->mWidth, capture->mHeight, srcStream->format());
 
     ret = meta->getJpegThumbSize(thumbWidth, thumbHeight);
     if (ret != NO_ERROR) {
@@ -1348,19 +1331,11 @@ int32_t CameraDeviceSessionHwlImpl::processJpegBuffer(ImxStreamBuffer *srcBuf, I
 
     if ((thumbWidth > 0) && (thumbHeight > 0)) {
         int thumbSize = captureSize;
-        thumbJpeg = new JpegParams((uint8_t *)srcBuf->mVirtAddr,
-                                (uint8_t *)(uintptr_t)srcBuf->mPhyAddr,
-                                srcBuf->mSize,
-                                srcBuf->mFd,
-                                srcBuf->buffer,
-                                (uint8_t *)thumbBuf,
-                                thumbSize,
-                                thumbQuality,
-                                srcStream->mWidth,
-                                srcStream->mHeight,
-                                thumbWidth,
-                                thumbHeight,
-                                srcStream->format());
+        thumbJpeg =
+                new JpegParams((uint8_t *)srcBuf->mVirtAddr, (uint8_t *)(uintptr_t)srcBuf->mPhyAddr,
+                               srcBuf->mSize, srcBuf->mFd, srcBuf->buffer, (uint8_t *)thumbBuf,
+                               thumbSize, thumbQuality, srcStream->mWidth, srcStream->mHeight,
+                               thumbWidth, thumbHeight, srcStream->format());
     }
 
     ret = mJpegBuilder->encodeImage(mainJpeg, thumbJpeg, mJpegHw, (*meta));
@@ -1379,17 +1354,12 @@ int32_t CameraDeviceSessionHwlImpl::processJpegBuffer(ImxStreamBuffer *srcBuf, I
     pDst = (uint8_t *)dstBuf->mVirtAddr;
     bufSize = (maxJpegSize <= (int)dstBuf->mSize) ? maxJpegSize : dstBuf->mSize;
 
-    jpegBlob = (struct camera3_jpeg_blob *)(pDst + bufSize -
-                                            sizeof(struct camera3_jpeg_blob));
+    jpegBlob = (struct camera3_jpeg_blob *)(pDst + bufSize - sizeof(struct camera3_jpeg_blob));
     jpegBlob->jpeg_blob_id = CAMERA3_JPEG_BLOB_ID;
     jpegBlob->jpeg_size = mJpegBuilder->getImageSize();
 
-    ALOGI("%s, dstbuf size %d, %d, jpeg_size %d, max jpeg size %d",
-            __func__,
-            (int)dstBuf->mSize,
-            captureSize,
-            jpegBlob->jpeg_size,
-            maxJpegSize);
+    ALOGI("%s, dstbuf size %d, %d, jpeg_size %d, max jpeg size %d", __func__, (int)dstBuf->mSize,
+          captureSize, jpegBlob->jpeg_size, maxJpegSize);
 
 err_out:
     if (mainJpeg != NULL)
@@ -1406,8 +1376,8 @@ err_out:
     return ret;
 }
 
-status_t CameraDeviceSessionHwlImpl::HandleMetaLocked(std::unique_ptr<HalCameraMetadata> &resultMeta, uint64_t timestamp)
-{
+status_t CameraDeviceSessionHwlImpl::HandleMetaLocked(
+        std::unique_ptr<HalCameraMetadata> &resultMeta, uint64_t timestamp) {
     status_t ret;
     camera_metadata_ro_entry entry;
 
@@ -1446,68 +1416,82 @@ status_t CameraDeviceSessionHwlImpl::HandleMetaLocked(std::unique_ptr<HalCameraM
     resultMeta->Set(ANDROID_CONTROL_AWB_STATE, &m3aState.awbState, 1);
 
     if (strstr(mSensorData.camera_name, ISP_SENSOR_NAME)) {
-
-        std::unique_ptr<ISPWrapper>& ispWrapper = ((ISPCameraMMAPStream *)pVideoStreams[0])->getIspWrapper();
+        std::unique_ptr<ISPWrapper> &ispWrapper =
+                ((ISPCameraMMAPStream *)pVideoStreams[0])->getIspWrapper();
 
         int64_t exposure_time = ispWrapper->getExposureTime();
         resultMeta->Set(ANDROID_SENSOR_EXPOSURE_TIME, &exposure_time, 1);
 
-        // Ref https://developer.android.com/reference/android/hardware/camera2/CaptureResult#SENSOR_SENSITIVITY
+        // Ref
+        // https://developer.android.com/reference/android/hardware/camera2/CaptureResult#SENSOR_SENSITIVITY
         ret = resultMeta->Get(ANDROID_SENSOR_SENSITIVITY, &entry);
-        // Currently, ISP not support to set sensitivity. So just return the vaule in the request (resultMeta is cloned from requestMeta).
-        // If there's no ANDROID_SENSOR_SENSITIVITY in request, also need set in resultMeta due to "full" level requirement.
-        if(ret != OK) {
+        // Currently, ISP not support to set sensitivity. So just return the vaule in the request
+        // (resultMeta is cloned from requestMeta). If there's no ANDROID_SENSOR_SENSITIVITY in
+        // request, also need set in resultMeta due to "full" level requirement.
+        if (ret != OK) {
             // Ref value from GCH EmulatedCamera
             int32_t sensitivity = 1000;
             resultMeta->Set(ANDROID_SENSOR_SENSITIVITY, &sensitivity, 1);
         }
 
-        // Ref https://developer.android.com/reference/android/hardware/camera2/CaptureRequest#CONTROL_POST_RAW_SENSITIVITY_BOOST
+        // Ref
+        // https://developer.android.com/reference/android/hardware/camera2/CaptureRequest#CONTROL_POST_RAW_SENSITIVITY_BOOST
         // Ref value from GCH EmulatedCamera
         int32_t sensitivity_boost = 100;
         resultMeta->Set(ANDROID_CONTROL_POST_RAW_SENSITIVITY_BOOST, &sensitivity_boost, 1);
 
-        // Ref https://developer.android.com/reference/android/hardware/camera2/CaptureResult#SENSOR_NEUTRAL_COLOR_POINT
+        // Ref
+        // https://developer.android.com/reference/android/hardware/camera2/CaptureResult#SENSOR_NEUTRAL_COLOR_POINT
         // Ref value from GCH EmulatedCamera
-        camera_metadata_rational_t android_sensor_neutral_color_point[] = { {255, 1}, {255, 1}, {255, 1} };
-        resultMeta->Set(ANDROID_SENSOR_NEUTRAL_COLOR_POINT,
-                        android_sensor_neutral_color_point,
+        camera_metadata_rational_t android_sensor_neutral_color_point[] = {{255, 1},
+                                                                           {255, 1},
+                                                                           {255, 1}};
+        resultMeta->Set(ANDROID_SENSOR_NEUTRAL_COLOR_POINT, android_sensor_neutral_color_point,
                         ARRAY_SIZE(android_sensor_neutral_color_point));
 
-        // Ref https://developer.android.com/reference/android/hardware/camera2/CaptureResult#SENSOR_NOISE_PROFILE
+        // Ref
+        // https://developer.android.com/reference/android/hardware/camera2/CaptureResult#SENSOR_NOISE_PROFILE
         // No such parameter for basler camera, ref emulated camera.
         double noise_gain = 4.0;
         double read_noise = 9.951316;
-        double noise_profile[] = {noise_gain, read_noise, noise_gain, read_noise, noise_gain, read_noise, noise_gain, read_noise};
+        double noise_profile[] = {noise_gain, read_noise, noise_gain, read_noise,
+                                  noise_gain, read_noise, noise_gain, read_noise};
         resultMeta->Set(ANDROID_SENSOR_NOISE_PROFILE, noise_profile, ARRAY_SIZE(noise_profile));
 
-        // Ref https://developer.android.com/reference/android/hardware/camera2/CaptureResult#SENSOR_GREEN_SPLIT
+        // Ref
+        // https://developer.android.com/reference/android/hardware/camera2/CaptureResult#SENSOR_GREEN_SPLIT
         // No such parameter for basler camera, ref emulated camera.
         float green_split = 1.0;
         resultMeta->Set(ANDROID_SENSOR_GREEN_SPLIT, &green_split, 1);
 
-        // Ref https://developer.android.com/reference/android/hardware/camera2/CaptureResult#SENSOR_ROLLING_SHUTTER_SKEW
+        // Ref
+        // https://developer.android.com/reference/android/hardware/camera2/CaptureResult#SENSOR_ROLLING_SHUTTER_SKEW
         // Ref emulated camera, use min frame duration, 1/60 s.
         static const int64_t rolling_shutter_skew = mSensorData.minframeduration; // ns
         resultMeta->Set(ANDROID_SENSOR_ROLLING_SHUTTER_SKEW, &rolling_shutter_skew, 1);
 
-        // Ref https://developer.android.com/reference/android/hardware/camera2/CaptureResult#STATISTICS_SCENE_FLICKER
+        // Ref
+        // https://developer.android.com/reference/android/hardware/camera2/CaptureResult#STATISTICS_SCENE_FLICKER
         uint8_t scene_flicker = ANDROID_STATISTICS_SCENE_FLICKER_NONE;
         resultMeta->Set(ANDROID_STATISTICS_SCENE_FLICKER, &scene_flicker, 1);
 
-        // Ref https://developer.android.com/reference/android/hardware/camera2/CaptureRequest#STATISTICS_LENS_SHADING_MAP_MODE
+        // Ref
+        // https://developer.android.com/reference/android/hardware/camera2/CaptureRequest#STATISTICS_LENS_SHADING_MAP_MODE
         uint8_t lens_shading_map_mode = ANDROID_STATISTICS_LENS_SHADING_MAP_MODE_OFF;
         resultMeta->Set(ANDROID_STATISTICS_LENS_SHADING_MAP_MODE, &lens_shading_map_mode, 1);
 
-        // Ref https://developer.android.com/reference/android/hardware/camera2/CaptureResult#LENS_STATE
+        // Ref
+        // https://developer.android.com/reference/android/hardware/camera2/CaptureResult#LENS_STATE
         uint8_t lens_state = ANDROID_LENS_STATE_STATIONARY;
         resultMeta->Set(ANDROID_LENS_STATE, &lens_state, 1);
 
-        // Ref https://developer.android.com/reference/android/hardware/camera2/CaptureResult#BLACK_LEVEL_LOCK
+        // Ref
+        // https://developer.android.com/reference/android/hardware/camera2/CaptureResult#BLACK_LEVEL_LOCK
         uint8_t black_level_lock = ANDROID_BLACK_LEVEL_LOCK_ON;
         resultMeta->Set(ANDROID_BLACK_LEVEL_LOCK, &black_level_lock, 1);
 
-        // Ref https://developer.android.com/reference/android/hardware/camera2/CaptureResult#LENS_FOCUS_RANGE
+        // Ref
+        // https://developer.android.com/reference/android/hardware/camera2/CaptureResult#LENS_FOCUS_RANGE
         float focus_range[] = {0.f, 0.f};
         resultMeta->Set(ANDROID_LENS_FOCUS_RANGE, focus_range, ARRAY_SIZE(focus_range));
 
@@ -1534,8 +1518,9 @@ status_t CameraDeviceSessionHwlImpl::HandleMetaLocked(std::unique_ptr<HalCameraM
 }
 
 status_t CameraDeviceSessionHwlImpl::ConfigurePipeline(
-    uint32_t physical_camera_id, HwlPipelineCallback hwl_pipeline_callback, const StreamConfiguration &request_config, const StreamConfiguration & /*overall_config*/, uint32_t *pipeline_id)
-{
+        uint32_t physical_camera_id, HwlPipelineCallback hwl_pipeline_callback,
+        const StreamConfiguration &request_config, const StreamConfiguration & /*overall_config*/,
+        uint32_t *pipeline_id) {
     Mutex::Autolock _l(mLock);
     if (pipeline_id == nullptr) {
         ALOGE("%s pipeline_id is nullptr", __func__);
@@ -1547,22 +1532,20 @@ status_t CameraDeviceSessionHwlImpl::ConfigurePipeline(
         return ALREADY_EXISTS;
     }
 
-    bool bSupport = CameraDeviceHwlImpl::StreamCombJudge(request_config,
-        mPreviewResolutions, mPreviewResolutionCount,
-        mPictureResolutions, mPictureResolutionCount);
+    bool bSupport =
+            CameraDeviceHwlImpl::StreamCombJudge(request_config, mPreviewResolutions,
+                                                 mPreviewResolutionCount, mPictureResolutions,
+                                                 mPictureResolutionCount);
 
     if (bSupport == false) {
         ALOGI("%s: IsStreamCombinationSupported return false", __func__);
         return BAD_VALUE;
     }
 
-    if ((physical_camera_id != camera_id_) &&
-        (physical_meta_map_.get() != nullptr)) {
-        if (physical_meta_map_->find(physical_camera_id) ==
-            physical_meta_map_->end())
-        {
-            ALOGE("%s: Camera: %d doesn't include physical device with id: %u",
-                __FUNCTION__, camera_id_, physical_camera_id);
+    if ((physical_camera_id != camera_id_) && (physical_meta_map_.get() != nullptr)) {
+        if (physical_meta_map_->find(physical_camera_id) == physical_meta_map_->end()) {
+            ALOGE("%s: Camera: %d doesn't include physical device with id: %u", __FUNCTION__,
+                  camera_id_, physical_camera_id);
             return BAD_VALUE;
         }
     }
@@ -1590,8 +1573,8 @@ status_t CameraDeviceSessionHwlImpl::ConfigurePipeline(
     pipeline_info->hal_streams = new std::vector<HalStream>();
 
     if ((pipeline_info->streams == NULL) || (pipeline_info->hal_streams == NULL)) {
-        ALOGE("%s: no memory, pipeline_info->streams %p, pipeline_info->hal_streams %p",
-            __func__, pipeline_info->streams, pipeline_info->hal_streams);
+        ALOGE("%s: no memory, pipeline_info->streams %p, pipeline_info->hal_streams %p", __func__,
+              pipeline_info->streams, pipeline_info->hal_streams);
         return BAD_VALUE;
     }
 
@@ -1606,22 +1589,14 @@ status_t CameraDeviceSessionHwlImpl::ConfigurePipeline(
 
     for (int i = 0; i < stream_num; i++) {
         Stream stream = request_config.streams[i];
-        ALOGI("%s, stream %d: id %d, type %d, res %dx%d, format 0x%x, usage 0x%llx, space 0x%x, rot %d, is_phy %d, phy_id %d, size %d",
-                __func__,
-                i,
-                stream.id,
-                stream.stream_type,
-                stream.width,
-                stream.height,
-                stream.format,
-                (unsigned long long)stream.usage,
-                stream.data_space,
-                stream.rotation,
-                stream.is_physical_camera_stream,
-                stream.physical_camera_id,
-                stream.buffer_size);
+        ALOGI("%s, stream %d: id %d, type %d, res %dx%d, format 0x%x, usage 0x%llx, space 0x%x, "
+              "rot %d, is_phy %d, phy_id %d, size %d",
+              __func__, i, stream.id, stream.stream_type, stream.width, stream.height,
+              stream.format, (unsigned long long)stream.usage, stream.data_space, stream.rotation,
+              stream.is_physical_camera_stream, stream.physical_camera_id, stream.buffer_size);
 
-        uint32_t mcamera_id = stream.is_physical_camera_stream ? stream.physical_camera_id : camera_id_;
+        uint32_t mcamera_id =
+                stream.is_physical_camera_stream ? stream.physical_camera_id : camera_id_;
         camera_ids.push_back(mcamera_id);
 
         HalStream hal_stream;
@@ -1644,9 +1619,9 @@ status_t CameraDeviceSessionHwlImpl::ConfigurePipeline(
             case HAL_PIXEL_FORMAT_IMPLEMENTATION_DEFINED:
                 if (strcmp(mSensorData.v4l2_format, "nv12") == 0) {
                     if (strstr(socType, "imx93")) {
-                        hal_stream.override_format = HAL_PIXEL_FORMAT_YV12 ;
+                        hal_stream.override_format = HAL_PIXEL_FORMAT_YV12;
                     } else {
-                        hal_stream.override_format = HAL_PIXEL_FORMAT_YCBCR_420_888 ;
+                        hal_stream.override_format = HAL_PIXEL_FORMAT_YCBCR_420_888;
                     }
                 } else
                     hal_stream.override_format = HAL_PIXEL_FORMAT_YCBCR_422_I;
@@ -1658,7 +1633,8 @@ status_t CameraDeviceSessionHwlImpl::ConfigurePipeline(
                     ALOGI("%s create video recording stream", __func__);
                     hal_stream.override_format = HAL_PIXEL_FORMAT_YCBCR_420_888;
                     recordIdx = i;
-                } else if (stream.usage & (GRALLOC_USAGE_HW_CAMERA_WRITE|GRALLOC_USAGE_HW_CAMERA_READ)) {
+                } else if (stream.usage &
+                           (GRALLOC_USAGE_HW_CAMERA_WRITE | GRALLOC_USAGE_HW_CAMERA_READ)) {
                     ALOGI("%s create camera rw stream", __func__);
                     cameraRWIdx = i;
                 } else {
@@ -1699,32 +1675,31 @@ status_t CameraDeviceSessionHwlImpl::ConfigurePipeline(
     return OK;
 }
 
-int CameraDeviceSessionHwlImpl::PickConfigStream(uint32_t pipeline_id, uint8_t intent)
-{
+int CameraDeviceSessionHwlImpl::PickConfigStream(uint32_t pipeline_id, uint8_t intent) {
     PipelineInfo *pipeline_info = GetPipelineInfo(pipeline_id);
-    if(pipeline_info == NULL) {
-        ALOGE("%s: Unexpected, pipeline %d is invalid",__func__, pipeline_id);
+    if (pipeline_info == NULL) {
+        ALOGE("%s: Unexpected, pipeline %d is invalid", __func__, pipeline_id);
         return -1;
     }
 
-    if((pipeline_info == NULL) || (pipeline_info->streams == NULL)){
+    if ((pipeline_info == NULL) || (pipeline_info->streams == NULL)) {
         ALOGE("%s: pipeline_info or streams is NULL for id %d", __func__, pipeline_id);
         return -1;
     }
 
-    ALOGI("%s: previewIdx %d, callbackIdx %d, stillcapIdx %d, recordIdx %d, cameraRWIdx %d, intent %d",
-        __func__, previewIdx, callbackIdx, stillcapIdx, recordIdx, cameraRWIdx, intent);
+    ALOGI("%s: previewIdx %d, callbackIdx %d, stillcapIdx %d, recordIdx %d, cameraRWIdx %d, intent "
+          "%d",
+          __func__, previewIdx, callbackIdx, stillcapIdx, recordIdx, cameraRWIdx, intent);
 
     int configIdx = -1;
-    if(intent == ANDROID_CONTROL_CAPTURE_INTENT_STILL_CAPTURE)
+    if (intent == ANDROID_CONTROL_CAPTURE_INTENT_STILL_CAPTURE)
         configIdx = stillcapIdx;
-
 
     // In this case, pick max size from callback and stillcap.
     // Or testAllOutputYUVResolutions will failed due to diff too much
     // when 320x240 enlarge to 2592x1944 by adding black margin.
-    if ((strcmp(mSensorData.v4l2_format, "nv12") == 0) &&
-        (stillcapIdx >= 0) && (callbackIdx >= 0) && (previewIdx < 0) && (recordIdx < 0) &&
+    if ((strcmp(mSensorData.v4l2_format, "nv12") == 0) && (stillcapIdx >= 0) &&
+        (callbackIdx >= 0) && (previewIdx < 0) && (recordIdx < 0) &&
         (intent == ANDROID_CONTROL_CAPTURE_INTENT_PREVIEW)) {
         int stillcapWidth = pipeline_info->streams->at(stillcapIdx).width;
         int stillcapHeight = pipeline_info->streams->at(stillcapIdx).height;
@@ -1732,9 +1707,9 @@ int CameraDeviceSessionHwlImpl::PickConfigStream(uint32_t pipeline_id, uint8_t i
         int callbackHeight = pipeline_info->streams->at(callbackIdx).height;
 
         if ((callbackWidth > stillcapWidth) && (callbackHeight > stillcapHeight))
-          configIdx = callbackIdx;
+            configIdx = callbackIdx;
         else
-          configIdx = stillcapIdx;
+            configIdx = stillcapIdx;
     }
 
     if (configIdx == -1) {
@@ -1760,11 +1735,10 @@ int CameraDeviceSessionHwlImpl::PickConfigStream(uint32_t pipeline_id, uint8_t i
 }
 
 status_t CameraDeviceSessionHwlImpl::GetConfiguredHalStream(
-    uint32_t pipeline_id, std::vector<HalStream> *hal_streams) const
-{
+        uint32_t pipeline_id, std::vector<HalStream> *hal_streams) const {
     // fix me, build error as
-    // error: 'this' argument to member function 'lock' has type 'const android::Mutex', but function is not marked const
-    // Mutex::Autolock _l(mLock);
+    // error: 'this' argument to member function 'lock' has type 'const android::Mutex', but
+    // function is not marked const Mutex::Autolock _l(mLock);
 
     if (hal_streams == nullptr) {
         ALOGE("%s hal_streams is nullptr", __func__);
@@ -1797,8 +1771,7 @@ status_t CameraDeviceSessionHwlImpl::GetConfiguredHalStream(
     return found ? OK : NAME_NOT_FOUND;
 }
 
-status_t CameraDeviceSessionHwlImpl::BuildPipelines()
-{
+status_t CameraDeviceSessionHwlImpl::BuildPipelines() {
     ALOGI("enter %s", __func__);
 
     Mutex::Autolock _l(mLock);
@@ -1816,8 +1789,7 @@ status_t CameraDeviceSessionHwlImpl::BuildPipelines()
     return OK;
 }
 
-void CameraDeviceSessionHwlImpl::ImgProcThread::drainImages(uint32_t waitItvlUs)
-{
+void CameraDeviceSessionHwlImpl::ImgProcThread::drainImages(uint32_t waitItvlUs) {
     Mutex::Autolock _l(mImageListLock);
     int cycle = 0;
 
@@ -1825,7 +1797,7 @@ void CameraDeviceSessionHwlImpl::ImgProcThread::drainImages(uint32_t waitItvlUs)
     /* Even list size is 0, may still has on-fly image under processing, so compare the idx */
     while (mLatestImageIdx != mProcdImageIdx) {
         ALOGW("%s: mLatestImageIdx %lu, mProcdImageIdx %lu, list size %zu, wait %d us, cycle %d",
-            __func__, mLatestImageIdx, mProcdImageIdx, mImageList.size(), waitItvlUs, cycle);
+              __func__, mLatestImageIdx, mProcdImageIdx, mImageList.size(), waitItvlUs, cycle);
 
         cycle++;
         mImageListLock.unlock();
@@ -1833,13 +1805,13 @@ void CameraDeviceSessionHwlImpl::ImgProcThread::drainImages(uint32_t waitItvlUs)
         mImageListLock.lock();
     }
 
-    ALOGI("%s: leave, mLatestImageIdx %lu, mProcdImageIdx %lu", __func__, mLatestImageIdx, mProcdImageIdx);
+    ALOGI("%s: leave, mLatestImageIdx %lu, mProcdImageIdx %lu", __func__, mLatestImageIdx,
+          mProcdImageIdx);
 
     return;
 }
 
-void CameraDeviceSessionHwlImpl::DestroyPipelines()
-{
+void CameraDeviceSessionHwlImpl::DestroyPipelines() {
     ALOGI("enter %s", __func__);
 
     Mutex::Autolock _l(mLock);
@@ -1851,14 +1823,15 @@ void CameraDeviceSessionHwlImpl::DestroyPipelines()
 
     /* If still has on-fly requests from map_frame_request, wait to finish */
     while (mDeQueRequestIdx != mInQueRequestIdx) {
-        ALOGW("%s: still has requests to process, wait %d us, DeQueIdx %lu, InQueIdx %lu",
-            __func__, WAIT_ITVL_US, mDeQueRequestIdx, mInQueRequestIdx);
+        ALOGW("%s: still has requests to process, wait %d us, DeQueIdx %lu, InQueIdx %lu", __func__,
+              WAIT_ITVL_US, mDeQueRequestIdx, mInQueRequestIdx);
         mLock.unlock();
         usleep(WAIT_ITVL_US);
         mLock.lock();
     }
 
-    ALOGI("%s: on on-fly requests, mDeQueRequestIdx %lu, mInQueRequestIdx %lu", __func__, mDeQueRequestIdx, mInQueRequestIdx);
+    ALOGI("%s: on on-fly requests, mDeQueRequestIdx %lu, mInQueRequestIdx %lu", __func__,
+          mDeQueRequestIdx, mInQueRequestIdx);
 
     mImgProcThread->drainImages(WAIT_ITVL_US);
 
@@ -1867,17 +1840,17 @@ void CameraDeviceSessionHwlImpl::DestroyPipelines()
     /* clear  map_pipeline_info */
     for (auto it = map_pipeline_info.begin(); it != map_pipeline_info.end(); it++) {
         auto pInfo = it->second;
-        if(pInfo == NULL) {
+        if (pInfo == NULL) {
             ALOGW("%s, no pipeline info for id %u", __func__, it->first);
             continue;
         }
 
-        if(pInfo->streams) {
+        if (pInfo->streams) {
             pInfo->streams->clear();
             delete pInfo->streams;
         }
 
-        if(pInfo->hal_streams) {
+        if (pInfo->hal_streams) {
             pInfo->hal_streams->clear();
             delete pInfo->hal_streams;
         }
@@ -1892,9 +1865,8 @@ void CameraDeviceSessionHwlImpl::DestroyPipelines()
     setDstPhyAddr.clear();
 }
 
-status_t CameraDeviceSessionHwlImpl::SubmitRequests(
-    uint32_t frame_number, std::vector<HwlPipelineRequest> &requests)
-{
+status_t CameraDeviceSessionHwlImpl::SubmitRequests(uint32_t frame_number,
+                                                    std::vector<HwlPipelineRequest> &requests) {
     int size = requests.size();
     std::vector<FrameRequest> *frame_request = new std::vector<FrameRequest>(size);
 
@@ -1902,11 +1874,8 @@ status_t CameraDeviceSessionHwlImpl::SubmitRequests(
         uint32_t pipeline_id = requests[i].pipeline_id;
 
         if (mDebug)
-            ALOGI("%s, frame_number %d, pipeline_id %d, outbuffer num %d",
-                __func__,
-                frame_number,
-                (int)pipeline_id,
-                (int)requests[i].output_buffers.size());
+            ALOGI("%s, frame_number %d, pipeline_id %d, outbuffer num %d", __func__, frame_number,
+                  (int)pipeline_id, (int)requests[i].output_buffers.size());
 
         frame_request->at(i).idx = i;
         frame_request->at(i).num = size;
@@ -1915,11 +1884,14 @@ status_t CameraDeviceSessionHwlImpl::SubmitRequests(
         frame_request->at(i).hwlReq.pipeline_id = pipeline_id;
         frame_request->at(i).hwlReq.settings = HalCameraMetadata::Clone(requests[i].settings.get());
         frame_request->at(i).hwlReq.output_buffers.reserve(requests[i].output_buffers.size());
-        frame_request->at(i).hwlReq.output_buffers.assign(requests[i].output_buffers.begin(), requests[i].output_buffers.end());
+        frame_request->at(i).hwlReq.output_buffers.assign(requests[i].output_buffers.begin(),
+                                                          requests[i].output_buffers.end());
 
         frame_request->at(i).hwlReq.input_buffers.reserve(requests[i].input_buffers.size());
-        frame_request->at(i).hwlReq.input_buffers.assign(requests[i].input_buffers.begin(), requests[i].input_buffers.end());
-        frame_request->at(i).hwlReq.input_buffer_metadata.reserve(requests[i].input_buffer_metadata.size());
+        frame_request->at(i).hwlReq.input_buffers.assign(requests[i].input_buffers.begin(),
+                                                         requests[i].input_buffers.end());
+        frame_request->at(i).hwlReq.input_buffer_metadata.reserve(
+                requests[i].input_buffer_metadata.size());
 
         frame_request->at(i).camera_ids.reserve(camera_ids.size());
         frame_request->at(i).camera_ids.assign(camera_ids.begin(), camera_ids.end());
@@ -1929,7 +1901,8 @@ status_t CameraDeviceSessionHwlImpl::SubmitRequests(
         frame_request->at(i).outBufferFences.resize(outBufNum);
         for (int j = 0; j < (int)outBufNum; j++) {
             FenceFdInfo fenceInfo = {-1, -1};
-            fenceInfo.acquire_fence_fd = importFence(requests[i].output_buffers[j].acquire_fence, mDebug);
+            fenceInfo.acquire_fence_fd =
+                    importFence(requests[i].output_buffers[j].acquire_fence, mDebug);
             ALOGV("%s, acquire_fence_fd %d", __func__, fenceInfo.acquire_fence_fd);
             frame_request->at(i).outBufferFences[j] = fenceInfo;
         }
@@ -1952,15 +1925,14 @@ status_t CameraDeviceSessionHwlImpl::SubmitRequests(
     return OK;
 }
 
-int CameraDeviceSessionHwlImpl::CleanRequestsLocked()
-{
+int CameraDeviceSessionHwlImpl::CleanRequestsLocked() {
     if (map_frame_request.empty())
         return 0;
 
     for (auto it = map_frame_request.begin(); it != map_frame_request.end(); it++) {
         uint32_t frame = it->first;
         std::vector<FrameRequest> *request = it->second;
-        if(request == NULL) {
+        if (request == NULL) {
             ALOGW("%s: frame %d request is null", __func__, frame);
             continue;
         }
@@ -1968,8 +1940,7 @@ int CameraDeviceSessionHwlImpl::CleanRequestsLocked()
         uint32_t reqNum = request->size();
         ALOGV("%s, map_frame_request, frame %d, reqNum %d", __func__, frame, reqNum);
 
-        for (uint32_t i = 0; i < reqNum; i++)
-            ReleaseFrameRequest(request->at(i));
+        for (uint32_t i = 0; i < reqNum; i++) ReleaseFrameRequest(request->at(i));
 
         request->clear();
         delete request;
@@ -1980,14 +1951,12 @@ int CameraDeviceSessionHwlImpl::CleanRequestsLocked()
     return 0;
 }
 
-status_t CameraDeviceSessionHwlImpl::Flush()
-{
-    //TODO need refine for multi camera??
+status_t CameraDeviceSessionHwlImpl::Flush() {
+    // TODO need refine for multi camera??
     return OK;
 }
 
-uint32_t CameraDeviceSessionHwlImpl::GetCameraId() const
-{
+uint32_t CameraDeviceSessionHwlImpl::GetCameraId() const {
     return camera_id_;
 }
 
@@ -1997,13 +1966,13 @@ std::vector<uint32_t> CameraDeviceSessionHwlImpl::GetPhysicalCameraIds() const {
         return std::vector<uint32_t>{};
     }
 
-    if ((physical_meta_map_.get() == nullptr) ) {
+    if ((physical_meta_map_.get() == nullptr)) {
         ALOGW("%s: GetPhysicalCameraIds is null", __func__);
         return std::vector<uint32_t>{};
     }
     std::vector<uint32_t> ret;
     ret.reserve(physical_meta_map_->size());
-    for (const auto& it : *physical_meta_map_) {
+    for (const auto &it : *physical_meta_map_) {
         ret.push_back(it.first);
     }
 
@@ -2011,8 +1980,7 @@ std::vector<uint32_t> CameraDeviceSessionHwlImpl::GetPhysicalCameraIds() const {
 }
 
 status_t CameraDeviceSessionHwlImpl::GetCameraCharacteristics(
-    std::unique_ptr<HalCameraMetadata> *characteristics) const
-{
+        std::unique_ptr<HalCameraMetadata> *characteristics) const {
     if (characteristics == nullptr) {
         return BAD_VALUE;
     }
@@ -2027,7 +1995,7 @@ status_t CameraDeviceSessionHwlImpl::GetCameraCharacteristics(
 }
 
 status_t CameraDeviceSessionHwlImpl::GetPhysicalCameraCharacteristics(
-    uint32_t physical_camera_id, std::unique_ptr<HalCameraMetadata>* characteristics) const {
+        uint32_t physical_camera_id, std::unique_ptr<HalCameraMetadata> *characteristics) const {
     if (characteristics == nullptr) {
         return BAD_VALUE;
     }
@@ -2038,8 +2006,8 @@ status_t CameraDeviceSessionHwlImpl::GetPhysicalCameraCharacteristics(
     }
 
     if (physical_meta_map_->find(physical_camera_id) == physical_meta_map_->end()) {
-        ALOGE("%s: Camera: %d doesn't include physical device with id: %u",
-            __FUNCTION__, camera_id_, physical_camera_id);
+        ALOGE("%s: Camera: %d doesn't include physical device with id: %u", __FUNCTION__,
+              camera_id_, physical_camera_id);
         return BAD_VALUE;
     }
 
@@ -2048,31 +2016,29 @@ status_t CameraDeviceSessionHwlImpl::GetPhysicalCameraCharacteristics(
 }
 
 status_t CameraDeviceSessionHwlImpl::ConstructDefaultRequestSettings(
-    RequestTemplate type, std::unique_ptr<HalCameraMetadata> *default_settings)
-{
+        RequestTemplate type, std::unique_ptr<HalCameraMetadata> *default_settings) {
     Mutex::Autolock _l(mLock);
 
     return m_meta->getRequestSettings(type, default_settings);
 }
 
-int CameraDeviceSessionHwlImpl::getCapsMode(uint8_t sceneMode)
-{
+int CameraDeviceSessionHwlImpl::getCapsMode(uint8_t sceneMode) {
     bool bHdr = (sceneMode == ANDROID_CONTROL_SCENE_MODE_HDR);
 
-    for(unsigned int i = 0; i < caps_supports.count; i++) {
+    for (unsigned int i = 0; i < caps_supports.count; i++) {
         struct viv_caps_mode_info_s &mode = caps_supports.mode[i];
-        if ( ((bHdr && mode.hdr_mode > 0) || (!bHdr && mode.hdr_mode == 0)) &&
-             (mMaxWidth == (int)mode.bounds_width) && (mMaxHeight == (int)mode.bounds_height) ) {
+        if (((bHdr && mode.hdr_mode > 0) || (!bHdr && mode.hdr_mode == 0)) &&
+            (mMaxWidth == (int)mode.bounds_width) && (mMaxHeight == (int)mode.bounds_height)) {
             ALOGI("%s: check idx %d, find ISP mode %d for size %dx%d, bHdr %d, caps count %d",
-                __func__, i, mode.index, mMaxWidth, mMaxHeight, bHdr, caps_supports.count);
+                  __func__, i, mode.index, mMaxWidth, mMaxHeight, bHdr, caps_supports.count);
             return mode.index;
         }
     }
 
-    ALOGW("%s: can't find ISP mode for size %dx%d, bHdr %d, caps count %d, just return 0",
-        __func__, mMaxWidth, mMaxHeight, bHdr, caps_supports.count);
+    ALOGW("%s: can't find ISP mode for size %dx%d, bHdr %d, caps count %d, just return 0", __func__,
+          mMaxWidth, mMaxHeight, bHdr, caps_supports.count);
 
     return 0;
 }
 
-}  // namespace android
+} // namespace android

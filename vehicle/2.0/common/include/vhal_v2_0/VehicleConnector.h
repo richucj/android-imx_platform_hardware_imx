@@ -17,10 +17,10 @@
 #ifndef android_hardware_automotive_vehicle_V2_0_VehicleConnector_H_
 #define android_hardware_automotive_vehicle_V2_0_VehicleConnector_H_
 
-#include <vector>
-
 #include <android/hardware/automotive/vehicle/2.0/types.h>
 #include <utils/Log.h>
+
+#include <vector>
 
 #include "VehicleClient.h"
 #include "VehicleServer.h"
@@ -59,7 +59,7 @@ class IPassThroughConnector : public VehicleClientType, public VehicleServerType
     static_assert(std::is_base_of_v<IVehicleClient, VehicleClientType>);
     static_assert(std::is_base_of_v<IVehicleServer, VehicleServerType>);
 
-  public:
+public:
     std::vector<VehiclePropConfig> getAllPropertyConfig() const override {
         return this->onGetAllPropertyConfig();
     }
@@ -96,10 +96,10 @@ class IPassThroughConnector : public VehicleClientType, public VehicleServerType
     // virtual StatusCode onSetProperty(const VehiclePropValue& value) = 0;
 };
 
-}  // namespace V2_0
-}  // namespace vehicle
-}  // namespace automotive
-}  // namespace hardware
-}  // namespace android
+} // namespace V2_0
+} // namespace vehicle
+} // namespace automotive
+} // namespace hardware
+} // namespace android
 
-#endif  // android_hardware_automotive_vehicle_V2_0_VehicleConnector_H_
+#endif // android_hardware_automotive_vehicle_V2_0_VehicleConnector_H_

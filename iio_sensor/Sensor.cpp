@@ -19,25 +19,25 @@
 
 #include "Sensor.h"
 #ifdef CONFIG_LEGACY_SENSOR
+#include "AccMagSensor.h"
+#include "AnglvelSensor.h"
 #include "LightSensor.h"
 #include "PressureSensor.h"
-#include "AnglvelSensor.h"
 #include "StepCounterSensor.h"
-#include "AccMagSensor.h"
 #else
 #include "StepCounterSensor.h"
 #endif
 
 namespace nxp_sensors_subhal {
 
+using ::android::BAD_VALUE;
+using ::android::OK;
 using ::android::hardware::sensors::V1_0::AdditionalInfoType;
 using ::sensor::hal::configuration::V1_0::Location;
 using ::sensor::hal::configuration::V1_0::Orientation;
-using ::android::OK;
-using ::android::BAD_VALUE;
 
 SensorBase::SensorBase(int32_t sensorHandle, ISensorsEventCallback* callback, SensorType type)
-    : mIsEnabled(false), mSamplingPeriodNs(0), mCallback(callback), mMode(OperationMode::NORMAL) {
+      : mIsEnabled(false), mSamplingPeriodNs(0), mCallback(callback), mMode(OperationMode::NORMAL) {
     mSensorInfo.type = type;
     mSensorInfo.sensorHandle = sensorHandle;
     mSensorInfo.vendor = "nxp";
@@ -45,8 +45,7 @@ SensorBase::SensorBase(int32_t sensorHandle, ISensorsEventCallback* callback, Se
     mSensorInfo.fifoReservedEventCount = 0;
     mSensorInfo.fifoMaxEventCount = 100;
     mSensorInfo.requiredPermission = "";
-    mSensorInfo.flags = SensorFlagBits::DATA_INJECTION |
-                 SensorFlagBits::CONTINUOUS_MODE;
+    mSensorInfo.flags = SensorFlagBits::DATA_INJECTION | SensorFlagBits::CONTINUOUS_MODE;
     switch (type) {
         case SensorType::ACCELEROMETER:
             mSensorInfo.typeAsString = SENSOR_STRING_TYPE_ACCELEROMETER;
@@ -75,11 +74,9 @@ SensorBase::SensorBase(int32_t sensorHandle, ISensorsEventCallback* callback, Se
     }
 }
 
-SensorBase::~SensorBase() {
-}
+SensorBase::~SensorBase() {}
 
-HWSensorBase::~HWSensorBase() {
-}
+HWSensorBase::~HWSensorBase() {}
 
 const SensorInfo& SensorBase::getSensorInfo() const {
     return mSensorInfo;
@@ -89,16 +86,16 @@ void HWSensorBase::batch(int32_t samplingPeriodNs) {
     samplingPeriodNs =
             std::clamp(samplingPeriodNs, mSensorInfo.minDelay * 1000, mSensorInfo.maxDelay * 1000);
     if (mSamplingPeriodNs != samplingPeriodNs) {
-        //TODO: currently we still not support batch, disable it here.
-        //unsigned int sampling_frequency = ns_to_frequency(samplingPeriodNs);
-        //int i = 0;
-        //mSamplingPeriodNs = samplingPeriodNs;
-        //std::vector<double>::iterator low =
-        //        std::lower_bound(mIioData.sampling_freq_avl.begin(),
-        //                         mIioData.sampling_freq_avl.end(), sampling_frequency);
-        //i = low - mIioData.sampling_freq_avl.begin();
-        //set_sampling_frequency(mIioData.sysfspath, mIioData.sampling_freq_avl[i]);
-        // Wake up the 'run' thread to check if a new event should be generated now
+        // TODO: currently we still not support batch, disable it here.
+        // unsigned int sampling_frequency = ns_to_frequency(samplingPeriodNs);
+        // int i = 0;
+        // mSamplingPeriodNs = samplingPeriodNs;
+        // std::vector<double>::iterator low =
+        //         std::lower_bound(mIioData.sampling_freq_avl.begin(),
+        //                          mIioData.sampling_freq_avl.end(), sampling_frequency);
+        // i = low - mIioData.sampling_freq_avl.begin();
+        // set_sampling_frequency(mIioData.sysfspath, mIioData.sampling_freq_avl[i]);
+        //  Wake up the 'run' thread to check if a new event should be generated now
         mWaitCV.notify_all();
     }
 }
@@ -115,7 +112,8 @@ void HWSensorBase::sendAdditionalInfoReport() {
         });
     }
 
-    if (!events.empty()) mCallback->postEvents(events, isWakeUpSensor());
+    if (!events.empty())
+        mCallback->postEvents(events, isWakeUpSensor());
 }
 
 void HWSensorBase::activate(bool enable) {
@@ -223,16 +221,20 @@ static status_t checkAxis(int64_t map) {
 
 static std::optional<std::vector<Orientation>> getOrientation(
         std::optional<std::vector<Configuration>> config) {
-    if (!config) return std::nullopt;
-    if (config->empty()) return std::nullopt;
+    if (!config)
+        return std::nullopt;
+    if (config->empty())
+        return std::nullopt;
     Configuration& sensorCfg = (*config)[0];
     return sensorCfg.getOrientation();
 }
 
 static std::optional<std::vector<Location>> getLocation(
         std::optional<std::vector<Configuration>> config) {
-    if (!config) return std::nullopt;
-    if (config->empty()) return std::nullopt;
+    if (!config)
+        return std::nullopt;
+    if (config->empty())
+        return std::nullopt;
     Configuration& sensorCfg = (*config)[0];
     return sensorCfg.getLocation();
 }
@@ -240,8 +242,10 @@ static std::optional<std::vector<Location>> getLocation(
 static status_t checkOrientation(std::optional<std::vector<Configuration>> config) {
     status_t ret = OK;
     std::optional<std::vector<Orientation>> sensorOrientationList = getOrientation(config);
-    if (!sensorOrientationList) return OK;
-    if (sensorOrientationList->empty()) return OK;
+    if (!sensorOrientationList)
+        return OK;
+    if (sensorOrientationList->empty())
+        return OK;
     Orientation& sensorOrientation = (*sensorOrientationList)[0];
     if (!sensorOrientation.getFirstX() || !sensorOrientation.getFirstY() ||
         !sensorOrientation.getFirstZ())
@@ -249,14 +253,18 @@ static status_t checkOrientation(std::optional<std::vector<Configuration>> confi
 
     int64_t xMap = sensorOrientation.getFirstX()->getMap();
     ret = checkAxis(xMap);
-    if (ret != OK) return ret;
+    if (ret != OK)
+        return ret;
     int64_t yMap = sensorOrientation.getFirstY()->getMap();
     ret = checkAxis(yMap);
-    if (ret != OK) return ret;
+    if (ret != OK)
+        return ret;
     int64_t zMap = sensorOrientation.getFirstZ()->getMap();
     ret = checkAxis(zMap);
-    if (ret != OK) return ret;
-    if (xMap == yMap || yMap == zMap || zMap == xMap) return BAD_VALUE;
+    if (ret != OK)
+        return ret;
+    if (xMap == yMap || yMap == zMap || zMap == xMap)
+        return BAD_VALUE;
     return ret;
 }
 
@@ -291,17 +299,20 @@ void HWSensorBase::setOrientation(std::optional<std::vector<Configuration>> conf
 static status_t checkIIOData(const struct iio_device_data& iio_data) {
     status_t ret = OK;
     for (auto i = 0u; i < iio_data.channelInfo.size(); i++) {
-        if (iio_data.channelInfo[i].index > NUM_OF_DATA_CHANNELS) return BAD_VALUE;
+        if (iio_data.channelInfo[i].index > NUM_OF_DATA_CHANNELS)
+            return BAD_VALUE;
     }
     return ret;
 }
 
 static status_t setSensorPlacementData(AdditionalInfo* sensorPlacement, int index, float value) {
-    if (!sensorPlacement) return BAD_VALUE;
+    if (!sensorPlacement)
+        return BAD_VALUE;
 
     int arraySize =
             sizeof(sensorPlacement->u.data_float) / sizeof(sensorPlacement->u.data_float[0]);
-    if (index < 0 || index >= arraySize) return BAD_VALUE;
+    if (index < 0 || index >= arraySize)
+        return BAD_VALUE;
 
     sensorPlacement->u.data_float[index] = value;
     return OK;
@@ -309,15 +320,20 @@ static status_t setSensorPlacementData(AdditionalInfo* sensorPlacement, int inde
 
 status_t HWSensorBase::getSensorPlacement(AdditionalInfo* sensorPlacement,
                                           const std::optional<std::vector<Configuration>>& config) {
-    if (!sensorPlacement) return BAD_VALUE;
+    if (!sensorPlacement)
+        return BAD_VALUE;
 
     auto sensorLocationList = getLocation(config);
-    if (!sensorLocationList) return BAD_VALUE;
-    if (sensorLocationList->empty()) return BAD_VALUE;
+    if (!sensorLocationList)
+        return BAD_VALUE;
+    if (sensorLocationList->empty())
+        return BAD_VALUE;
 
     auto sensorOrientationList = getOrientation(config);
-    if (!sensorOrientationList) return BAD_VALUE;
-    if (sensorOrientationList->empty()) return BAD_VALUE;
+    if (!sensorOrientationList)
+        return BAD_VALUE;
+    if (sensorOrientationList->empty())
+        return BAD_VALUE;
 
     sensorPlacement->type = AdditionalInfoType::AINFO_SENSOR_PLACEMENT;
     sensorPlacement->serial = 0;
@@ -334,13 +350,16 @@ status_t HWSensorBase::getSensorPlacement(AdditionalInfo* sensorPlacement,
     // vector (l1,l2,l3) in the raw buffer.
     status_t ret = setSensorPlacementData(sensorPlacement, HWSensorBase::LOCATION_X_IDX,
                                           sensorLocation.getX());
-    if (ret != OK) return ret;
+    if (ret != OK)
+        return ret;
     ret = setSensorPlacementData(sensorPlacement, HWSensorBase::LOCATION_Y_IDX,
                                  sensorLocation.getY());
-    if (ret != OK) return ret;
+    if (ret != OK)
+        return ret;
     ret = setSensorPlacementData(sensorPlacement, HWSensorBase::LOCATION_Z_IDX,
                                  sensorLocation.getZ());
-    if (ret != OK) return ret;
+    if (ret != OK)
+        return ret;
 
     Orientation& sensorOrientation = (*sensorOrientationList)[0];
     if (sensorOrientation.getRotate()) {
@@ -349,27 +368,33 @@ status_t HWSensorBase::getSensorPlacement(AdditionalInfo* sensorPlacement,
         // ROTATION_X_IDX, ROTATION_Y_IDX, ROTATION_Z_IDX corresponds to indexes of the
         // (x1,y1,z1) in the raw buffer.
         ret = setSensorPlacementData(sensorPlacement, HWSensorBase::ROTATION_X_IDX + 0, 1);
-        if (ret != OK) return ret;
+        if (ret != OK)
+            return ret;
         ret = setSensorPlacementData(sensorPlacement, HWSensorBase::ROTATION_Y_IDX + 4, 1);
-        if (ret != OK) return ret;
+        if (ret != OK)
+            return ret;
         ret = setSensorPlacementData(sensorPlacement, HWSensorBase::ROTATION_Z_IDX + 8, 1);
-        if (ret != OK) return ret;
+        if (ret != OK)
+            return ret;
     } else {
-        ret = setSensorPlacementData(
-                sensorPlacement,
-                HWSensorBase::ROTATION_X_IDX + 4 * sensorOrientation.getFirstX()->getMap(),
-                sensorOrientation.getFirstX()->getNegate() ? -1 : 1);
-        if (ret != OK) return ret;
-        ret = setSensorPlacementData(
-                sensorPlacement,
-                HWSensorBase::ROTATION_Y_IDX + 4 * sensorOrientation.getFirstY()->getMap(),
-                sensorOrientation.getFirstY()->getNegate() ? -1 : 1);
-        if (ret != OK) return ret;
-        ret = setSensorPlacementData(
-                sensorPlacement,
-                HWSensorBase::ROTATION_Z_IDX + 4 * sensorOrientation.getFirstZ()->getMap(),
-                sensorOrientation.getFirstZ()->getNegate() ? -1 : 1);
-        if (ret != OK) return ret;
+        ret = setSensorPlacementData(sensorPlacement,
+                                     HWSensorBase::ROTATION_X_IDX +
+                                             4 * sensorOrientation.getFirstX()->getMap(),
+                                     sensorOrientation.getFirstX()->getNegate() ? -1 : 1);
+        if (ret != OK)
+            return ret;
+        ret = setSensorPlacementData(sensorPlacement,
+                                     HWSensorBase::ROTATION_Y_IDX +
+                                             4 * sensorOrientation.getFirstY()->getMap(),
+                                     sensorOrientation.getFirstY()->getNegate() ? -1 : 1);
+        if (ret != OK)
+            return ret;
+        ret = setSensorPlacementData(sensorPlacement,
+                                     HWSensorBase::ROTATION_Z_IDX +
+                                             4 * sensorOrientation.getFirstZ()->getMap(),
+                                     sensorOrientation.getFirstZ()->getNegate() ? -1 : 1);
+        if (ret != OK)
+            return ret;
     }
     return OK;
 }
@@ -378,7 +403,8 @@ status_t HWSensorBase::setAdditionalInfoFrames(
         const std::optional<std::vector<Configuration>>& config) {
     AdditionalInfo additionalInfoSensorPlacement;
     status_t ret = getSensorPlacement(&additionalInfoSensorPlacement, config);
-    if (ret != OK) return ret;
+    if (ret != OK)
+        return ret;
 
     const AdditionalInfo additionalInfoBegin = {
             .type = AdditionalInfoType::AINFO_BEGIN,
@@ -389,9 +415,9 @@ status_t HWSensorBase::setAdditionalInfoFrames(
             .serial = 0,
     };
 
-    mAdditionalInfoFrames.insert(
-            mAdditionalInfoFrames.end(),
-            {additionalInfoBegin, additionalInfoSensorPlacement, additionalInfoEnd});
+    mAdditionalInfoFrames.insert(mAdditionalInfoFrames.end(),
+                                 {additionalInfoBegin, additionalInfoSensorPlacement,
+                                  additionalInfoEnd});
     return OK;
 }
 
@@ -432,16 +458,17 @@ HWSensorBase* HWSensorBase::buildSensor(int32_t sensorHandle, ISensorsEventCallb
 HWSensorBase::HWSensorBase(int32_t sensorHandle, ISensorsEventCallback* callback,
                            const struct iio_device_data& data,
                            const std::optional<std::vector<Configuration>>& config)
-    : SensorBase(sensorHandle, callback, data.type) {
+      : SensorBase(sensorHandle, callback, data.type) {
     mSensorInfo.name = data.name;
     mSensorInfo.resolution = data.resolution;
     mSensorInfo.maxRange = data.max_range * data.scale;
     mSensorInfo.power =
-            (data.power_microwatts / 1000.f) / SENSOR_VOLTAGE_DEFAULT;  // converting uW to mA
+            (data.power_microwatts / 1000.f) / SENSOR_VOLTAGE_DEFAULT; // converting uW to mA
     mIioData = data;
     setOrientation(config);
     status_t ret = setAdditionalInfoFrames(config);
-    if (ret == OK) mSensorInfo.flags |= SensorFlagBits::ADDITIONAL_INFO;
+    if (ret == OK)
+        mSensorInfo.flags |= SensorFlagBits::ADDITIONAL_INFO;
     unsigned int max_sampling_frequency = 0;
     unsigned int min_sampling_frequency = UINT_MAX;
     for (auto i = 0u; i < data.sampling_freq_avl.size(); i++) {
@@ -458,4 +485,4 @@ HWSensorBase::HWSensorBase(int32_t sensorHandle, ISensorsEventCallback* callback
     mSensorRawData.resize(mScanSize);
 }
 
-}  // namespace implementation
+} // namespace nxp_sensors_subhal

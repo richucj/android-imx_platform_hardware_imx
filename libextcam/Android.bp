@@ -1,0 +1,114 @@
+//
+// Copyright (C) 2020 The Android Open Source Project
+// Copyright 2023 NXP.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//      http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+//
+
+imx_ext_cam_aidl_defaults {
+    name: "imx_ext_cam_aidl_defaults",
+}
+
+bootstrap_go_package {
+    name: "soong-ext_cam_aidl",
+    pkgPath: "android/soong/vendor/nxp-opensource/imx/libextcam",
+    deps: [
+        "blueprint",
+        "blueprint-pathtools",
+        "soong",
+        "soong-android",
+        "soong-cc",
+        "soong-genrule",
+    ],
+    srcs: [
+        "ext_cam_aidl.go",
+    ],
+    pluginFor: ["soong_build"],
+}
+
+cc_library_shared {
+    name: "camera.device-external-imx-impl",
+    defaults: ["hidl_defaults", "imx_ext_cam_aidl_defaults"],
+    proprietary: true,
+    srcs: [
+        "ExternalCameraDevice.cpp",
+        "ExternalCameraDeviceSession.cpp",
+        "ExternalCameraOfflineSession.cpp",
+        "ExternalCameraUtils.cpp",
+        "convert.cpp",
+        "DecoderDev.cpp",
+        "HwDecoder.cpp",
+        "ImageProcess.cpp",
+    ],
+
+    cflags: [
+        "-Wunused-variable",
+        "-Wno-unused-parameter",
+    ],
+
+    shared_libs: [
+        "android.hardware.camera.common-V1-ndk",
+        "android.hardware.camera.device-V1-ndk",
+        "android.hardware.graphics.allocator-V1-ndk",
+        "android.hardware.graphics.common-V4-ndk",
+        "android.hardware.graphics.mapper@2.0",
+        "android.hardware.graphics.mapper@3.0",
+        "android.hardware.graphics.mapper@4.0",
+        "android.hidl.allocator@1.0",
+        "android.hidl.memory@1.0",
+        "libbinder_ndk",
+        "libcamera_metadata",
+        "libcutils",
+        "libexif",
+        "libfmq",
+        "libgralloctypes",
+        "libhardware",
+        "libhidlbase",
+        "libhidlmemory",
+        "libjpeg",
+        "liblog",
+        "libsync",
+        "libtinyxml2",
+        "libutils",
+        "libyuv",
+        "libstagefright_foundation",
+        "libfsldisplay",
+        "libbase",
+    ],
+    static_libs: [
+        "android.hardware.camera.common@1.0-helper",
+        "libaidlcommonsupport",
+    ],
+    header_libs: [
+        "media_plugin_headers",
+        "libcodec2_headers",
+    ],
+
+    include_dirs: [
+        "vendor/nxp-opensource/imx/include",
+        "vendor/nxp-opensource/imx/opencl-2d",
+        "vendor/nxp-opensource/imx/display/display",
+        "vendor/nxp-opensource/libdrm-imx",
+        "vendor/nxp-opensource/libdrm-imx/include/drm",
+        "vendor/nxp/imx_android_mm/extractor",
+        "vendor/nxp/fsl-proprietary/include",
+        "device/nxp/common/kernel-headers",
+        "system/core/include/system",
+        "frameworks/av/media/codec2/vndk/include",
+        "frameworks/native/libs/ui/include",
+        "frameworks/native/libs/arect/include",
+        "frameworks/native/libs/math/include",
+    ],
+
+    export_include_dirs: ["."],
+}

@@ -613,7 +613,7 @@ DumpResult FakeVehicleHardware::dump(const std::vector<std::string>& options) {
         if (options.size() == 1) {
             result.buffer = mFakeUserHal->showDumpHelp();
         } else {
-            result.buffer = mFakeUserHal->dump(options[1]);
+            result.buffer = mFakeUserHal->dump();
         }
     } else {
         result.buffer = StringPrintf("Invalid option: %s\n", option.c_str());

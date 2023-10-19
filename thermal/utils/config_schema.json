@@ -22,7 +22,6 @@
           "Name",
           "Type",
           "HotThreshold",
-          "VrThreshold",
           "Multiplier"
         ],
         "properties":{
@@ -146,16 +145,6 @@
                 2.0
               ]
             }
-          },
-          "VrThreshold":{
-            "$id":"#/properties/Sensors/items/properties/VrThreshold",
-            "type":"string",
-            "title":"The Vrthreshold Schema",
-            "default":"",
-            "examples":[
-              "NAN"
-            ],
-            "pattern":"^(.*)$"
           },
           "Multiplier":{
             "$id":"#/properties/Sensors/items/properties/Multiplier",

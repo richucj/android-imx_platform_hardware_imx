@@ -1,5 +1,6 @@
 /*
  * Copyright (C) 2018 The Android Open Source Project
+ * Copyright 2023 NXP
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -14,17 +15,19 @@
  * limitations under the License.
  */
 
-#ifndef THERMAL_UTILS_THERMAL_FILES_H_
-#define THERMAL_UTILS_THERMAL_FILES_H_
+#pragma once
 
+#include <algorithm>
 #include <string>
+#include <string_view>
 #include <unordered_map>
+#include <queue>
 
-namespace android {
-namespace hardware {
-namespace thermal {
-namespace V2_0 {
-namespace implementation {
+#include <android-base/file.h>
+#include <android-base/logging.h>
+#include <android-base/strings.h>
+
+namespace aidl::android::hardware::thermal::impl::imx {
 
 class ThermalFiles {
   public:
@@ -46,10 +49,4 @@ class ThermalFiles {
     std::unordered_map<std::string, std::string> thermal_name_to_path_map_;
 };
 
-}  // namespace implementation
-}  // namespace V2_0
-}  // namespace thermal
-}  // namespace hardware
-}  // namespace android
-
-#endif  // THERMAL_UTILS_THERMAL_FILES_H_
+} // namespace aidl::android::hardware::thermal::impl::imx
