@@ -21,24 +21,8 @@ package {
 
 cc_binary {
     name: "imx_evs_app",
-
-    srcs: [
-        "evs_app.cpp",
-        "EvsStateControl.cpp",
-        "EvsStats.cpp",
-        "RenderBase.cpp",
-        "RenderDirectView.cpp",
-        "RenderTopView.cpp",
-        "ConfigManager.cpp",
-        "glError.cpp",
-        "shader.cpp",
-        "TexWrapper.cpp",
-        "VideoTex.cpp",
-        "StreamHandler.cpp",
-        "FormatConvert.cpp",
-        "RenderPixelCopy.cpp",
-    ],
-
+    local_include_dirs: ["inc"],
+    srcs: ["src/*.cpp"],
     shared_libs: [
         "libbase",
         "libbinder_ndk",
@@ -58,13 +42,11 @@ cc_binary {
         "evs-libcartelemetry-proto",
         "libprotobuf-cpp-lite",
     ],
-
     static_libs: [
         "libmath",
         "libjsoncpp",
         "libvhalclient",
     ],
-
     required: [
         "ImxConfig.json",
         "ImxFakeCamConfig.json",
@@ -72,61 +54,47 @@ cc_binary {
         "ImxLabeledChecker.png",
     ],
     defaults: ["vhalclient_defaults"],
-
-    cflags: ["-DLOG_TAG=\"EvsApp\""] + [
+    cflags: [
+        "-DLOG_TAG=\"EvsApp\"",
         "-DGL_GLEXT_PROTOTYPES",
         "-DEGL_EGLEXT_PROTOTYPES",
-    ] + [
         "-Wall",
         "-Werror",
         "-Wunused",
         "-Wunreachable-code",
     ],
-
 }
 
 cc_library {
     name: "evs-libcartelemetry-proto",
-    srcs: [
-        ":cartelemetry-evs-proto-srcs",
-    ],
+    srcs: [":cartelemetry-evs-proto-srcs"],
     proto: {
         export_proto_headers: true,
         type: "lite",
     },
-    shared_libs: [
-        "libprotobuf-cpp-lite",
-    ],
+    shared_libs: ["libprotobuf-cpp-lite"],
 }
 
 prebuilt_etc {
     name: "ImxConfig.json",
-
-    src: "ImxConfig.json",
+    src: "res/ImxConfig.json",
     sub_dir: "automotive/evs",
-
 }
 
 prebuilt_etc {
     name: "ImxCarFromTop.png",
-
-    src: "ImxCarFromTop.png",
+    src: "res/ImxCarFromTop.png",
     sub_dir: "automotive/evs",
-
 }
 
 prebuilt_etc {
     name: "ImxLabeledChecker.png",
-
-    src: "ImxLabeledChecker.png",
+    src: "res/ImxLabeledChecker.png",
     sub_dir: "automotive/evs",
-
 }
 
 prebuilt_etc {
     name: "ImxFakeCamConfig.json",
-
-    src: "ImxFakeCamConfig.json",
+    src: "res/ImxFakeCamConfig.json",
     sub_dir: "automotive/evs",
-
 }
