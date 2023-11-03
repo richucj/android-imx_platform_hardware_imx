@@ -915,7 +915,8 @@ std::vector<SupportedV4L2Format> ExternalCameraDevice::getCandidateSupportedForm
                                                    .fourcc = fmtdesc.pixelformat};
 
                         if (format.fourcc == V4L2_PIX_FMT_Z16 && depthEnabled) {
-                            updateFpsBounds(fd, cropType, depthFpsLimits, std::move(format), outFmts);
+                            updateFpsBounds(fd, cropType, depthFpsLimits, std::move(format),
+                                            outFmts);
                         } else {
                             updateFpsBounds(fd, cropType, fpsLimits, std::move(format), outFmts);
                         }
