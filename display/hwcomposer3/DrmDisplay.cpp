@@ -17,6 +17,7 @@
 
 #include "DrmDisplay.h"
 
+#include <drm_fourcc.h>
 #include <gralloc_handle.h>
 #include <stdlib.h>
 #include <xf86drm.h>
@@ -127,7 +128,7 @@ std::tuple<HWC3::Error, std::unique_ptr<DrmAtomicRequest>> DrmDisplay::flushOver
 
     mTempBuffers.planeDrmBuffer[planeId] = buffer;
 
-    plane->setActive(true);
+    plane->setState(PLANE_STATE_ACTIVE);
     DEBUG_LOG("%s: flush overlay plane:%d, fbId=%d", __FUNCTION__, planeId,
               *buffer->mDrmFramebuffer);
     return std::make_tuple(HWC3::Error::None, std::move(request));
@@ -189,7 +190,7 @@ std::tuple<HWC3::Error, std::unique_ptr<DrmAtomicRequest>> DrmDisplay::flushPrim
 
     mTempBuffers.clientTargetDrmBuffer = buffer;
 
-    plane->setActive(true);
+    plane->setState(PLANE_STATE_ACTIVE);
     DEBUG_LOG("%s: flush primary plane:%d, fbId=%d", __FUNCTION__, planeId,
               *buffer->mDrmFramebuffer);
     return std::make_tuple(HWC3::Error::None, std::move(request));
@@ -211,16 +212,17 @@ std::tuple<HWC3::Error, ::android::base::unique_fd> DrmDisplay::commit(
     bool okay = true;
     for (const auto& pair : mPlanes) {
         DrmPlane* plane = pair.second.get();
-        if (plane->checkActive()) {
+        if (plane->checkState() == PLANE_STATE_ACTIVE) {
             sprintf(tempStr, "%d ", pair.first);
             strcat(activeStr, tempStr);
             continue;
+        } else if (plane->checkState() == PLANE_STATE_DISABLED) {
+            okay &= request->Set(plane->getId(), plane->getCrtcProperty(), 0);
+            okay &= request->Set(plane->getId(), plane->getFbProperty(), 0);
+            plane->setState(PLANE_STATE_NONE);
         }
         sprintf(tempStr, "%d ", pair.first);
         strcat(disableStr, tempStr);
-
-        okay &= request->Set(plane->getId(), plane->getCrtcProperty(), 0);
-        okay &= request->Set(plane->getId(), plane->getFbProperty(), 0);
     }
 
     int flushFenceFd = -1;
@@ -233,25 +235,53 @@ std::tuple<HWC3::Error, ::android::base::unique_fd> DrmDisplay::commit(
             modeBlobId = mConnector->getDefaultMode()->getBlobId();
         }
         okay &= request->Set(mConnector->getId(), mConnector->getCrtcProperty(), mCrtc->getId());
+        if (mConnector->getHdrMetadataProperty().getId() != (uint32_t)-1)
+            okay &= request->Set(mConnector->getId(), mConnector->getHdrMetadataProperty(),
+                                 mHdrMetadataBlobId);
         okay &= request->Set(mCrtc->getId(), mCrtc->getActiveProperty(), 1);
         okay &= request->Set(mCrtc->getId(), mCrtc->getModeProperty(), modeBlobId);
-        ALOGI("%s: do mode set for display:%d", __FUNCTION__, mId);
+        ALOGI("%s: Do mode set for display:%d", __FUNCTION__, mId);
     }
     okay &= request->Set(mCrtc->getId(), mCrtc->getOutFenceProperty(),
                          addressAsUint(&flushFenceFd));
-    okay &= request->Commit(drmFd);
 
     if (!okay) {
-        ALOGE("%s: failed to commit.", __FUNCTION__);
+        ALOGE("%s: failed to set atomic request.", __FUNCTION__);
         return std::make_tuple(HWC3::Error::NoResources, ::android::base::unique_fd());
     }
+
+#ifdef DEBUG_DUMP_REFRESH_RATE
+    nsecs_t now = dumpRefreshRateStart();
+#endif
+    int ret;
+    uint32_t i;
+    for (i = 0; i < MAX_COMMIT_RETRY_COUNT; i++) {
+        ret = request->Commit(drmFd);
+        if (ret == -EBUSY) {
+            ALOGV("%s: commit busy, try again", __FUNCTION__);
+            usleep(1000);
+            continue;
+        } else if (ret != 0) {
+            ALOGE("%s: Failed to commit request to display %d, ret=%d", __FUNCTION__, mId, ret);
+            break;
+        }
+        break;
+    }
+    if (i >= MAX_COMMIT_RETRY_COUNT) {
+        ALOGE("%s: atomic commit failed after retry", __FUNCTION__);
+        return std::make_tuple(HWC3::Error::NoResources, ::android::base::unique_fd());
+    }
+#ifdef DEBUG_DUMP_REFRESH_RATE
+    int vsyncPeriod = 1000000000UL / mActiveConfig.refreshRateHz; // convert to nanosecond
+    dumpRefreshRateEnd(mId, vsyncPeriod, now);
+#endif
 
     if (mModeSet)
         mModeSet = false;
 
-    for (auto& pair : mPlanes) {
-        DrmPlane* plane = pair.second.get();
-        plane->setActive(false);
+    for (auto& [_, plane] : mPlanes) {
+        if (plane->checkState() == PLANE_STATE_ACTIVE)
+            plane->setState(PLANE_STATE_DISABLED);
     }
     mPreviousBuffers.clientTargetDrmBuffer = mTempBuffers.clientTargetDrmBuffer;
     mPreviousBuffers.planeDrmBuffer = mTempBuffers.planeDrmBuffer;
@@ -314,7 +344,11 @@ DrmHotplugChange DrmDisplay::checkAndHandleHotplug(::android::base::borrowed_fd 
 bool DrmDisplay::setPowerMode(::android::base::borrowed_fd drmFd, DrmPower power) {
     DEBUG_LOG("%s: display:%" PRIu32, __FUNCTION__, mId);
 
-    mConnector->setPowerMode(drmFd, power);
+    if (mCrtc->getDisplayXferProperty().getId() != (uint32_t)-1) {
+        mCrtc->setLowPowerDisplay(drmFd, power);
+    } else {
+        mConnector->setPowerMode(drmFd, power);
+    }
 
     return true;
 }
@@ -359,6 +393,16 @@ uint32_t DrmDisplay::findDrmPlane(const native_handle_t* handle) {
     if (memHandle->format_modifier > 0)
         modifier = memHandle->format_modifier;
 
+#ifdef DEBUG_NXP_HWC
+    {
+        char fmt[6];
+        char* name = drmGetFormatName(format, fmt); // defined in HWC, no malloc memory
+        char* modifier_name = drmGetFormatModifierName(modifier);
+        DEBUG_LOG("%s: Checking buffer:%s :%s %s", __FUNCTION__, memHandle->name, name,
+                  modifier_name);
+        free(modifier_name);
+    }
+#endif
     uint32_t planeId = 0;
     auto it = std::find_if(mPlaneIdPool.begin(), mPlaneIdPool.end(), [&](uint32_t id) {
         if (mPlanes[id]->checkFormat(format, modifier)) {
@@ -370,14 +414,6 @@ uint32_t DrmDisplay::findDrmPlane(const native_handle_t* handle) {
     if (it != mPlaneIdPool.end()) {
         mPlaneIdPool.erase(it);
     }
-    if (planeId > 0) {
-        char fmt[6];
-        char* name = drmGetFormatName(format, fmt);
-        char* modifier_name = drmGetFormatModifierName(modifier);
-        DEBUG_LOG("%s: find suitable Drm Plane:%d for buffer:%s :%s %s", __FUNCTION__, planeId,
-                  memHandle->name, name, modifier_name);
-    }
-
     return planeId;
 }
 
@@ -433,7 +469,8 @@ void DrmDisplay::updateActiveConfig(std::shared_ptr<HalConfig> configs) {
     uint32_t width = activeConfig.width;
     uint32_t height = activeConfig.height;
     if (customizeGUIResolution(width, height, &mUiScaleType)) {
-        HalDisplayConfig newConfig{0};
+        HalDisplayConfig newConfig;
+        memset(&newConfig, 0, sizeof(newConfig));
         newConfig.width = width;
         newConfig.height = height;
         newConfig.dpiX = 160;
@@ -443,13 +480,17 @@ void DrmDisplay::updateActiveConfig(std::shared_ptr<HalConfig> configs) {
         newConfig.modeWidth = activeConfig.width;
         newConfig.modeHeight = activeConfig.height;
 
-        configs->emplace(mStartConfigId + configs->size(), newConfig);
+        // previous maximum config Id = mStartConfigId + configs->size() - 1
         mActiveConfigId = mStartConfigId + configs->size();
+        configs->emplace(mStartConfigId + configs->size(), newConfig);
+        DEBUG_LOG("%s: Add new config:%d x %d, fps=%d, mode=%d x %d", __FUNCTION__, newConfig.width,
+                  newConfig.height, newConfig.refreshRateHz, newConfig.modeWidth,
+                  newConfig.modeHeight);
     }
     mActiveConfig = (*configs)[mActiveConfigId];
 
     uint32_t format = FORMAT_RGBA8888;
-    ALOGI("Display index= %d \n"
+    ALOGI("Display Id   = %d \n"
           "configId     = %d \n"
           "xres         = %d px\n"
           "yres         = %d px\n"
@@ -482,7 +523,8 @@ void DrmDisplay::placeholderDisplayConfigs() {
     mStartConfigId = mStartConfigId + mConfigs->size();
     mConfigs->clear();
 
-    HalDisplayConfig newConfig{0};
+    HalDisplayConfig newConfig;
+    memset(&newConfig, 0, sizeof(newConfig));
     if (mActiveConfigId >= 0) {
         memcpy(&newConfig, &mActiveConfig, sizeof(HalDisplayConfig));
         newConfig.blobId = 0;
@@ -502,16 +544,47 @@ void DrmDisplay::placeholderDisplayConfigs() {
     mActiveConfig = (*mConfigs)[mActiveConfigId];
 }
 
-int DrmDisplay::createDeviceFramebuffer(DeviceComposer* composer, gralloc_handle_t* buffers,
-                                        int count) {
+int DrmDisplay::getFramebufferInfo(uint32_t* width, uint32_t* height, uint32_t* format) {
     DEBUG_LOG("%s: display:%" PRIu32, __FUNCTION__, mId);
 
-    auto ret =
-            composer->prepareDeviceFrameBuffer(mActiveConfig, mUiScaleType, buffers, count, false);
-    if (ret)
-        ALOGE("%s: failed to allocate composition buffer for display:%" PRIu32, __FUNCTION__, mId);
+    if (mUiScaleType == UI_SCALE_SOFTWARE) {
+        *width = mActiveConfig.modeWidth;
+        *height = mActiveConfig.modeHeight;
+    } else {
+        *width = mActiveConfig.width;
+        *height = mActiveConfig.height;
+    }
 
-    return ret;
+    uint32_t id = getPrimaryPlaneId();
+    DrmPlane* plane = mPlanes[id].get();
+    if (plane->checkFormatSupported(DRM_FORMAT_ABGR8888)) {
+        *format = static_cast<int>(common::PixelFormat::RGBA_8888);
+    } else if (plane->checkFormatSupported(DRM_FORMAT_XRGB8888)) {
+        // primary plane of imx8ulp use such format
+        *format = static_cast<int>(common::PixelFormat::BGRA_8888);
+    } else if (plane->checkFormatSupported(DRM_FORMAT_RGB565)) {
+        *format = static_cast<int>(common::PixelFormat::RGB_565);
+    }
+
+    return 0;
+}
+
+bool DrmDisplay::setSecureMode(::android::base::borrowed_fd drmFd, bool secure) {
+    DEBUG_LOG("%s: display:%" PRIu32, __FUNCTION__, mId);
+
+    int val = secure ? 1 : 0;
+    mConnector->setHDCPMode(drmFd, val);
+
+    return true;
+}
+
+bool DrmDisplay::setHdrMetadataBlobId(uint32_t bolbId) {
+    DEBUG_LOG("%s: display:%" PRIu32, __FUNCTION__, mId);
+
+    mHdrMetadataBlobId = bolbId;
+    mModeSet = true;
+
+    return true;
 }
 
 } // namespace aidl::android::hardware::graphics::composer3::impl

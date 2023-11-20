@@ -112,6 +112,7 @@ HWC3::Error Display::init(const std::vector<DisplayConfig>& configs, int32_t act
     if (edid.has_value()) {
         mEdid = *edid;
     }
+    mEdidParser = std::make_unique<Edid>(mEdid);
 
     auto it = mConfigs.find(*mActiveConfigId);
     if (it == mConfigs.end()) {
@@ -162,7 +163,7 @@ HWC3::Error Display::createLayer(int64_t* outLayerId) {
 
     std::unique_lock<std::recursive_mutex> lock(mStateMutex);
 
-    auto layer = std::make_unique<Layer>();
+    auto layer = std::make_unique<Layer>(mEdidParser.get());
 
     const int64_t layerId = layer->getId();
     DEBUG_LOG("%s: created layer:%" PRId64, __FUNCTION__, layerId);
@@ -184,6 +185,8 @@ HWC3::Error Display::destroyLayer(int64_t layerId) {
         ALOGE("%s display:%" PRId64 " has no such layer:%." PRId64, __FUNCTION__, mId, layerId);
         return HWC3::Error::BadLayer;
     }
+
+    mComposer->onDisplayLayerDestroy(this, mLayers[layerId].get());
 
     mOrderedLayers.erase(std::remove_if(mOrderedLayers.begin(), //
                                         mOrderedLayers.end(),   //
@@ -247,7 +250,7 @@ HWC3::Error Display::getDisplayCapabilities(std::vector<DisplayCapability>* outC
     DEBUG_LOG("%s: display:%" PRId64, __FUNCTION__, mId);
 
     outCapabilities->clear();
-    outCapabilities->push_back(DisplayCapability::SKIP_CLIENT_COLOR_TRANSFORM);
+    for (auto& cap : mCapability) outCapabilities->push_back(cap);
 
     return HWC3::Error::None;
 }
@@ -267,7 +270,7 @@ HWC3::Error Display::getDisplayConfigs(std::vector<int32_t>* outConfigIds) {
 }
 
 HWC3::Error Display::getDisplayConnectionType(DisplayConnectionType* outType) {
-    if (IsCuttlefishFoldable() || IsAutoDevice()) {
+    if (IsAutoDevice()) {
         // Android Auto OS needs to set all displays to INTERNAL since they're used
         // for the passenger displays.
         // Workaround to force all displays to INTERNAL for cf_x86_64_foldable.
@@ -275,7 +278,8 @@ HWC3::Error Display::getDisplayConnectionType(DisplayConnectionType* outType) {
         *outType = DisplayConnectionType::INTERNAL;
     } else {
         // Other devices default to the first display INTERNAL, others EXTERNAL.
-        *outType = mId == 0 ? DisplayConnectionType::INTERNAL : DisplayConnectionType::EXTERNAL;
+        if (mComposer->getDisplayConnectionType(this, outType) != HWC3::Error::None)
+            *outType = DisplayConnectionType::INTERNAL;
     }
     return HWC3::Error::None;
 }
@@ -349,8 +353,9 @@ HWC3::Error Display::getDisplayPhysicalOrientation(common::Transform* outOrienta
 HWC3::Error Display::getHdrCapabilities(HdrCapabilities* outCapabilities) {
     DEBUG_LOG("%s: display:%" PRId64, __FUNCTION__, mId);
 
-    // No supported types.
     outCapabilities->types.clear();
+    if (mEdidParser->isHdrSupported())
+        mEdidParser->getHdrCapabilities(outCapabilities);
 
     return HWC3::Error::None;
 }
@@ -359,8 +364,12 @@ HWC3::Error Display::getPerFrameMetadataKeys(std::vector<PerFrameMetadataKey>* o
     DEBUG_LOG("%s: display:%" PRId64, __FUNCTION__, mId);
 
     outKeys->clear();
-
-    return HWC3::Error::Unsupported;
+    if (mEdidParser->getHdrTypeCount() > 0) {
+        mEdidParser->getPerFrameMetadataKeys(outKeys);
+        return HWC3::Error::None;
+    } else {
+        return HWC3::Error::Unsupported;
+    }
 }
 
 HWC3::Error Display::getReadbackBufferAttributes(ReadbackBufferAttributes* outAttributes) {
@@ -573,7 +582,7 @@ HWC3::Error Display::getPreferredBootConfig(int32_t* outConfigId) {
     std::unique_lock<std::recursive_mutex> lock(mStateMutex);
 
     std::vector<int32_t> configIds;
-    for (const auto [configId, _] : mConfigs) {
+    for (const auto& [configId, _] : mConfigs) {
         configIds.push_back(configId);
     }
     *outConfigId = *std::min_element(configIds.begin(), configIds.end());
@@ -715,7 +724,9 @@ HWC3::Error Display::setBrightness(float brightness) {
         return HWC3::Error::BadParameter;
     }
 
-    return HWC3::Error::Unsupported;
+    mComposer->setDisplayBrightness(this, brightness);
+
+    return HWC3::Error::None;
 }
 
 HWC3::Error Display::setClientTarget(buffer_handle_t buffer, const ndk::ScopedFileDescriptor& fence,
@@ -891,83 +902,38 @@ DisplayConfig* Display::getConfig(int32_t configId) {
 HWC3::Error Display::setEdid(std::vector<uint8_t> edid) {
     DEBUG_LOG("%s: display:%" PRId64, __FUNCTION__, mId);
 
-    mEdid = edid;
+    mEdid = std::move(edid);
+    mEdidParser = std::make_unique<Edid>(mEdid);
+
     return HWC3::Error::None;
 }
 
 void Display::setLegacyEdid() {
-    // thess EDIDs are carefully generated according to the EDID spec version 1.3,
-    // more info can be found from the following file:
-    //   frameworks/native/services/surfaceflinger/DisplayHardware/DisplayIdentification.cpp
-    // approved pnp ids can be found here: https://uefi.org/pnp_id_list
-    // pnp id: GGL, name: EMU_display_0, last byte is checksum
-    // display id is local:8141603649153536
-    static constexpr const std::array<uint8_t, 128> kEdid0 =
-            {0x00, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0x00, 0x1c, 0xec, 0x01, 0x00, 0x01,
-             0x00, 0x00, 0x00, 0x1b, 0x10, 0x01, 0x03, 0x80, 0x50, 0x2d, 0x78, 0x0a, 0x0d,
-             0xc9, 0xa0, 0x57, 0x47, 0x98, 0x27, 0x12, 0x48, 0x4c, 0x00, 0x00, 0x00, 0x01,
-             0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01,
-             0x01, 0x01, 0x02, 0x3a, 0x80, 0x18, 0x71, 0x38, 0x2d, 0x40, 0x58, 0x2c, 0x45,
-             0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-             0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-             0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-             0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xfc, 0x00, 0x45, 0x4d, 0x55, 0x5f,
-             0x64, 0x69, 0x73, 0x70, 0x6c, 0x61, 0x79, 0x5f, 0x30, 0x00, 0x4b};
-
-    // pnp id: GGL, name: EMU_display_1
-    // display id is local:8140900251843329
-    static constexpr const std::array<uint8_t, 128> kEdid1 =
-            {0x00, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0x00, 0x1c, 0xec, 0x01, 0x00, 0x01,
-             0x00, 0x00, 0x00, 0x1b, 0x10, 0x01, 0x03, 0x80, 0x50, 0x2d, 0x78, 0x0a, 0x0d,
-             0xc9, 0xa0, 0x57, 0x47, 0x98, 0x27, 0x12, 0x48, 0x4c, 0x00, 0x00, 0x00, 0x01,
-             0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01,
-             0x01, 0x01, 0x02, 0x3a, 0x80, 0x18, 0x71, 0x38, 0x2d, 0x40, 0x58, 0x2c, 0x54,
-             0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-             0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-             0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-             0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xfc, 0x00, 0x45, 0x4d, 0x55, 0x5f,
-             0x64, 0x69, 0x73, 0x70, 0x6c, 0x61, 0x79, 0x5f, 0x31, 0x00, 0x3b};
-
-    // pnp id: GGL, name: EMU_display_2
-    // display id is local:8140940453066754
-    static constexpr const std::array<uint8_t, 128> kEdid2 =
-            {0x00, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0x00, 0x1c, 0xec, 0x01, 0x00, 0x01,
-             0x00, 0x00, 0x00, 0x1b, 0x10, 0x01, 0x03, 0x80, 0x50, 0x2d, 0x78, 0x0a, 0x0d,
-             0xc9, 0xa0, 0x57, 0x47, 0x98, 0x27, 0x12, 0x48, 0x4c, 0x00, 0x00, 0x00, 0x01,
-             0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01,
-             0x01, 0x01, 0x02, 0x3a, 0x80, 0x18, 0x71, 0x38, 0x2d, 0x40, 0x58, 0x2c, 0x45,
-             0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-             0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-             0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-             0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xfc, 0x00, 0x45, 0x4d, 0x55, 0x5f,
-             0x64, 0x69, 0x73, 0x70, 0x6c, 0x61, 0x79, 0x5f, 0x32, 0x00, 0x49};
-
+    static constexpr const std::array<uint8_t, 128> defaultEdid = {
+            // Basic info of the default edid:
+            // Vendor ID: NXP, Product ID: 0, Serial Number: 0, Mfg Week: 1, Mfg Year: 2019
+            // EDID Structure Version: 1.3, Monitor Name: NXP Android
+            0x00, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0x00, 0x3B, 0x10, 0x00, 0x00, 0x00,
+            0x00, 0x00, 0x00, 0x01, 0x1D, 0x01, 0x03, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01,
+            0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01,
+            0x01, 0x01, 0x64, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xFC, 0x00, 0x4E,
+            0x58, 0x50, 0x20, 0x41, 0x6E, 0x64, 0x72, 0x6F, 0x69, 0x64, 0x0A, 0x0A, 0x00,
+            0x00, 0x00, 0x10, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x10, 0x00, 0x00, 0x00, 0x00, 0x00,
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x1E,
+    };
     mEdid.clear();
-    switch (mId) {
-        case 0: {
-            mEdid.insert(mEdid.end(), kEdid0.begin(), kEdid0.end());
-            break;
-        }
-        case 1: {
-            mEdid.insert(mEdid.end(), kEdid1.begin(), kEdid1.end());
-            break;
-        }
-        case 2: {
-            mEdid.insert(mEdid.end(), kEdid2.begin(), kEdid2.end());
-            break;
-        }
-        default: {
-            mEdid.insert(mEdid.end(), kEdid2.begin(), kEdid2.end());
-            const uint32_t size = mEdid.size();
-            // Update the name to EMU_display_<mID>
-            mEdid[size - 3] = '0' + (uint8_t)mId;
-            // Update the checksum byte
-            uint8_t checksum = -(uint8_t)std::accumulate(mEdid.data(), mEdid.data() + size - 1,
-                                                         static_cast<uint8_t>(0));
-            mEdid[size - 1] = checksum;
-            break;
-        }
-    }
+    mEdid.insert(mEdid.end(), defaultEdid.begin(), defaultEdid.end());
+    // TODO: update the EDID according to display ID
+    // const uint32_t size = mEdid.size();
+    // Update the name to NXP Android_<mID>
+    // mEdid[size - 3] = '0' + (uint8_t)mId;
+    // Update the checksum byte
+    // uint8_t checksum = -(uint8_t)std::accumulate(mEdid.data(), mEdid.data() + size - 1,
+    //                                              static_cast<uint8_t>(0));
+    // mEdid[size - 1] = checksum;
 }
 
 Layer* Display::getLayer(int64_t layerId) {

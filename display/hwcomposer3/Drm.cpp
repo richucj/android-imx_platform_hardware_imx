@@ -18,6 +18,7 @@
 #include "Drm.h"
 
 #include <drm_fourcc.h>
+#include <gralloc_handle.h>
 #include <log/log.h>
 #include <system/graphics.h>
 
@@ -190,8 +191,9 @@ uint32_t ConvertNxpFormatToDrmFormat(int format, uint64_t *outModifier) {
         case FORMAT_NV21: // DRM_FORMAT_NV21    ????
             return DRM_FORMAT_NV21;
         case FORMAT_YCBCR_P010:
-        case FORMAT_P010:
             return DRM_FORMAT_P010;
+        case FORMAT_P010:
+            return DRM_FORMAT_NV15;
         case FORMAT_RGB565:
             return DRM_FORMAT_RGB565;
         case FORMAT_YUYV: // DRM_FORMAT_YUYV   ????
@@ -250,7 +252,7 @@ uint32_t ConvertNxpFormatToDrmFormat(int format, uint64_t *outModifier) {
 char *drmGetFormatName(uint32_t format, char *outStr) {
     const char *be;
 
-    be = (format & DRM_FORMAT_BIG_ENDIAN) ? "_BE" : "";
+    be = (format & DRM_FORMAT_BIG_ENDIAN) ? "_BE" : NULL;
     format &= ~DRM_FORMAT_BIG_ENDIAN;
 
     if (format == DRM_FORMAT_INVALID)
@@ -269,6 +271,14 @@ char *drmGetFormatName(uint32_t format, char *outStr) {
         strcat(outStr, be);
 
     return outStr;
+}
+
+bool checkOverlayWorkaround(Layer *layer) {
+    gralloc_handle_t buff = (gralloc_handle_t)layer->getBuffer().getBuffer();
+    if ((buff->fslFormat >= FORMAT_RGBA8888) && (buff->fslFormat <= FORMAT_BGRA8888))
+        return false;
+    else
+        return true;
 }
 
 } // namespace aidl::android::hardware::graphics::composer3::impl

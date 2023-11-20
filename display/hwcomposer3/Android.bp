@@ -29,6 +29,7 @@ cc_binary {
     include_dirs: [
         "system/core/include/utils",
         "frameworks/native/include",
+        "device/nxp/common/kernel-headers",
     ],
 
     shared_libs: [
@@ -59,6 +60,8 @@ cc_binary {
         "libmath",
         "libnxp_gralloc_driver",
         "libnxp_gralloc_utils",
+        "libhwsecureclient",
+        "libtrusty",
     ],
     srcs: [
         "ClientFrameComposer.cpp",
@@ -80,6 +83,9 @@ cc_binary {
         "DrmEventListener.cpp",
         "DrmMode.cpp",
         "DrmPlane.cpp",
+        "Edid.cpp",
+        "FbdevClient.cpp",
+        "FbdevDisplay.cpp",
         "Layer.cpp",
         "Main.cpp",
         "VsyncThread.cpp",

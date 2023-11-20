@@ -33,14 +33,18 @@
 #include <log/log.h>
 #include <utils/Trace.h>
 
+#include "Time.h"
+
 // Uncomment to enable additional debug logging.
-//#define DEBUG_NXP_HWC
+// #define DEBUG_NXP_HWC
 
 #if defined(DEBUG_NXP_HWC)
 #define DEBUG_LOG ALOGI
 #else
 #define DEBUG_LOG(...) ((void)0)
 #endif
+
+#define DEBUG_DUMP_REFRESH_RATE
 
 #if 0 // Below already defined in Memory.h
 #define ALIGN_PIXEL_2(x) ((x + 1) & ~1)
@@ -56,6 +60,11 @@
 // #define PROPERTY_VALUE_MAX 92
 
 namespace aidl::android::hardware::graphics::composer3::impl {
+
+enum class DrmPower {
+    kPowerOff,
+    kPowerOn,
+};
 
 enum {
     UI_SCALE_NONE = 0,
@@ -83,22 +92,20 @@ struct HalMultiConfigs {
 };
 
 bool IsAutoDevice();
-bool IsCuttlefish();
-bool IsCuttlefishFoldable();
-
-bool IsInNoOpCompositionMode();
-bool IsInClientCompositionMode();
-
-bool IsInGem5DisplayFinderMode();
-bool IsInNoOpDisplayFinderMode();
-bool IsInDrmDisplayFinderMode();
 
 bool IsOverlayUserDisabled();
 bool Is2DCompositionUserPrefered();
+bool IsHdcpUserEnabled();
+
 bool customizeGUIResolution(uint32_t& width, uint32_t& height, uint32_t* uiType);
 void parseDisplayMode(uint32_t* width, uint32_t* height, uint32_t* vrefresh, uint32_t* prefermode);
 bool checkRectOverlap(common::Rect& masked, common::Rect& src);
 void mergeRect(common::Rect& masked, common::Rect& src);
+
+#ifdef DEBUG_DUMP_REFRESH_RATE
+nsecs_t dumpRefreshRateStart();
+void dumpRefreshRateEnd(uint32_t displayId, int vsyncPeriod, nsecs_t start_time);
+#endif
 
 namespace HWC3 {
 enum class Error : int32_t {

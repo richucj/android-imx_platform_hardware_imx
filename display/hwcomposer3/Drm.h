@@ -19,6 +19,8 @@
 
 #include <cstdlib>
 
+#include "Layer.h"
+
 namespace aidl::android::hardware::graphics::composer3::impl {
 
 /* This is our extension to <drm_fourcc.h>.  We need to make sure we don't step
@@ -68,6 +70,23 @@ enum { // defined by NXP
     FORMAT_RAW16 = 0x203,
 };
 
+enum {
+    FLAGS_FRAMEBUFFER = 0x00000001,
+    FLAGS_DIMBUFFER = 0x00000002,
+    FLAGS_ALLOCATION_ION = 0x00000010,
+    FLAGS_ALLOCATION_GPU = 0x00000020,
+    FLAGS_WRAP_GPU = 0x00000040,
+    FLAGS_CAMERA = 0x00100000,
+    FLAGS_VIDEO = 0x00200000,
+    FLAGS_UI = 0x00400000,
+    FLAGS_CPU = 0x00800000,
+    FLAGS_META_CHANGED = 0x01000000,
+    FLAGS_HDR10_VIDEO = 0x02000000,
+    FLAGS_DOLBY_VIDEO = 0x04000000,
+    FLAGS_COMPRESSED_OFFSET = 0x08000000,
+    FLAGS_SECURE = 0x10000000,
+};
+
 const char* GetDrmFormatString(uint32_t drm_format);
 
 int GetDrmFormatBytesPerPixel(uint32_t drm_format);
@@ -78,6 +97,7 @@ uint32_t ConvertNxpFormatToDrmFormat(int format, uint64_t* outModifier);
 
 char* drmGetFormatName(uint32_t format, char* outStr);
 
+bool checkOverlayWorkaround(Layer* layer);
 } // namespace aidl::android::hardware::graphics::composer3::impl
 
 #endif

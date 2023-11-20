@@ -21,9 +21,11 @@
 #include <map>
 
 #include "Common.h"
+#include "DeviceClient.h"
 #include "DeviceComposer.h"
 #include "Display.h"
 #include "DrmClient.h"
+#include "FbdevClient.h"
 #include "FrameComposer.h"
 #include "Layer.h"
 
@@ -51,6 +53,8 @@ public:
 
     HWC3::Error onDisplayDestroy(Display* display) override;
 
+    HWC3::Error onDisplayLayerDestroy(Display* display, Layer* layer) override;
+
     HWC3::Error onDisplayClientTargetSet(Display* display) override;
 
     HWC3::Error onActiveConfigChange(Display* display) override;
@@ -66,23 +70,27 @@ public:
             std::unordered_map<int64_t, ::android::base::unique_fd>* outLayerFences) override;
 
     HWC3::Error setPowerMode(Display* display, PowerMode mode) override;
+    HWC3::Error setDisplayBrightness(Display* display, float brightness) override;
+    HWC3::Error getDisplayConnectionType(Display* display, DisplayConnectionType* outType) override;
 
-    HWC3::Error getAllDrmClients(std::map<uint32_t, DrmClient*>& clients) override {
-        for (const auto& pair : mDrmClients) {
-            clients.emplace(pair.first, pair.second.get());
+    HWC3::Error getAllDeviceClients(std::map<uint32_t, DeviceClient*>& clients) override {
+        for (auto& [baseId, client] : mDeviceClients) {
+            clients.emplace(baseId, client.get());
         }
         return HWC3::Error::None;
     }
 
 private:
-    std::tuple<HWC3::Error, DrmClient*> getDrmClient(uint32_t displayId);
+    std::tuple<HWC3::Error, DeviceClient*> getDeviceClient(uint32_t displayId);
 
     std::unordered_map<int64_t, DisplayBuffer> mDisplayBuffers;
     std::vector<int64_t> mLayersForOverlay; // <layerId>
     std::vector<Layer*> mLayersForComposition;
 
-    std::map<uint32_t, std::unique_ptr<DrmClient>> mDrmClients;
-    std::unique_ptr<DeviceComposer> mG2dComposer;
+    std::map<uint32_t, std::unique_ptr<DeviceClient>> mDeviceClients;
+    std::shared_ptr<DeviceComposer> mG2dComposer;
+
+    bool mHdcpEnabled = false;
 };
 
 } // namespace aidl::android::hardware::graphics::composer3::impl

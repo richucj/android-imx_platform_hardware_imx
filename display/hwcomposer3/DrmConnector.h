@@ -34,11 +34,6 @@
 
 namespace aidl::android::hardware::graphics::composer3::impl {
 
-enum class DrmPower {
-    kPowerOff,
-    kPowerOn,
-};
-
 // A "cable" to the display (HDMI, DisplayPort, etc).
 class DrmConnector {
 public:
@@ -59,13 +54,17 @@ public:
 
     bool isConnected() const { return mStatus == DRM_MODE_CONNECTED; }
 
-    std::optional<std::vector<uint8_t>> getEdid() const { return mEdid; }
+    std::optional<std::vector<uint8_t>> getEdid(::android::base::borrowed_fd drmFd);
 
     const DrmProperty& getCrtcProperty() const { return mCrtc; }
+    const DrmProperty& getHdrMetadataProperty() const { return mHdrMetadata; }
     const DrmMode* getDefaultMode() const { return mModes[0].get(); }
     bool isCompatibleWith(const DrmCrtc& crtc) {
         return ((0x1 << crtc.mIndexInResourcesArray) & mPossibleCrtcsMask);
     }
+    bool getHDCPSupported() const { return mProtection.getId() != (uint32_t)-1; }
+    bool isHDCPEnabled() const { return mProtection.getValue() == 1; }
+    bool setHDCPMode(::android::base::borrowed_fd drmFd, int val) const;
 
     bool update(::android::base::borrowed_fd drmFd);
 
@@ -82,6 +81,7 @@ private:
     uint32_t mPossibleCrtcsMask = 0; // get from encoder
 
     drmModeConnection mStatus = DRM_MODE_UNKNOWNCONNECTION;
+    bool mEdidReload = false;
     uint32_t mWidthMillimeters = 0;
     uint32_t mHeightMillimeters = 0;
     std::vector<std::unique_ptr<DrmMode>> mModes;

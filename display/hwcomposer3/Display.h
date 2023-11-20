@@ -46,6 +46,7 @@
 #include "DisplayChanges.h"
 #include "DisplayConfig.h"
 #include "DisplayFinder.h"
+#include "Edid.h"
 #include "FencedBuffer.h"
 #include "FrameComposer.h"
 #include "Layer.h"
@@ -145,6 +146,11 @@ public:
 
     const std::vector<Layer*>& getOrderedLayers() { return mOrderedLayers; }
 
+    HWC3::Error setCapability(std::vector<DisplayCapability>& caps) {
+        mCapability.insert(mCapability.end(), caps.begin(), caps.end());
+        return HWC3::Error::None;
+    }
+
 private:
     bool hasConfig(int32_t configId) const;
     DisplayConfig* getConfig(int32_t configId);
@@ -186,6 +192,8 @@ private:
     ColorMode mActiveColorMode = ColorMode::NATIVE;
     std::optional<std::array<float, 16>> mColorTransform;
     std::vector<uint8_t> mEdid;
+    std::unique_ptr<Edid> mEdidParser;
+    std::vector<DisplayCapability> mCapability;
 };
 
 } // namespace aidl::android::hardware::graphics::composer3::impl

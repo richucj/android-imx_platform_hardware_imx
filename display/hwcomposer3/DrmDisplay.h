@@ -36,6 +36,8 @@
 #include "DrmCrtc.h"
 #include "DrmPlane.h"
 
+#define MAX_COMMIT_RETRY_COUNT 32
+
 namespace aidl::android::hardware::graphics::composer3::impl {
 
 enum class DrmHotplugChange {
@@ -68,7 +70,9 @@ public:
 
     bool isConnected() const { return mConnector->isConnected(); }
 
-    std::optional<std::vector<uint8_t>> getEdid() const { return mConnector->getEdid(); }
+    std::optional<std::vector<uint8_t>> getEdid(::android::base::borrowed_fd drmFd) const {
+        return mConnector->getEdid(drmFd);
+    }
 
     std::tuple<HWC3::Error, std::unique_ptr<DrmAtomicRequest>> flushOverlay(
             uint32_t planeId, std::unique_ptr<DrmAtomicRequest> request,
@@ -93,11 +97,16 @@ public:
     bool updateDisplayConfigs();
     void placeholderDisplayConfigs();
     void buildPlaneIdPool();
+    int getFramebufferInfo(uint32_t* width, uint32_t* height, uint32_t* format);
 
     void setAsPrimary(bool enable) { mIsPrimary = enable; }
     bool isPrimary() { return mIsPrimary; }
 
-    int createDeviceFramebuffer(DeviceComposer* composer, gralloc_handle_t* buffers, int count);
+    bool isSecureDisplay() const { return mConnector->getHDCPSupported(); }
+    bool isSecureEnabled() const { return mConnector->isHDCPEnabled(); }
+    bool setSecureMode(::android::base::borrowed_fd drmFd, bool secure);
+
+    bool setHdrMetadataBlobId(uint32_t bolbId);
 
 private:
     DrmDisplay(uint32_t id, std::unique_ptr<DrmConnector> connector, std::unique_ptr<DrmCrtc> crtc,
@@ -131,6 +140,8 @@ private:
     uint32_t mUiScaleType = UI_SCALE_NONE;
     std::vector<uint32_t> mPlaneIdPool;
     bool mModeSet = true;
+
+    uint32_t mHdrMetadataBlobId = 0;
 };
 
 } // namespace aidl::android::hardware::graphics::composer3::impl

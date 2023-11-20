@@ -25,53 +25,8 @@ namespace aidl::android::hardware::graphics::composer3::impl {
 bool IsAutoDevice() {
     // gcar_emu_x86_64, sdk_car_md_x86_64, cf_x86_64_auto, cf_x86_64_only_auto_md
     const std::string product_name = ::android::base::GetProperty("ro.product.name", "");
-    return product_name.find("car_") || product_name.find("_auto");
-}
-
-bool IsCuttlefish() {
-    return ::android::base::GetProperty("ro.product.board", "") == "cutf";
-}
-
-bool IsCuttlefishFoldable() {
-    return IsCuttlefish() &&
-            ::android::base::GetProperty("ro.product.name", "").find("foldable") !=
-            std::string::npos;
-}
-
-bool IsInNoOpCompositionMode() {
-    const std::string mode = ::android::base::GetProperty("ro.vendor.hwcomposer.mode", "");
-    DEBUG_LOG("%s: sysprop ro.vendor.hwcomposer.mode is %s", __FUNCTION__, mode.c_str());
-    return mode == "noop";
-}
-
-bool IsInClientCompositionMode() {
-    const std::string mode = ::android::base::GetProperty("ro.vendor.hwcomposer.mode", "");
-    DEBUG_LOG("%s: sysprop ro.vendor.hwcomposer.mode is %s", __FUNCTION__, mode.c_str());
-    return mode == "client";
-}
-
-bool IsInGem5DisplayFinderMode() {
-    const std::string mode =
-            ::android::base::GetProperty("ro.vendor.hwcomposer.display_finder_mode", "");
-    DEBUG_LOG("%s: sysprop ro.vendor.hwcomposer.display_finder_mode is %s", __FUNCTION__,
-              mode.c_str());
-    return mode == "gem5";
-}
-
-bool IsInNoOpDisplayFinderMode() {
-    const std::string mode =
-            ::android::base::GetProperty("ro.vendor.hwcomposer.display_finder_mode", "");
-    DEBUG_LOG("%s: sysprop ro.vendor.hwcomposer.display_finder_mode is %s", __FUNCTION__,
-              mode.c_str());
-    return mode == "noop";
-}
-
-bool IsInDrmDisplayFinderMode() {
-    const std::string mode =
-            ::android::base::GetProperty("ro.vendor.hwcomposer.display_finder_mode", "");
-    DEBUG_LOG("%s: sysprop ro.vendor.hwcomposer.display_finder_mode is %s", __FUNCTION__,
-              mode.c_str());
-    return mode == "drm";
+    return (product_name.find("car_") != std::string::npos) ||
+            (product_name.find("_auto") != std::string::npos);
 }
 
 bool IsOverlayUserDisabled() {
@@ -82,8 +37,14 @@ bool IsOverlayUserDisabled() {
 
 bool Is2DCompositionUserPrefered() {
     const std::string g2d = ::android::base::GetProperty("vendor.hwc.prefer.2d-composition", "1");
-    DEBUG_LOG("%s: sysprop vendor.hwc.disable.2d-composition is %s", __FUNCTION__, g2d.c_str());
+    DEBUG_LOG("%s: sysprop vendor.hwc.prefer.2d-composition is %s", __FUNCTION__, g2d.c_str());
     return g2d == "1";
+}
+
+bool IsHdcpUserEnabled() {
+    const std::string hdcp = ::android::base::GetProperty("ro.boot.support_hdcp", "");
+    DEBUG_LOG("%s: sysprop ro.boot.support_hdcp is %s", __FUNCTION__, hdcp.c_str());
+    return hdcp == "enable";
 }
 
 std::string toString(HWC3::Error error) {
@@ -113,13 +74,14 @@ bool customizeGUIResolution(uint32_t &width, uint32_t &height, uint32_t *uiType)
     bool ret = true;
     uint32_t w = 0, h = 0, temp = 0;
 
+    char value[PROPERTY_VALUE_MAX];
     char w_buf[PROPERTY_VALUE_MAX];
     char h_buf[PROPERTY_VALUE_MAX];
 
-    const std::string res = ::android::base::GetProperty("ro.boot.gui_resolution", "p");
-    DEBUG_LOG("%s: sysprop ro.boot.gui_resolution is %s", __FUNCTION__, res.c_str());
+    memset(value, 0, sizeof(value));
+    property_get("ro.boot.gui_resolution", value, "p");
+    DEBUG_LOG("%s: sysprop ro.boot.gui_resolution is %s", __FUNCTION__, value);
 
-    const char *value = res.c_str();
     if (!strncmp(value, "shw", 3) && (sscanf(value, "shw%[0-9]x%[0-9]", w_buf, h_buf) == 2)) {
         w = atoi(w_buf);
         h = atoi(h_buf);
@@ -161,6 +123,7 @@ bool customizeGUIResolution(uint32_t &width, uint32_t &height, uint32_t *uiType)
                 height = h;
         }
     }
+    DEBUG_LOG("%s: get gui resolution: %d x %d, uiType=%d", __FUNCTION__, width, height, *uiType);
 
     return ret;
 }
@@ -247,4 +210,54 @@ void mergeRect(common::Rect &masked, common::Rect &src) {
     masked.bottom = masked.bottom >= src.bottom ? masked.bottom : src.bottom;
 }
 
+#ifdef DEBUG_DUMP_REFRESH_RATE
+nsecs_t dumpRefreshRateStart() {
+    nsecs_t commit_start;
+    commit_start = systemTime(CLOCK_MONOTONIC);
+
+    return commit_start;
+}
+
+void dumpRefreshRateEnd(uint32_t displayId, int vsyncPeriod, nsecs_t commit_start) {
+    static nsecs_t m_pre_commit_start = 0;
+    static nsecs_t m_pre_commit_time = 0;
+    // surfaceflinger updatescreen delay(compare with vsync period)
+    static nsecs_t m_total_sf_delay = 0;
+    static nsecs_t m_total_commit_time = 0;
+    static nsecs_t m_total_commit_cost = 0;
+    static int m_request_refresh_cnt = 0;
+    static int m_commit_cnt = 0;
+
+    nsecs_t commit_time;
+    float refresh_rate = 0;
+
+    commit_time = systemTime(CLOCK_MONOTONIC);
+    char value[PROPERTY_VALUE_MAX];
+    property_get("vendor.hwc.debug.dump_refresh_rate", value, "0");
+    m_request_refresh_cnt = atoi(value);
+    if (m_request_refresh_cnt <= 0)
+        return;
+
+    if (m_pre_commit_time > 0) {
+        m_total_commit_time += commit_time - m_pre_commit_time;
+        m_total_commit_cost += commit_time - commit_start;
+        m_total_sf_delay += (int64_t)commit_start - m_pre_commit_start - vsyncPeriod;
+        m_commit_cnt++;
+        if (m_commit_cnt >= m_request_refresh_cnt) {
+            refresh_rate = 1000000000.0 * m_commit_cnt / m_total_commit_time;
+            ALOGI("id= %d, refresh rate= %3.2f fps, commit wait=%1.4fms/frame, update "
+                  "delay=%1.4fms/frame",
+                  displayId, refresh_rate, m_total_commit_cost / (m_commit_cnt * 1000000.0),
+                  m_total_sf_delay / (m_commit_cnt * 1000000.0));
+            m_total_sf_delay = 0;
+            m_total_commit_time = 0;
+            m_total_commit_cost = 0;
+            m_commit_cnt = 0;
+        }
+    }
+    m_pre_commit_start = commit_start;
+    m_pre_commit_time = commit_time;
+}
+
+#endif
 } // namespace aidl::android::hardware::graphics::composer3::impl

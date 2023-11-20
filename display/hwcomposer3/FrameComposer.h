@@ -27,8 +27,8 @@
 #include <vector>
 
 #include "Common.h"
+#include "DeviceClient.h"
 #include "DisplayChanges.h"
-#include "DrmClient.h"
 
 namespace aidl::android::hardware::graphics::composer3::impl {
 
@@ -51,6 +51,8 @@ public:
 
     virtual HWC3::Error onDisplayDestroy(Display* display) = 0;
 
+    virtual HWC3::Error onDisplayLayerDestroy(Display* display, Layer* layer) = 0;
+
     virtual HWC3::Error onDisplayClientTargetSet(Display* display) = 0;
 
     // Determines if this composer can compose the given layers and requests
@@ -65,11 +67,14 @@ public:
 
     virtual HWC3::Error onActiveConfigChange(Display* display) = 0;
     virtual HWC3::Error setPowerMode(Display* display, PowerMode mode) = 0;
+    virtual HWC3::Error setDisplayBrightness(Display* display, float brightness) = 0;
+    virtual HWC3::Error getDisplayConnectionType(Display* display,
+                                                 DisplayConnectionType* outType) = 0;
 
     /*  virtual const DrmClient* getDrmPresenter() const {
         return nullptr;
       }*/
-    virtual HWC3::Error getAllDrmClients(std::map<uint32_t, DrmClient*>& clients) = 0;
+    virtual HWC3::Error getAllDeviceClients(std::map<uint32_t, DeviceClient*>& clients) = 0;
 };
 
 } // namespace aidl::android::hardware::graphics::composer3::impl
