@@ -94,6 +94,9 @@ bool DrmConnector::update(::android::base::borrowed_fd drmFd) {
         }
     }
 
+    if (mModes.size() == 0) // For some connector, the status is connected but no display mode
+        mStatus = DRM_MODE_DISCONNECTED;
+
     DEBUG_LOG("%s: connector:%" PRIu32 " widthMillimeters:%" PRIu32 " heightMillimeters:%" PRIu32,
               __FUNCTION__, mId, mWidthMillimeters, mHeightMillimeters);
 
@@ -173,31 +176,39 @@ bool DrmConnector::buildConfigs(std::shared_ptr<HalConfig> configs, uint32_t sta
 
     uint32_t configId = startConfigId;
     for (const auto& mode : mModes) {
-        configs->emplace(configId++,
-                         HalDisplayConfig{
-                                 .width = mode->hdisplay,
-                                 .height = mode->vdisplay,
-                                 .dpiX = mWidthMillimeters == 0
-                                         ? 160
-                                         : (static_cast<uint32_t>(
-                                                   (static_cast<float>(mode->hdisplay) /
-                                                    static_cast<float>(mWidthMillimeters)) *
-                                                   kMillimetersPerInch)),
-                                 .dpiY = mHeightMillimeters == 0
-                                         ? 160
-                                         : (static_cast<uint32_t>(
-                                                   (static_cast<float>(mode->vdisplay) /
-                                                    static_cast<float>(mHeightMillimeters)) *
-                                                   kMillimetersPerInch)),
-                                 .refreshRateHz = (uint32_t)(1000.0f * mode->clock /
-                                                                     ((float)mode->vtotal *
-                                                                      (float)mode->htotal) +
-                                                             0.5f), // mode.vrefresh
-                                 .blobId = mode->getBlobId(),
-                                 .modeType = mode->type,
-                                 .modeWidth = mode->hdisplay,
-                                 .modeHeight = mode->vdisplay,
-                         });
+        HalDisplayConfig config{
+                .width = mode->hdisplay,
+                .height = mode->vdisplay,
+                .dpiX = mWidthMillimeters == 0
+                        ? 160
+                        : (static_cast<uint32_t>((static_cast<float>(mode->hdisplay) /
+                                                  static_cast<float>(mWidthMillimeters)) *
+                                                 kMillimetersPerInch)),
+                .dpiY = mHeightMillimeters == 0
+                        ? 160
+                        : (static_cast<uint32_t>((static_cast<float>(mode->vdisplay) /
+                                                  static_cast<float>(mHeightMillimeters)) *
+                                                 kMillimetersPerInch)),
+                .refreshRateHz = (uint32_t)(1000.0f * mode->clock /
+                                                    ((float)mode->vtotal * (float)mode->htotal) +
+                                            0.5f), // mode.vrefresh
+                .blobId = mode->getBlobId(),
+                .modeType = mode->type,
+                .modeWidth = mode->hdisplay,
+                .modeHeight = mode->vdisplay,
+        };
+        bool equal = false;
+        for (auto& [_, cfg] : *configs) {
+            if ((cfg.width == config.width) && (cfg.height == config.height) &&
+                (cfg.refreshRateHz == config.refreshRateHz)) {
+                equal = true;
+                break;
+            }
+        }
+        if (equal) // avoid the same config in configs
+            continue;
+
+        configs->emplace(configId++, config);
     }
 
     return true;

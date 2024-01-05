@@ -1,5 +1,6 @@
 /*
  * Copyright 2022 The Android Open Source Project
+ * Copyright 2023 NXP
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -30,10 +31,11 @@
 
 namespace aidl::android::hardware::graphics::composer3::impl {
 
+class Display;
 // Generates Vsync signals in software.
 class VsyncThread {
 public:
-    VsyncThread(int64_t id);
+    VsyncThread(Display* display);
     virtual ~VsyncThread();
 
     VsyncThread(const VsyncThread&) = delete;
@@ -49,7 +51,7 @@ public:
     HWC3::Error setVsyncEnabled(bool enabled);
 
     HWC3::Error scheduleVsyncUpdate(
-            int32_t newVsyncPeriod,
+            int32_t configId, int32_t newVsyncPeriod,
             const VsyncPeriodChangeConstraints& newVsyncPeriodChangeConstraints,
             VsyncPeriodChangeTimeline* timeline);
 
@@ -62,6 +64,7 @@ private:
             std::chrono::time_point<std::chrono::steady_clock> now);
 
     const int64_t mDisplayId;
+    Display* mDisplay = nullptr;
 
     std::thread mThread;
 
@@ -72,12 +75,13 @@ private:
     std::shared_ptr<IComposerCallback> mCallbacks;
 
     bool mVsyncEnabled = false;
-    std::chrono::nanoseconds mVsyncPeriod;
+    std::chrono::nanoseconds mVsyncPeriod{16600000};
     std::chrono::time_point<std::chrono::steady_clock> mPreviousVsync;
 
     struct PendingUpdate {
         std::chrono::nanoseconds period;
         std::chrono::time_point<std::chrono::steady_clock> updateAfter;
+        int32_t configId;
     };
     std::optional<PendingUpdate> mPendingUpdate;
 };

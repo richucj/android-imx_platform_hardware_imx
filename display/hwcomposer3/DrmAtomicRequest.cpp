@@ -44,12 +44,13 @@ bool DrmAtomicRequest::Set(uint32_t objectId, const DrmProperty& prop, uint64_t 
 }
 
 int DrmAtomicRequest::Commit(::android::base::borrowed_fd drmFd) {
-    constexpr const uint32_t kCommitFlags =
-            DRM_MODE_ATOMIC_ALLOW_MODESET | DRM_MODE_ATOMIC_NONBLOCK;
+    uint32_t kCommitFlags = DRM_MODE_ATOMIC_NONBLOCK;
+    if (mAllowModeset)
+        kCommitFlags |= DRM_MODE_ATOMIC_ALLOW_MODESET;
 
     int ret = drmModeAtomicCommit(drmFd.get(), mRequest, kCommitFlags, 0);
     if (ret) {
-        ALOGE("%s:%d: atomic commit failed: %s\n", __FUNCTION__, __LINE__, strerror(errno));
+        ALOGV("%s:%d: atomic commit failed: %s\n", __FUNCTION__, __LINE__, strerror(errno));
     }
 
     return ret;

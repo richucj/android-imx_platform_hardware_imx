@@ -18,9 +18,12 @@
 #include "Composer.h"
 
 #include <android-base/logging.h>
+#include <android-base/properties.h>
 #include <android/binder_ibinder_platform.h>
 
 #include "Common.h"
+
+using ::android::base::GetProperty;
 
 namespace aidl::android::hardware::graphics::composer3::impl {
 
@@ -28,6 +31,15 @@ ndk::ScopedAStatus Composer::createClient(std::shared_ptr<IComposerClient>* outC
     DEBUG_LOG("%s", __FUNCTION__);
 
     std::unique_lock<std::mutex> lock(mClientMutex);
+
+    std::string secure_ui_property = GetProperty(std::string("vendor.androidui.overlay"), std::string(""));
+    if (secure_ui_property == "enable") {
+        if (!mClient.expired()) {
+            ALOGW("%s: composer client already exists, return it directly", __FUNCTION__);
+            *outClient = mClient.lock();
+            return ndk::ScopedAStatus::ok();
+        }
+    }
 
     const bool previousClientDestroyed = waitForClientDestroyedLocked(lock);
     if (!previousClientDestroyed) {
@@ -96,6 +108,11 @@ ndk::ScopedAStatus Composer::getCapabilities(std::vector<Capability>* caps) {
     DEBUG_LOG("%s", __FUNCTION__);
 
     caps->clear();
+    auto client = mClient.lock();
+    if (client) {
+        auto capabilities = client->getCapabilities();
+        for (auto& cap : capabilities) caps->push_back(cap);
+    }
 
     return ndk::ScopedAStatus::ok();
 }

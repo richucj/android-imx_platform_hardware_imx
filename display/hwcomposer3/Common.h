@@ -30,6 +30,7 @@
 
 #include <aidl/android/hardware/graphics/composer3/IComposerClient.h>
 #include <android-base/logging.h>
+#include <gralloc_handle.h>
 #include <log/log.h>
 #include <utils/Trace.h>
 
@@ -45,6 +46,9 @@
 #endif
 
 #define DEBUG_DUMP_REFRESH_RATE
+
+// uncomment below to enable frame dump feature
+// #define DEBUG_DUMP_FRAME
 
 #if 0 // Below already defined in Memory.h
 #define ALIGN_PIXEL_2(x) ((x + 1) & ~1)
@@ -91,9 +95,24 @@ struct HalMultiConfigs {
     std::shared_ptr<HalConfig> configs;
 };
 
+#ifdef DEBUG_DUMP_REFRESH_RATE
+struct DumpRefreshRate {
+    uint32_t displayId;
+    nsecs_t pre_commit_start;
+    nsecs_t pre_commit_time;
+    // surfaceflinger updatescreen delay(compare with vsync period)
+    nsecs_t total_sf_delay;
+    nsecs_t total_commit_time;
+    nsecs_t total_commit_cost;
+    int request_refresh_cnt;
+    int commit_cnt;
+};
+#endif
+
 bool IsAutoDevice();
 
 bool IsOverlayUserDisabled();
+bool Is2DCompositionUserDisabled();
 bool Is2DCompositionUserPrefered();
 bool IsHdcpUserEnabled();
 
@@ -104,7 +123,11 @@ void mergeRect(common::Rect& masked, common::Rect& src);
 
 #ifdef DEBUG_DUMP_REFRESH_RATE
 nsecs_t dumpRefreshRateStart();
-void dumpRefreshRateEnd(uint32_t displayId, int vsyncPeriod, nsecs_t start_time);
+void dumpRefreshRateEnd(DumpRefreshRate& dump, int vsyncPeriod, nsecs_t start_time);
+#endif
+
+#ifdef DEBUG_DUMP_FRAME
+void debug_dump_frame(buffer_handle_t handle);
 #endif
 
 namespace HWC3 {
@@ -119,6 +142,8 @@ enum class Error : int32_t {
     Unsupported = aidl::android::hardware::graphics::composer3::IComposerClient::EX_UNSUPPORTED,
     SeamlessNotAllowed =
             aidl::android::hardware::graphics::composer3::IComposerClient::EX_SEAMLESS_NOT_ALLOWED,
+    SeamlessNotPossible =
+            aidl::android::hardware::graphics::composer3::IComposerClient::EX_SEAMLESS_NOT_POSSIBLE,
 };
 } // namespace HWC3
 

@@ -91,8 +91,9 @@ public:
     HWC3::Error setPowerMode(int displayId, DrmPower power) override;
 
     std::tuple<HWC3::Error, bool> isOverlaySupport(int displayId) override;
+    HWC3::Error checkOverlayLimitation(int displayId, Layer* layer) override;
 
-    HWC3::Error prepareDrmPlanesForValidate(int displayId) override;
+    HWC3::Error prepareDrmPlanesForValidate(int displayId, uint32_t* uiPlaneBackup) override;
 
     std::tuple<HWC3::Error, uint32_t> getPlaneForLayerBuffer(
             int displayId, const native_handle_t* handle) override;
@@ -101,6 +102,8 @@ public:
 
     HWC3::Error setPrimaryDisplay(int displayId) override;
     HWC3::Error fakeDisplayConfig(int displayId) override;
+    HWC3::Error setActiveConfigId(int displayId, int32_t configId) override;
+    HWC3::Error resetDisplayConfig(int displayId) override;
 
     std::tuple<HWC3::Error, buffer_handle_t> getComposerTarget(
             std::shared_ptr<DeviceComposer> composer, int displayId, bool secure) override;
@@ -111,6 +114,9 @@ public:
 
     HWC3::Error setHdrMetadata(int displayId, hdr_output_metadata* metadata) override;
     HWC3::Error getDisplayConnectionType(int displayId, DisplayConnectionType* outType) override;
+    HWC3::Error getDisplayClientTargetProperty(int displayId,
+                                               ClientTargetProperty* outProperty) override;
+    HWC3::Error waitVBlank(int displayId, int64_t* timestamp) override;
 
 private:
     using DrmPrimeBufferHandle = uint32_t;

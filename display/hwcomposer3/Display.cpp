@@ -86,7 +86,7 @@ bool isValidPowerMode(PowerMode mode) {
 } // namespace
 
 Display::Display(FrameComposer* composer, int64_t id)
-      : mComposer(composer), mId(id), mVsyncThread(id) {
+      : mComposer(composer), mId(id), mVsyncThread(this) {
     mVsyncStarted = false;
     setLegacyEdid();
 }
@@ -111,12 +111,13 @@ HWC3::Error Display::init(const std::vector<DisplayConfig>& configs, int32_t act
 
     if (edid.has_value()) {
         mEdid = *edid;
+        mIsLegacyEdid = false;
     }
     mEdidParser = std::make_unique<Edid>(mEdid);
 
     auto it = mConfigs.find(*mActiveConfigId);
     if (it == mConfigs.end()) {
-        ALOGE("%s: display:%" PRId64 "missing config:%" PRId32, __FUNCTION__, mId, activeConfigId);
+        ALOGE("%s: display:%" PRId64 " missing config:%" PRId32, __FUNCTION__, mId, activeConfigId);
         return HWC3::Error::NoResources;
     }
 
@@ -153,6 +154,7 @@ HWC3::Error Display::updateParameters(uint32_t width, uint32_t height, uint32_t 
 
     if (edid.has_value()) {
         mEdid = *edid;
+        mIsLegacyEdid = false;
     }
 
     return HWC3::Error::None;
@@ -186,6 +188,10 @@ HWC3::Error Display::destroyLayer(int64_t layerId) {
         return HWC3::Error::BadLayer;
     }
 
+    bool refresh = false;
+    if (int(mLayers[layerId]->getCompositionType()) == Composition_NXP_PRIVATE)
+        refresh = true;
+
     mComposer->onDisplayLayerDestroy(this, mLayers[layerId].get());
 
     mOrderedLayers.erase(std::remove_if(mOrderedLayers.begin(), //
@@ -196,6 +202,9 @@ HWC3::Error Display::destroyLayer(int64_t layerId) {
                          mOrderedLayers.end());
 
     mLayers.erase(it);
+
+    if (mCallbacks && refresh)
+        mCallbacks->onRefresh(mId);
 
     DEBUG_LOG("%s: destroyed layer:%" PRId64, __FUNCTION__, layerId);
     return HWC3::Error::None;
@@ -290,6 +299,9 @@ HWC3::Error Display::getDisplayIdentificationData(DisplayIdentification* outIden
     if (outIdentification == nullptr) {
         return HWC3::Error::BadParameter;
     }
+
+    if (mIsLegacyEdid) // don't return legacy EDID, panel with backlight support have no EDID
+        return HWC3::Error::Unsupported;
 
     outIdentification->port = mId;
     outIdentification->data = mEdid;
@@ -424,6 +436,7 @@ HWC3::Error Display::registerCallback(const std::shared_ptr<IComposerCallback>& 
     DEBUG_LOG("%s: display:%" PRId64, __FUNCTION__, mId);
 
     mVsyncThread.setCallbacks(callback);
+    mCallbacks = callback;
 
     return HWC3::Error::Unsupported;
 }
@@ -439,6 +452,25 @@ HWC3::Error Display::setActiveConfig(int32_t configId) {
     VsyncPeriodChangeTimeline timeline;
 
     return setActiveConfigWithConstraints(configId, constraints, &timeline);
+}
+
+HWC3::Error Display::takeEffectConfig(int32_t configId) {
+    DEBUG_LOG("%s: display:%" PRId64 " config:%" PRId32, __FUNCTION__, mId, configId);
+
+    mActiveConfigId = configId;
+
+    if (mComposer == nullptr) {
+        ALOGE("%s: display:%" PRId64 " missing composer", __FUNCTION__, mId);
+        return HWC3::Error::NoResources;
+    }
+
+    HWC3::Error error = mComposer->onActiveConfigChange(this, configId);
+    if (error != HWC3::Error::None) {
+        ALOGE("%s: display:%" PRId64 " composer failed to handle config change", __FUNCTION__, mId);
+        return error;
+    }
+
+    return HWC3::Error::None;
 }
 
 HWC3::Error Display::setActiveConfigWithConstraints(int32_t configId,
@@ -481,29 +513,12 @@ HWC3::Error Display::setActiveConfigWithConstraints(int32_t configId,
                 return HWC3::Error::SeamlessNotAllowed;
             }
         }
+        // Currently we don't support changing active config seamlessly
+        return HWC3::Error::SeamlessNotPossible;
     }
 
-    mActiveConfigId = configId;
-
-    if (mComposer == nullptr) {
-        ALOGE("%s: display:%" PRId64 " missing composer", __FUNCTION__, mId);
-        return HWC3::Error::NoResources;
-    }
-
-    HWC3::Error error = mComposer->onActiveConfigChange(this);
-    if (error != HWC3::Error::None) {
-        ALOGE("%s: display:%" PRId64 " composer failed to handle config change", __FUNCTION__, mId);
-        return error;
-    }
-
-    int32_t vsyncPeriod;
-    error = getDisplayVsyncPeriod(&vsyncPeriod);
-    if (error != HWC3::Error::None) {
-        ALOGE("%s: display:%" PRId64 " composer failed to handle config change", __FUNCTION__, mId);
-        return error;
-    }
-
-    return mVsyncThread.scheduleVsyncUpdate(vsyncPeriod, constraints, outTimeline);
+    int32_t vsyncPeriod = newConfig->getAttribute(DisplayAttribute::VSYNC_PERIOD);
+    return mVsyncThread.scheduleVsyncUpdate(configId, vsyncPeriod, constraints, outTimeline);
 }
 
 std::optional<int32_t> Display::getBootConfigId() {
@@ -708,10 +723,23 @@ HWC3::Error Display::setColorTransform(const std::vector<float>& transformMatrix
         return HWC3::Error::BadParameter;
     }
 
+    // clang-format off
+    constexpr std::array<float, 16> kIdentity = {
+        1.0f, 0.0f, 0.0f, 0.0f,
+        0.0f, 1.0f, 0.0f, 0.0f,
+        0.0f, 0.0f, 1.0f, 0.0f,
+        0.0f, 0.0f, 0.0f, 1.0f,
+    };
+    // clang-format on
+    const bool isIdentity =
+            (std::equal(transformMatrix.begin(), transformMatrix.end(), kIdentity.begin()));
+
     std::unique_lock<std::recursive_mutex> lock(mStateMutex);
 
     auto& colorTransform = mColorTransform.emplace();
     std::copy_n(transformMatrix.data(), colorTransform.size(), colorTransform.begin());
+    mColorTransformHint = isIdentity ? common::ColorTransform::IDENTITY
+                                     : common::ColorTransform::ARBITRARY_MATRIX;
 
     return HWC3::Error::None;
 }
@@ -719,7 +747,17 @@ HWC3::Error Display::setColorTransform(const std::vector<float>& transformMatrix
 HWC3::Error Display::setBrightness(float brightness) {
     DEBUG_LOG("%s: display:%" PRId64 " brightness:%f", __FUNCTION__, mId, brightness);
 
-    if (brightness < 0.0f) {
+    bool supported =
+            std::any_of(mCapability.begin(), mCapability.end(), [&](DisplayCapability cap) {
+                return cap == DisplayCapability::BRIGHTNESS;
+            });
+    if (!supported)
+        return HWC3::Error::Unsupported;
+
+    if (brightness == -1.0f) // Need to turn off backlight, here just set it as 0
+        brightness = 0.0f;
+
+    if (brightness < 0.0f || brightness > 1.0f) {
         ALOGE("%s: display:%" PRId64 " invalid brightness:%f", __FUNCTION__, mId, brightness);
         return HWC3::Error::BadParameter;
     }
@@ -869,8 +907,8 @@ HWC3::Error Display::present(
             return HWC3::Error::NotValidated;
         }
         case PresentFlowState::WAITING_FOR_ACCEPT: {
-            ALOGE("%s: display %" PRId64 " failed, changes not accepted", __FUNCTION__, mId);
-            return HWC3::Error::NotValidated;
+            ALOGW("%s: display %" PRId64 ", changes not accepted", __FUNCTION__, mId);
+            break;
         }
         case PresentFlowState::WAITING_FOR_PRESENT: {
             break;
@@ -904,6 +942,7 @@ HWC3::Error Display::setEdid(std::vector<uint8_t> edid) {
 
     mEdid = std::move(edid);
     mEdidParser = std::make_unique<Edid>(mEdid);
+    mIsLegacyEdid = false;
 
     return HWC3::Error::None;
 }
@@ -934,6 +973,7 @@ void Display::setLegacyEdid() {
     // uint8_t checksum = -(uint8_t)std::accumulate(mEdid.data(), mEdid.data() + size - 1,
     //                                              static_cast<uint8_t>(0));
     // mEdid[size - 1] = checksum;
+    mIsLegacyEdid = true;
 }
 
 Layer* Display::getLayer(int64_t layerId) {
@@ -958,6 +998,34 @@ buffer_handle_t Display::waitAndGetClientTargetBuffer() {
     }
 
     return mClientTarget.getBuffer();
+}
+
+ClientTargetProperty& Display::getClientTargetProperty() {
+    DEBUG_LOG("%s: display:%" PRId64, __FUNCTION__, mId);
+
+    if (mComposer == nullptr) {
+        ALOGE("%s: display:%" PRId64 " missing composer", __FUNCTION__, mId);
+        return mClientTargetProperty;
+    }
+
+    if (mComposer->getClientTargetProperty(this, &mClientTargetProperty) != HWC3::Error::None) {
+        ALOGE("%s: display:%" PRId64 " get client target property failed", __FUNCTION__, mId);
+    }
+
+    return mClientTargetProperty;
+}
+
+HWC3::Error Display::checkAndWaitNextVsync(int64_t* timestamp) {
+    if (mComposer == nullptr) {
+        ALOGE("%s: display:%" PRId64 " missing composer", __FUNCTION__, mId);
+        return HWC3::Error::NoResources;
+    }
+
+    auto ret = mComposer->waitHardwareVsyncTimestamp(this, timestamp);
+    if (ret != HWC3::Error::None) {
+        ALOGE("%s: display:%" PRId64 " cannot get Vsync timestamp", __FUNCTION__, mId);
+    }
+    return ret;
 }
 
 } // namespace aidl::android::hardware::graphics::composer3::impl

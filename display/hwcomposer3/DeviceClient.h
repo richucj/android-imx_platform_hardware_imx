@@ -63,8 +63,11 @@ public:
     virtual HWC3::Error setPowerMode(int displayId, DrmPower power) = 0;
 
     virtual std::tuple<HWC3::Error, bool> isOverlaySupport(int displayId) = 0;
+    virtual HWC3::Error checkOverlayLimitation(int displayId, Layer* layer) {
+        return HWC3::Error::None;
+    }
 
-    virtual HWC3::Error prepareDrmPlanesForValidate(int displayId) = 0;
+    virtual HWC3::Error prepareDrmPlanesForValidate(int displayId, uint32_t* uiPlaneBackup) = 0;
 
     virtual std::tuple<HWC3::Error, uint32_t> getPlaneForLayerBuffer(
             int displayId, const native_handle_t* handle) = 0;
@@ -73,6 +76,10 @@ public:
 
     virtual HWC3::Error setPrimaryDisplay(int displayId) = 0;
     virtual HWC3::Error fakeDisplayConfig(int displayId) = 0;
+    virtual HWC3::Error setActiveConfigId(int displayId, int32_t configId) {
+        return HWC3::Error::None;
+    }
+    virtual HWC3::Error resetDisplayConfig(int displayId) { return HWC3::Error::None; }
 
     virtual std::tuple<HWC3::Error, buffer_handle_t> getComposerTarget(
             std::shared_ptr<DeviceComposer> composer, int displayId, bool secure) = 0;
@@ -90,6 +97,11 @@ public:
     virtual HWC3::Error getDisplayConnectionType(int displayId, DisplayConnectionType* outType) {
         *outType = DisplayConnectionType::INTERNAL;
         return HWC3::Error::None;
+    }
+    virtual HWC3::Error getDisplayClientTargetProperty(int displayId,
+                                                       ClientTargetProperty* outProperty) = 0;
+    virtual HWC3::Error waitVBlank(int displayId, int64_t* timestamp) {
+        return HWC3::Error::Unsupported;
     }
 };
 

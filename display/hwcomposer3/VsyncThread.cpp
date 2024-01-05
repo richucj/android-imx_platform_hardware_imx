@@ -1,5 +1,6 @@
 /*
  * Copyright 2022 The Android Open Source Project
+ * Copyright 2023 NXP
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -20,6 +21,7 @@
 
 #include <thread>
 
+#include "Display.h"
 #include "Time.h"
 
 namespace aidl::android::hardware::graphics::composer3::impl {
@@ -40,7 +42,7 @@ TimePoint GetNextVsyncInPhase(Nanoseconds vsyncPeriod, TimePoint previousVsync, 
 
 } // namespace
 
-VsyncThread::VsyncThread(int64_t displayId) : mDisplayId(displayId) {}
+VsyncThread::VsyncThread(Display* display) : mDisplayId(display->getId()), mDisplay(display) {}
 
 VsyncThread::~VsyncThread() {
     stop();
@@ -54,7 +56,7 @@ HWC3::Error VsyncThread::start(int32_t vsyncPeriodNanos) {
 
     mThread = std::thread([this]() { threadLoop(); });
 
-    const std::string name = "display_" + std::to_string(mDisplayId) + "_vsync_thread";
+    const std::string name = "display_" + std::to_string(mDisplayId) + "_vsync";
 
     int ret = pthread_setname_np(mThread.native_handle(), name.c_str());
     if (ret != 0) {
@@ -62,7 +64,7 @@ HWC3::Error VsyncThread::start(int32_t vsyncPeriodNanos) {
     }
 
     struct sched_param param = {
-            .sched_priority = ANDROID_PRIORITY_DISPLAY,
+            .sched_priority = 2,
     };
     ret = pthread_setschedparam(mThread.native_handle(), SCHED_FIFO, &param);
     if (ret != 0) {
@@ -83,7 +85,6 @@ HWC3::Error VsyncThread::setCallbacks(const std::shared_ptr<IComposerCallback>& 
     DEBUG_LOG("%s for display:%" PRIu64, __FUNCTION__, mDisplayId);
 
     std::unique_lock<std::mutex> lock(mStateMutex);
-
     mCallbacks = callback;
 
     return HWC3::Error::None;
@@ -92,27 +93,34 @@ HWC3::Error VsyncThread::setCallbacks(const std::shared_ptr<IComposerCallback>& 
 HWC3::Error VsyncThread::setVsyncEnabled(bool enabled) {
     DEBUG_LOG("%s for display:%" PRIu64 " enabled:%d", __FUNCTION__, mDisplayId, enabled);
 
-    std::unique_lock<std::mutex> lock(mStateMutex);
-
+    std::lock_guard<std::mutex> lock(mStateMutex);
     mVsyncEnabled = enabled;
 
     return HWC3::Error::None;
 }
 
-HWC3::Error VsyncThread::scheduleVsyncUpdate(int32_t newVsyncPeriod,
+HWC3::Error VsyncThread::scheduleVsyncUpdate(int32_t configId, int32_t newVsyncPeriod,
                                              const VsyncPeriodChangeConstraints& constraints,
                                              VsyncPeriodChangeTimeline* outTimeline) {
     DEBUG_LOG("%s for display:%" PRIu64, __FUNCTION__, mDisplayId);
 
-    PendingUpdate update;
-    update.period = Nanoseconds(newVsyncPeriod);
-    update.updateAfter = asTimePoint(constraints.desiredTimeNanos);
+    std::chrono::time_point<std::chrono::steady_clock> updateTime;
+    if (constraints.desiredTimeNanos == 0) { // take effect immediately
+        mVsyncPeriod = Nanoseconds(newVsyncPeriod);
+        mDisplay->takeEffectConfig(configId);
+        updateTime = mPreviousVsync;
+    } else {
+        PendingUpdate update;
+        update.period = Nanoseconds(newVsyncPeriod);
+        update.updateAfter = asTimePoint(constraints.desiredTimeNanos);
+        update.configId = configId;
+        updateTime = update.updateAfter;
 
-    TimePoint nextVsync = GetNextVsyncInPhase(mVsyncPeriod, mPreviousVsync, update.updateAfter);
+        std::unique_lock<std::mutex> lock(mStateMutex);
+        mPendingUpdate.emplace(std::move(update));
+    }
 
-    std::unique_lock<std::mutex> lock(mStateMutex);
-    mPendingUpdate.emplace(std::move(update));
-
+    TimePoint nextVsync = GetNextVsyncInPhase(mVsyncPeriod, mPreviousVsync, updateTime);
     outTimeline->newVsyncAppliedTimeNanos = asNanosTimePoint(nextVsync);
     outTimeline->refreshRequired = false;
     outTimeline->refreshTimeNanos = 0;
@@ -123,6 +131,7 @@ HWC3::Error VsyncThread::scheduleVsyncUpdate(int32_t newVsyncPeriod,
 Nanoseconds VsyncThread::updateVsyncPeriodLocked(TimePoint now) {
     if (mPendingUpdate && now > mPendingUpdate->updateAfter) {
         mVsyncPeriod = mPendingUpdate->period;
+        mDisplay->takeEffectConfig(mPendingUpdate->configId);
         mPendingUpdate.reset();
     }
 
@@ -136,16 +145,30 @@ void VsyncThread::threadLoop() {
 
     int vsyncs = 0;
     TimePoint previousLog = std::chrono::steady_clock::now();
+    int64_t lasttime = 0;
 
     while (!mShuttingDown.load()) {
+        int64_t timestamp = 0;
+        TimePoint vsyncTime;
         TimePoint now = std::chrono::steady_clock::now();
-        TimePoint nextVsync = GetNextVsyncInPhase(vsyncPeriod, mPreviousVsync, now);
+        if (mVsyncEnabled && (mDisplay->checkAndWaitNextVsync(&timestamp) == HWC3::Error::None)) {
+            if (timestamp == 0)
+                vsyncTime = now;
+            else
+                vsyncTime = asTimePoint(timestamp);
 
-        std::this_thread::sleep_until(nextVsync);
+            if (lasttime != 0) {
+                DEBUG_LOG("hardware vsync period: %" PRIu64, timestamp - lasttime);
+            }
+            lasttime = timestamp;
+        } else {
+            TimePoint nextVsync = GetNextVsyncInPhase(vsyncPeriod, mPreviousVsync, now);
+            std::this_thread::sleep_until(nextVsync);
+            vsyncTime = nextVsync;
+        }
         {
             std::unique_lock<std::mutex> lock(mStateMutex);
-
-            mPreviousVsync = nextVsync;
+            mPreviousVsync = vsyncTime;
 
             // Display has finished refreshing at previous vsync period. Update the
             // vsync period if there was a pending update.
@@ -154,8 +177,8 @@ void VsyncThread::threadLoop() {
 
         if (mVsyncEnabled) {
             if (mCallbacks) {
-                DEBUG_LOG("%s: for display:%" PRIu64 " calling vsync", __FUNCTION__, mDisplayId);
-                mCallbacks->onVsync(mDisplayId, asNanosTimePoint(nextVsync),
+                ALOGV("%s: for display:%" PRIu64 " calling vsync", __FUNCTION__, mDisplayId);
+                mCallbacks->onVsync(mDisplayId, asNanosTimePoint(mPreviousVsync),
                                     asNanosDuration(vsyncPeriod));
             }
         }

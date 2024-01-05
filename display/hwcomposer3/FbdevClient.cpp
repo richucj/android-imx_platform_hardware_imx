@@ -159,7 +159,7 @@ std::tuple<HWC3::Error, ::android::base::unique_fd> FbdevClient::flushToDisplay(
     }
 
     ::android::RWLock::AutoRLock lock(mDisplaysMutex);
-    if (!buffer.clientTargetDrmBuffer->mBufferAddress) {
+    if (!buffer.clientTargetDrmBuffer || !buffer.clientTargetDrmBuffer->mBufferAddress) {
         return std::make_tuple(HWC3::Error::NoResources, ::android::base::unique_fd());
     }
 
@@ -188,20 +188,6 @@ HWC3::Error FbdevClient::setPowerMode(int displayId, DrmPower power) {
     mDisplays[displayId]->setPowerMode(mFd, power);
 
     return HWC3::Error::None;
-}
-
-std::tuple<HWC3::Error, bool> FbdevClient::isOverlaySupport(int displayId) {
-    bool supported = false;
-    return std::make_tuple(HWC3::Error::None, supported);
-}
-
-HWC3::Error FbdevClient::prepareDrmPlanesForValidate(int displayId) {
-    return HWC3::Error::None;
-}
-
-std::tuple<HWC3::Error, uint32_t> FbdevClient::getPlaneForLayerBuffer(
-        int displayId, const native_handle_t* handle) {
-    return std::make_tuple(HWC3::Error::NoResources, 0);
 }
 
 HWC3::Error FbdevClient::setPrimaryDisplay(int displayId) {
@@ -264,7 +250,7 @@ std::tuple<HWC3::Error, buffer_handle_t> FbdevClient::getComposerTarget(
 
     composer->freeSolidColorBuffer();
 
-    mG2dComposer = composer; // hotplug callback function need device composer to free buffers
+    mG2dComposer = std::move(composer); // hotplug callback function need device composer to free buffers
 
     return std::make_tuple(HWC3::Error::None, mComposerTargets[displayId][0]);
 }
@@ -274,6 +260,22 @@ HWC3::Error FbdevClient::setSecureMode(int displayId, uint32_t planeId, bool sec
         DEBUG_LOG("%s: invalid display:%" PRIu32, __FUNCTION__, displayId);
         return HWC3::Error::BadDisplay;
     }
+
+    return HWC3::Error::None;
+}
+
+HWC3::Error FbdevClient::getDisplayClientTargetProperty(int displayId,
+                                                        ClientTargetProperty* outProperty) {
+    if (mDisplays.find(displayId) == mDisplays.end()) {
+        DEBUG_LOG("%s: invalid display:%" PRIu32, __FUNCTION__, displayId);
+        return HWC3::Error::BadDisplay;
+    }
+
+    uint32_t width, height, format;
+    mDisplays[displayId]->getFramebufferInfo(&width, &height, &format);
+
+    outProperty->pixelFormat = (common::PixelFormat)format;
+    outProperty->dataspace = common::Dataspace::SRGB_LINEAR;
 
     return HWC3::Error::None;
 }

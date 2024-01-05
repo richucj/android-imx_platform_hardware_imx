@@ -57,7 +57,7 @@ public:
 
     HWC3::Error onDisplayClientTargetSet(Display* display) override;
 
-    HWC3::Error onActiveConfigChange(Display* display) override;
+    HWC3::Error onActiveConfigChange(Display* display, int32_t configId) override;
 
     // Determines if this composer can compose the given layers on the given
     // display and requests changes for layers that can't not be composed.
@@ -72,6 +72,9 @@ public:
     HWC3::Error setPowerMode(Display* display, PowerMode mode) override;
     HWC3::Error setDisplayBrightness(Display* display, float brightness) override;
     HWC3::Error getDisplayConnectionType(Display* display, DisplayConnectionType* outType) override;
+    HWC3::Error getClientTargetProperty(Display* display,
+                                        ClientTargetProperty* outProperty) override;
+    HWC3::Error waitHardwareVsyncTimestamp(Display* display, int64_t* timestamp) override;
 
     HWC3::Error getAllDeviceClients(std::map<uint32_t, DeviceClient*>& clients) override {
         for (auto& [baseId, client] : mDeviceClients) {
@@ -83,9 +86,20 @@ public:
 private:
     std::tuple<HWC3::Error, DeviceClient*> getDeviceClient(uint32_t displayId);
 
+    struct ValidatedLayers {
+        std::unordered_map<uint32_t, Layer*> layersForOverlayPlane; // <planeId, layer>
+        std::vector<Layer*> layersForComposition;
+        /* When the primary plane is occupied for sepecial case(Confirmation UI), the composition
+         * result(Android UI) should be placed in the Overlay plane that just below primary plane.
+         */
+        std::optional<uint32_t> compositionPlaneId;
+        std::vector<Layer*> layersForNxpPrivate;
+        // will try to present this lucky layer when no client target set in 3D composition
+        // VTS case use such method to present, add it to avoid VTS case fail.
+        Layer* luckyLayer;
+    };
     std::unordered_map<int64_t, DisplayBuffer> mDisplayBuffers;
-    std::vector<int64_t> mLayersForOverlay; // <layerId>
-    std::vector<Layer*> mLayersForComposition;
+    std::unordered_map<int64_t, ValidatedLayers> mDisplayLayers;
 
     std::map<uint32_t, std::unique_ptr<DeviceClient>> mDeviceClients;
     std::shared_ptr<DeviceComposer> mG2dComposer;

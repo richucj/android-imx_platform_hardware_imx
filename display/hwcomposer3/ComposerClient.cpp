@@ -91,6 +91,17 @@ public:
         mResults->emplace_back(std::move(result));
     }
 
+    void addClientTargetProperty(int64_t displayId,
+                                 const ClientTargetProperty& clientTargetProperty, float brightness,
+                                 const DimmingStage& dimmingStage) {
+        ClientTargetPropertyWithBrightness clientTargetPropertyWithBrightness;
+        clientTargetPropertyWithBrightness.display = displayId;
+        clientTargetPropertyWithBrightness.clientTargetProperty = clientTargetProperty;
+        clientTargetPropertyWithBrightness.brightness = brightness;
+        clientTargetPropertyWithBrightness.dimmingStage = dimmingStage;
+        mResults->emplace_back(std::move(clientTargetPropertyWithBrightness));
+    }
+
 private:
     int32_t mIndex = 0;
     std::vector<CommandResultPayload>* mResults = nullptr;
@@ -107,6 +118,7 @@ ComposerClient::~ComposerClient() {
 
     destroyDisplaysLocked();
 
+    Device::getInstance().releaseComposer();
     if (mOnClientDestroyed) {
         mOnClientDestroyed();
     }
@@ -152,6 +164,8 @@ HWC3::Error ComposerClient::init() {
         ALOGE("%s failed to create displays.", __FUNCTION__);
         return error;
     }
+
+    mCapabilities.clear(); // not support any capabilities now
 
     DEBUG_LOG("%s initialized!", __FUNCTION__);
     return HWC3::Error::None;
@@ -541,6 +555,12 @@ ndk::ScopedAStatus ComposerClient::setBootDisplayConfig(int64_t displayId, int32
 
     GET_DISPLAY_OR_RETURN_ERROR();
 
+    bool supported = std::any_of(mCapabilities.begin(), mCapabilities.end(), [&](Capability cap) {
+        return cap == Capability::BOOT_DISPLAY_CONFIG;
+    });
+    if (!supported)
+        return ToBinderStatus(HWC3::Error::Unsupported);
+
     return ToBinderStatus(display->setBootConfig(configId));
 }
 
@@ -550,6 +570,12 @@ ndk::ScopedAStatus ComposerClient::clearBootDisplayConfig(int64_t displayId) {
     std::unique_lock<std::mutex> lock(mStateMutex);
 
     GET_DISPLAY_OR_RETURN_ERROR();
+
+    bool supported = std::any_of(mCapabilities.begin(), mCapabilities.end(), [&](Capability cap) {
+        return cap == Capability::BOOT_DISPLAY_CONFIG;
+    });
+    if (!supported)
+        return ToBinderStatus(HWC3::Error::Unsupported);
 
     return ToBinderStatus(display->clearBootConfig());
 }
@@ -561,6 +587,12 @@ ndk::ScopedAStatus ComposerClient::getPreferredBootDisplayConfig(int64_t display
     std::unique_lock<std::mutex> lock(mStateMutex);
 
     GET_DISPLAY_OR_RETURN_ERROR();
+
+    bool supported = std::any_of(mCapabilities.begin(), mCapabilities.end(), [&](Capability cap) {
+        return cap == Capability::BOOT_DISPLAY_CONFIG;
+    });
+    if (!supported)
+        return ToBinderStatus(HWC3::Error::Unsupported);
 
     return ToBinderStatus(display->getPreferredBootConfig(outConfigId));
 }
@@ -939,6 +971,10 @@ void ComposerClient::executeDisplayCommandPresentOrValidateDisplay(
     } else {
         const int64_t displayId = display->getId();
         mCommandResults->addChanges(changes);
+        static constexpr float kBrightness = 1.f;
+        DimmingStage dimmingStage{DimmingStage::NONE};
+        mCommandResults->addClientTargetProperty(displayId, display->getClientTargetProperty(),
+                                                 kBrightness, dimmingStage);
         mCommandResults->addPresentOrValidateResult(displayId,
                                                     PresentOrValidate::Result::Validated);
     }
@@ -1045,6 +1081,9 @@ void ComposerClient::executeLayerCommandSetLayerComposition(
         LOG_LAYER_COMMAND_ERROR(display, layer, error);
         mCommandResults->addError(error);
     }
+
+    if (mCallbacks && (int(composition.composition) == Composition_NXP_PRIVATE))
+        mCallbacks->onRefresh(display->getId());
 }
 
 void ComposerClient::executeLayerCommandSetLayerDataspace(Display* display, Layer* layer,

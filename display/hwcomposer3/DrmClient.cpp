@@ -89,7 +89,7 @@ HWC3::Error DrmClient::init(char* path, uint32_t* baseId) {
         }
     }
 
-    constexpr const std::size_t kCachedBuffersPerDisplay = 10;
+    constexpr const std::size_t kCachedBuffersPerDisplay = 20;
     std::size_t numDisplays = mDisplays.size();
     const std::size_t bufferCacheSize = kCachedBuffersPerDisplay * numDisplays;
     DEBUG_LOG("%s: initializing DRM buffer cache to size %zu", __FUNCTION__, bufferCacheSize);
@@ -273,6 +273,8 @@ std::tuple<HWC3::Error, std::shared_ptr<DrmBuffer>> DrmClient::create(const nati
 
     auto drmBufferPtr = mBufferCache->get(primeHandle);
     if (drmBufferPtr != nullptr) {
+        (*drmBufferPtr)->mDisplayFrame = displayFrame;
+        (*drmBufferPtr)->mSourceCrop = sourceCrop;
         DEBUG_LOG("%s: found framebuffer:%" PRIu32, __FUNCTION__,
                   *(*drmBufferPtr)->mDrmFramebuffer);
         return std::make_tuple(HWC3::Error::None, std::shared_ptr<DrmBuffer>(*drmBufferPtr));
@@ -383,6 +385,14 @@ bool DrmClient::handleHotplug() {
                 continue;
             }
 
+            if (display->isPrimary() || (change == DrmHotplugChange::kDisconnected)) {
+                uint32_t id = display->getId();
+                if (mComposerTargets.find(id) != mComposerTargets.end()) {
+                    // free device composer target buffers when disconnected
+                    mG2dComposer->freeDeviceFrameBuffer(mComposerTargets[id]);
+                    mComposerTargets.erase(id);
+                }
+            }
             if (change == DrmHotplugChange::kDisconnected) {
                 if (display->isPrimary()) {
                     // primary display cannot be disconnected when report
@@ -392,13 +402,8 @@ bool DrmClient::handleHotplug() {
                     display->placeholderDisplayConfigs();
                     ALOGW("primary display cannot hotplug");
                 }
-                uint32_t id = display->getId();
-                if (mComposerTargets.find(id) != mComposerTargets.end()) {
-                    // free device composer target buffers when disconnected
-                    mG2dComposer->freeDeviceFrameBuffer(mComposerTargets[id]);
-                    mComposerTargets.erase(id);
-                }
             }
+
             std::unique_ptr<HalMultiConfigs> cfg(new HalMultiConfigs{
                     .displayId = display->getId(),
                     .activeConfigId = display->getActiveConfigId(),
@@ -494,13 +499,63 @@ std::tuple<HWC3::Error, bool> DrmClient::isOverlaySupport(int displayId) {
     return std::make_tuple(HWC3::Error::None, supported);
 }
 
-HWC3::Error DrmClient::prepareDrmPlanesForValidate(int displayId) {
+HWC3::Error DrmClient::checkOverlayLimitation(int displayId, Layer* layer) {
     if (mDisplays.find(displayId) == mDisplays.end()) {
         DEBUG_LOG("%s: invalid display:%" PRIu32, __FUNCTION__, displayId);
         return HWC3::Error::BadDisplay;
     }
 
-    mDisplays[displayId]->buildPlaneIdPool();
+    // rotation limitation
+    if (layer->getTransform() != common::Transform::NONE)
+        return HWC3::Error::Unsupported;
+
+    // format limitation
+    gralloc_handle_t buff = (gralloc_handle_t)layer->getBuffer().getBuffer();
+    if (!buff || ((buff->fslFormat >= FORMAT_RGBA8888) && (buff->fslFormat <= FORMAT_BGRA8888)))
+        return HWC3::Error::Unsupported;
+
+    // scaling limitation
+    common::Rect rect = layer->getDisplayFrame();
+    auto& config = mDisplays[displayId]->getActiveConfig();
+    int w = (rect.right - rect.left) * config.modeWidth / config.width;
+    int h = (rect.bottom - rect.top) * config.modeHeight / config.height;
+    common::Rect srect = layer->getSourceCropInt();
+    int srcW = srect.right - srect.left;
+    int srcH = srect.bottom - srect.top;
+    if (w > srcW * 7 || h > srcH * 7) {
+        // fall back to GPU.
+        return HWC3::Error::Unsupported;
+    }
+
+    uint64_t modifier;
+    uint32_t format = ConvertNxpFormatToDrmFormat(buff->fslFormat, &modifier);
+    if (srcW < 64 &&
+        ((format == DRM_FORMAT_NV12) || (format == DRM_FORMAT_NV21) ||
+         (format == DRM_FORMAT_P010))) {
+        return HWC3::Error::Unsupported;
+    } else if (srcW < 32 &&
+               ((format == DRM_FORMAT_UYVY) || (format == DRM_FORMAT_VYUY) ||
+                (format == DRM_FORMAT_YUYV) || (format == DRM_FORMAT_YVYU))) {
+        return HWC3::Error::Unsupported;
+    } else if (srcW < 16 || srcH < 8) {
+        return HWC3::Error::Unsupported;
+    }
+
+    return HWC3::Error::None;
+}
+
+HWC3::Error DrmClient::prepareDrmPlanesForValidate(int displayId, uint32_t* uiPlaneBackup) {
+    if (mDisplays.find(displayId) == mDisplays.end()) {
+        DEBUG_LOG("%s: invalid display:%" PRIu32, __FUNCTION__, displayId);
+        return HWC3::Error::BadDisplay;
+    }
+
+    uint32_t topOverlayId = uint32_t(-1);
+    mDisplays[displayId]->buildPlaneIdPool(&topOverlayId);
+    if ((uiPlaneBackup != nullptr) && (topOverlayId != uint32_t(-1))) {
+        mDisplays[displayId]->reservePlaneId(topOverlayId);
+        *uiPlaneBackup = topOverlayId;
+    }
 
     return HWC3::Error::None;
 }
@@ -547,6 +602,28 @@ HWC3::Error DrmClient::fakeDisplayConfig(int displayId) {
 
     mDisplays[displayId]->placeholderDisplayConfigs();
 
+    return HWC3::Error::None;
+}
+
+HWC3::Error DrmClient::setActiveConfigId(int displayId, int32_t configId) {
+    if (mDisplays.find(displayId) == mDisplays.end()) {
+        DEBUG_LOG("%s: invalid display:%" PRIu32, __FUNCTION__, displayId);
+        return HWC3::Error::BadDisplay;
+    }
+
+    if (mDisplays[displayId]->setActiveConfigId(configId))
+        return HWC3::Error::None;
+    else
+        return HWC3::Error::BadParameter;
+}
+
+HWC3::Error DrmClient::resetDisplayConfig(int displayId) {
+    if (mDisplays.find(displayId) == mDisplays.end()) {
+        DEBUG_LOG("%s: invalid display:%" PRIu32, __FUNCTION__, displayId);
+        return HWC3::Error::BadDisplay;
+    }
+
+    mDisplays[displayId]->resetDisplayConfig();
     return HWC3::Error::None;
 }
 
@@ -633,6 +710,7 @@ int DrmClient::loadBacklightDevices() {
 
     property_get("vendor.hw.backlight.dev", dev, "pwm-backlight");
     filePath = path + dev + "/max_brightness";
+    mBacklight.path = "";
 
     FILE* file = fopen(filePath.c_str(), "r");
     if (!file) {
@@ -645,7 +723,11 @@ int DrmClient::loadBacklightDevices() {
         ALOGE("%s: Cannot get backlight device or incorrect setting", __FUNCTION__);
     } else {
         char value[5];
-        if (fread(value, 1, 4, file) > 0) {
+        size_t bytesRead = fread(value, 1, 4, file);
+        if (bytesRead == 0) {
+            ALOGE("%s: Error reading max brightness from %s", __FUNCTION__, filePath.c_str());
+            mBacklight.maxBrightness = -1;
+        } else {
             value[4] = '\0';
             mBacklight.maxBrightness = atoi(value);
             ALOGI("%s: get max brightness=%d from %s", __FUNCTION__, mBacklight.maxBrightness,
@@ -755,4 +837,48 @@ HWC3::Error DrmClient::getDisplayConnectionType(int displayId, DisplayConnection
     return HWC3::Error::None;
 }
 
+HWC3::Error DrmClient::getDisplayClientTargetProperty(int displayId,
+                                                      ClientTargetProperty* outProperty) {
+    if (mDisplays.find(displayId) == mDisplays.end()) {
+        DEBUG_LOG("%s: invalid display:%" PRIu32, __FUNCTION__, displayId);
+        return HWC3::Error::BadDisplay;
+    }
+
+    uint32_t width, height, format;
+    mDisplays[displayId]->getFramebufferInfo(&width, &height, &format);
+
+    outProperty->pixelFormat = (common::PixelFormat)format;
+    outProperty->dataspace = common::Dataspace::SRGB_LINEAR;
+
+    return HWC3::Error::None;
+}
+
+using namespace std::chrono_literals;
+constexpr auto nsecsPerSec = std::chrono::nanoseconds(1s).count();
+HWC3::Error DrmClient::waitVBlank(int displayId, int64_t* timestamp) {
+    if (mDisplays.find(displayId) == mDisplays.end()) {
+        DEBUG_LOG("%s: invalid display:%" PRIu32, __FUNCTION__, displayId);
+        return HWC3::Error::BadDisplay;
+    }
+
+    if (!mDisplays[displayId]->isDisplayActive())
+        return HWC3::Error::BadDisplay;
+
+    uint32_t high_crtc = (mDisplays[displayId]->getCrtcIndex() << DRM_VBLANK_HIGH_CRTC_SHIFT);
+    drmVBlank vblank;
+    memset(&vblank, 0, sizeof(vblank));
+    vblank.request.type =
+            (drmVBlankSeqType)(DRM_VBLANK_RELATIVE | (high_crtc & DRM_VBLANK_HIGH_CRTC_MASK));
+    vblank.request.sequence = 1;
+    int ret = drmWaitVBlank(mFd, &vblank);
+    if (ret) {
+        ALOGE("%s wait drm vblank failed", __FUNCTION__);
+        return HWC3::Error::NoResources;
+    }
+
+    *timestamp =
+            (int64_t)vblank.reply.tval_sec * nsecsPerSec + (int64_t)vblank.reply.tval_usec * 1000;
+
+    return HWC3::Error::None;
+}
 } // namespace aidl::android::hardware::graphics::composer3::impl

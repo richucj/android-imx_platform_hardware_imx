@@ -19,6 +19,7 @@
 
 #include <android-base/properties.h>
 #include <cutils/properties.h>
+#include <ui/GraphicBufferMapper.h>
 
 namespace aidl::android::hardware::graphics::composer3::impl {
 
@@ -33,6 +34,12 @@ bool IsOverlayUserDisabled() {
     const std::string overlay = ::android::base::GetProperty("vendor.hwc.disable.overlay", "0");
     DEBUG_LOG("%s: sysprop vendor.hwc.disable.overlay is %s", __FUNCTION__, overlay.c_str());
     return overlay == "1";
+}
+
+bool Is2DCompositionUserDisabled() {
+    const std::string g2d = ::android::base::GetProperty("vendor.sys.hwc.disable", "0");
+    DEBUG_LOG("%s: sysprop vendor.sys.hwc.disable is %s", __FUNCTION__, g2d.c_str());
+    return g2d == "1";
 }
 
 bool Is2DCompositionUserPrefered() {
@@ -67,6 +74,8 @@ std::string toString(HWC3::Error error) {
             return "Unsupported";
         case HWC3::Error::SeamlessNotAllowed:
             return "SeamlessNotAllowed";
+        case HWC3::Error::SeamlessNotPossible:
+            return "SeamlessNotPossible";
     }
 }
 
@@ -196,6 +205,8 @@ void parseDisplayMode(uint32_t *width, uint32_t *height, uint32_t *vrefresh, uin
             *prefermode = 1;
         }
     }
+    ALOGI("%s: displaymode: %d x %d, %d fps, prefered=%d", __FUNCTION__, *width, *height, *vrefresh,
+          *prefermode);
 }
 
 bool checkRectOverlap(common::Rect &masked, common::Rect &src) { // check if there is overlap or not
@@ -218,46 +229,117 @@ nsecs_t dumpRefreshRateStart() {
     return commit_start;
 }
 
-void dumpRefreshRateEnd(uint32_t displayId, int vsyncPeriod, nsecs_t commit_start) {
-    static nsecs_t m_pre_commit_start = 0;
-    static nsecs_t m_pre_commit_time = 0;
-    // surfaceflinger updatescreen delay(compare with vsync period)
-    static nsecs_t m_total_sf_delay = 0;
-    static nsecs_t m_total_commit_time = 0;
-    static nsecs_t m_total_commit_cost = 0;
-    static int m_request_refresh_cnt = 0;
-    static int m_commit_cnt = 0;
-
+void dumpRefreshRateEnd(DumpRefreshRate &dump, int vsyncPeriod, nsecs_t commit_start) {
     nsecs_t commit_time;
     float refresh_rate = 0;
 
     commit_time = systemTime(CLOCK_MONOTONIC);
     char value[PROPERTY_VALUE_MAX];
     property_get("vendor.hwc.debug.dump_refresh_rate", value, "0");
-    m_request_refresh_cnt = atoi(value);
-    if (m_request_refresh_cnt <= 0)
+    dump.request_refresh_cnt = atoi(value);
+    if (dump.request_refresh_cnt <= 0)
         return;
 
-    if (m_pre_commit_time > 0) {
-        m_total_commit_time += commit_time - m_pre_commit_time;
-        m_total_commit_cost += commit_time - commit_start;
-        m_total_sf_delay += (int64_t)commit_start - m_pre_commit_start - vsyncPeriod;
-        m_commit_cnt++;
-        if (m_commit_cnt >= m_request_refresh_cnt) {
-            refresh_rate = 1000000000.0 * m_commit_cnt / m_total_commit_time;
+    if (dump.pre_commit_time > 0) {
+        dump.total_commit_time += commit_time - dump.pre_commit_time;
+        dump.total_commit_cost += commit_time - commit_start;
+        dump.total_sf_delay += (int64_t)commit_start - dump.pre_commit_start - vsyncPeriod;
+        dump.commit_cnt++;
+        if (dump.commit_cnt >= dump.request_refresh_cnt) {
+            refresh_rate = 1000000000.0 * dump.commit_cnt / dump.total_commit_time;
             ALOGI("id= %d, refresh rate= %3.2f fps, commit wait=%1.4fms/frame, update "
                   "delay=%1.4fms/frame",
-                  displayId, refresh_rate, m_total_commit_cost / (m_commit_cnt * 1000000.0),
-                  m_total_sf_delay / (m_commit_cnt * 1000000.0));
-            m_total_sf_delay = 0;
-            m_total_commit_time = 0;
-            m_total_commit_cost = 0;
-            m_commit_cnt = 0;
+                  dump.displayId, refresh_rate,
+                  dump.total_commit_cost / (dump.commit_cnt * 1000000.0),
+                  dump.total_sf_delay / (dump.commit_cnt * 1000000.0));
+            dump.total_sf_delay = 0;
+            dump.total_commit_time = 0;
+            dump.total_commit_cost = 0;
+            dump.commit_cnt = 0;
         }
     }
-    m_pre_commit_start = commit_start;
-    m_pre_commit_time = commit_time;
+    dump.pre_commit_start = commit_start;
+    dump.pre_commit_time = commit_time;
 }
 
 #endif
+
+#ifdef DEBUG_DUMP_FRAME
+static void dump_frame_to_file(char *pbuf, int size, char *filename) {
+    int fd = 0;
+    int len = 0;
+    fd = open(filename, O_CREAT | O_RDWR, 0666);
+    if (fd < 0) {
+        ALOGE("Unable to open file [%s]\n", filename);
+    }
+    len = write(fd, pbuf, size);
+    close(fd);
+}
+
+static void dump_frame(char *pbuf, int width, int height, int size) {
+    static bool start_dump = false;
+    static int prev_request_frame_count = 0;
+    static int request_frame_count = 0;
+    static int dumpped_count = 0;
+
+    if (!start_dump) {
+        char value[PROPERTY_VALUE_MAX];
+        property_get("vendor.hwc.enable.dump_frame", value, "0");
+        request_frame_count = atoi(value);
+        // Previous dump request finished, no more request catched
+        if (prev_request_frame_count == request_frame_count)
+            return;
+
+        prev_request_frame_count = request_frame_count;
+        if (request_frame_count >= 1)
+            start_dump = true;
+        else
+            start_dump = false;
+    }
+
+    if ((start_dump) && (request_frame_count >= 1)) {
+        ALOGI("Dump %d frame buffer %p, %d x %d, size %d", dumpped_count, pbuf, width, height,
+              size);
+        if (pbuf != 0) {
+            char filename[128];
+            memset(filename, 0, 128);
+            sprintf(filename, "/data/%s-frame-%d.rgba", "drm-display", dumpped_count);
+            dump_frame_to_file(pbuf, size, filename);
+            dumpped_count++;
+        }
+        request_frame_count--;
+        if (request_frame_count == 0) {
+            start_dump = false;
+            property_set("vendor.hwc.enable.dump_frame", "0"); // disable dump when completed
+        }
+    }
+}
+
+void debug_dump_frame(buffer_handle_t handle) {
+    gralloc_handle_t buffer = (gralloc_handle_t)handle;
+    if (buffer->base == 0) {
+        void *vaddr = NULL;
+        int usage = buffer->usage | USAGE_SW_READ_OFTEN;
+        const ::android::Rect rect{0, 0, buffer->width, buffer->height};
+        ::android::status_t err =
+                ::android::GraphicBufferMapper::get().lock(const_cast<native_handle_t *>(handle),
+                                                           usage, rect, &vaddr);
+        if (err) {
+            ALOGE("%s: GraphicBufferMapper lock failed!", __FUNCTION__);
+            return;
+        }
+
+        dump_frame((char *)vaddr, buffer->width, buffer->height, buffer->size);
+
+        err = ::android::GraphicBufferMapper::get().unlock(buffer);
+        if (err) {
+            ALOGE("%s: GraphicBufferMapper unlock failed!", __FUNCTION__);
+            return;
+        }
+    } else {
+        dump_frame((char *)buffer->base, buffer->width, buffer->height, buffer->size);
+    }
+}
+#endif
+
 } // namespace aidl::android::hardware::graphics::composer3::impl

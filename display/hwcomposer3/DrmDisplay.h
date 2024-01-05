@@ -49,6 +49,7 @@ enum class DrmHotplugChange {
 struct DisplayBuffer {
     std::shared_ptr<DrmBuffer> clientTargetDrmBuffer;
     std::unordered_map<uint32_t, std::shared_ptr<DrmBuffer>> planeDrmBuffer;
+    std::unordered_map<gralloc_handle_t, std::shared_ptr<DrmBuffer>> dummyDrmBuffer;
 };
 
 class DrmDisplay {
@@ -59,6 +60,7 @@ public:
             ::android::base::borrowed_fd drmFd);
 
     uint32_t getId() const { return mId; }
+    uint32_t getCrtcIndex() const { return mCrtc->getIndex(); }
 
     uint32_t getWidth() const { return mConnector->getWidth(); }
     uint32_t getHeight() const { return mConnector->getHeight(); }
@@ -89,14 +91,19 @@ public:
 
     bool setPowerMode(::android::base::borrowed_fd drmFd, DrmPower power);
     uint32_t getPlaneNum() const { return mPlanes.size(); }
+    void buildPlaneIdPool(uint32_t* outTopOverlayId);
+    void reservePlaneId(uint32_t planeId);
+    uint32_t getPrimaryPlaneId();
     uint32_t findDrmPlane(const native_handle_t* handle);
+
     int32_t getActiveConfigId() { return mActiveConfigId; }
     HalDisplayConfig& getActiveConfig() { return mActiveConfig; }
     std::shared_ptr<HalConfig> getDisplayConfigs();
-    uint32_t getPrimaryPlaneId();
     bool updateDisplayConfigs();
     void placeholderDisplayConfigs();
-    void buildPlaneIdPool();
+    bool setActiveConfigId(int32_t configId);
+    bool resetDisplayConfig();
+
     int getFramebufferInfo(uint32_t* width, uint32_t* height, uint32_t* format);
 
     void setAsPrimary(bool enable) { mIsPrimary = enable; }
@@ -107,6 +114,8 @@ public:
     bool setSecureMode(::android::base::borrowed_fd drmFd, bool secure);
 
     bool setHdrMetadataBlobId(uint32_t bolbId);
+
+    bool isDisplayActive() { return !mModeSet; }
 
 private:
     DrmDisplay(uint32_t id, std::unique_ptr<DrmConnector> connector, std::unique_ptr<DrmCrtc> crtc,
@@ -134,6 +143,8 @@ private:
     DisplayBuffer mTempBuffers;
 
     int32_t mActiveConfigId = -1;
+    // The display config when boot up or hotplug in, not be changed by SurfaceFlinger
+    int32_t mInitActiveConfigId = -1;
     int32_t mStartConfigId = 0;
     HalDisplayConfig mActiveConfig;
     std::shared_ptr<HalConfig> mConfigs = std::make_shared<HalConfig>();
@@ -142,6 +153,9 @@ private:
     bool mModeSet = true;
 
     uint32_t mHdrMetadataBlobId = 0;
+#ifdef DEBUG_DUMP_REFRESH_RATE
+    DumpRefreshRate mDumpActualFps;
+#endif
 };
 
 } // namespace aidl::android::hardware::graphics::composer3::impl

@@ -65,15 +65,15 @@ public:
             Display* display, ::android::base::unique_fd* outDisplayFence,
             std::unordered_map<int64_t, ::android::base::unique_fd>* outLayerFences) = 0;
 
-    virtual HWC3::Error onActiveConfigChange(Display* display) = 0;
+    virtual HWC3::Error onActiveConfigChange(Display* display, int32_t configId) = 0;
     virtual HWC3::Error setPowerMode(Display* display, PowerMode mode) = 0;
     virtual HWC3::Error setDisplayBrightness(Display* display, float brightness) = 0;
     virtual HWC3::Error getDisplayConnectionType(Display* display,
                                                  DisplayConnectionType* outType) = 0;
+    virtual HWC3::Error getClientTargetProperty(Display* display,
+                                                ClientTargetProperty* outProperty) = 0;
+    virtual HWC3::Error waitHardwareVsyncTimestamp(Display* display, int64_t* timestamp) = 0;
 
-    /*  virtual const DrmClient* getDrmPresenter() const {
-        return nullptr;
-      }*/
     virtual HWC3::Error getAllDeviceClients(std::map<uint32_t, DeviceClient*>& clients) = 0;
 };
 

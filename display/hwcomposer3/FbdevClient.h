@@ -74,12 +74,18 @@ public:
 
     HWC3::Error setPowerMode(int displayId, DrmPower power) override;
 
-    std::tuple<HWC3::Error, bool> isOverlaySupport(int displayId) override;
+    std::tuple<HWC3::Error, bool> isOverlaySupport(int displayId) override {
+        return std::make_tuple(HWC3::Error::None, false);
+    }
 
-    HWC3::Error prepareDrmPlanesForValidate(int displayId) override;
+    HWC3::Error prepareDrmPlanesForValidate(int displayId, uint32_t* uiPlaneBackup) override {
+        return HWC3::Error::None;
+    }
 
     std::tuple<HWC3::Error, uint32_t> getPlaneForLayerBuffer(
-            int displayId, const native_handle_t* handle) override;
+            int displayId, const native_handle_t* handle) override {
+        return std::make_tuple(HWC3::Error::NoResources, 0);
+    }
 
     uint32_t getDisplayBaseId() override { return mDisplayBaseId; }
 
@@ -89,6 +95,8 @@ public:
     std::tuple<HWC3::Error, buffer_handle_t> getComposerTarget(
             std::shared_ptr<DeviceComposer> composer, int displayId, bool secure) override;
     HWC3::Error setSecureMode(int displayId, uint32_t planeId, bool secure) override;
+    HWC3::Error getDisplayClientTargetProperty(int displayId,
+                                               ClientTargetProperty* outProperty) override;
 
 private:
     // Grant visibility for handleHotplug to DrmEventListener.
@@ -101,7 +109,7 @@ private:
 
     mutable RWLock mDisplaysMutex;
     std::unordered_map<uint32_t, std::unique_ptr<FbdevDisplay>> mDisplays; //<displayId, ptr>
-    uint32_t mDisplayBaseId;
+    uint32_t mDisplayBaseId = 0;
     std::unordered_map<uint32_t, std::vector<gralloc_handle_t>> mComposerTargets;
     std::unordered_map<uint32_t, int32_t> mTargetIndex; //<displayId, index>
 

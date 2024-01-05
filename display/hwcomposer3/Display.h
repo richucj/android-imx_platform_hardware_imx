@@ -17,6 +17,7 @@
 #ifndef ANDROID_HWC_DISPLAY_H
 #define ANDROID_HWC_DISPLAY_H
 
+#include <aidl/android/hardware/graphics/common/ColorTransform.h>
 #include <aidl/android/hardware/graphics/common/DisplayDecorationSupport.h>
 #include <aidl/android/hardware/graphics/composer3/ColorMode.h>
 #include <aidl/android/hardware/graphics/composer3/ContentType.h>
@@ -140,9 +141,11 @@ public:
 
     bool hasColorTransform() const { return mColorTransform.has_value(); }
     std::array<float, 16> getColorTransform() const { return *mColorTransform; }
+    common::ColorTransform getColorTransformHint() { return mColorTransformHint; }
 
     FencedBuffer& getClientTarget() { return mClientTarget; }
     buffer_handle_t waitAndGetClientTargetBuffer();
+    ClientTargetProperty& getClientTargetProperty();
 
     const std::vector<Layer*>& getOrderedLayers() { return mOrderedLayers; }
 
@@ -150,6 +153,9 @@ public:
         mCapability.insert(mCapability.end(), caps.begin(), caps.end());
         return HWC3::Error::None;
     }
+    HWC3::Error takeEffectConfig(int32_t configId);
+    std::optional<TimePoint>& getExpectedPresentTime() { return mExpectedPresentTime; }
+    HWC3::Error checkAndWaitNextVsync(int64_t* timestamp);
 
 private:
     bool hasConfig(int32_t configId) const;
@@ -158,6 +164,7 @@ private:
     std::optional<int32_t> getBootConfigId();
 
     void setLegacyEdid();
+    bool mIsLegacyEdid = false;
 
     // The state of this display should only be modified from
     // SurfaceFlinger's main loop, with the exception of when dump is
@@ -166,6 +173,7 @@ private:
     mutable std::recursive_mutex mStateMutex;
 
     FrameComposer* mComposer = nullptr;
+    std::shared_ptr<IComposerCallback> mCallbacks;
     const int64_t mId;
     std::string mName;
     PowerMode mPowerMode = PowerMode::OFF;
@@ -194,6 +202,9 @@ private:
     std::vector<uint8_t> mEdid;
     std::unique_ptr<Edid> mEdidParser;
     std::vector<DisplayCapability> mCapability;
+    common::ColorTransform mColorTransformHint = common::ColorTransform::IDENTITY;
+    ClientTargetProperty mClientTargetProperty{common::PixelFormat::RGBA_8888,
+                                               common::Dataspace::SRGB_LINEAR};
 };
 
 } // namespace aidl::android::hardware::graphics::composer3::impl

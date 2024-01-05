@@ -95,12 +95,12 @@ DeviceComposer::DeviceComposer() {
         mResolveTileStatus = (hwc_func1)dlsym(mHelperHandle, "hwc_resolve_tileStatus");
     }
 
-    if (getDefaultG2DLib(g2dlibName, PATH_MAX)) {
+    if (!Is2DCompositionUserDisabled() && getDefaultG2DLib(g2dlibName, PATH_MAX)) {
         mG2dHandle = android_load_sphal_library(g2dlibName, RTLD_LOCAL | RTLD_NOW);
     }
 
     if (mG2dHandle == NULL) {
-        ALOGI("can't find %s, 2D is invalid", g2dlibName);
+        ALOGI("can't find %s or user disabled, 2D composition is invalid", g2dlibName);
         mSetClipping = NULL;
         mBlitFunction = NULL;
         mOpenEngine = NULL;
@@ -215,23 +215,29 @@ int DeviceComposer::prepareSolidColorBuffer() {
 
     uint32_t bufferStride;
     buffer_handle_t bufferHandle;
+    uint64_t usage = GRALLOC_USAGE_HW_RENDER | GRALLOC_USAGE_HW_COMPOSER | GRALLOC_USAGE_HW_2D |
+            GRALLOC_USAGE_SW_READ_OFTEN | GRALLOC_USAGE_SW_WRITE_OFTEN;
+    if (mTarget->usage & GRALLOC_USAGE_PROTECTED)
+        usage |= GRALLOC_USAGE_PROTECTED;
 
     auto status =
             ::android::GraphicBufferAllocator::get().allocate(mTarget->width, mTarget->height,
                                                               mTarget->format, /*layerCount=*/1,
-                                                              GRALLOC_USAGE_HW_RENDER |
-                                                                      GRALLOC_USAGE_HW_COMPOSER |
-                                                                      GRALLOC_USAGE_HW_2D |
-                                                                      GRALLOC_USAGE_SW_READ_OFTEN |
-                                                                      GRALLOC_USAGE_SW_WRITE_OFTEN,
-                                                              &bufferHandle, &bufferStride,
-                                                              "NxpHwc");
+                                                              usage, &bufferHandle, &bufferStride,
+                                                              "HwcSolidColor");
     if (status != ::android::OK) {
         ALOGE("%s: failed to allocate solid color buffer", __FUNCTION__);
         return -1;
     }
 
     mSolidColorBuffer = (gralloc_handle_t)bufferHandle;
+
+    common::Rect rect;
+    rect.left = rect.top = 0;
+    rect.right = mTarget->width;
+    rect.bottom = mTarget->height;
+    lockSurface(mSolidColorBuffer);
+    clearRect(mSolidColorBuffer, rect);
 
     return 0;
 }
@@ -269,11 +275,12 @@ int DeviceComposer::clearRect(gralloc_handle_t target, common::Rect& rect) {
     surface.clrcolor = 0xff << 24;
     clearFunction(getHandle(), &surface);
 
-    ALOGV("clearRect: rect(l:%d,t:%d,r:%d,b:%d)", rect.left, rect.top, rect.right, rect.bottom);
+    DEBUG_LOG("clearRect: rect(l:%d,t:%d,r:%d,b:%d)", rect.left, rect.top, rect.right, rect.bottom);
     return 0;
 }
 
 int DeviceComposer::clearWormHole(std::vector<Layer*>& layers) {
+    DEBUG_LOG("%s: clear worm hole", __FUNCTION__);
     if (mTarget == NULL) {
         ALOGE("%s: no effective render buffer", __FUNCTION__);
         return -EINVAL;
@@ -327,6 +334,7 @@ int DeviceComposer::clearWormHole(std::vector<Layer*>& layers) {
 }
 
 int DeviceComposer::composeLayerLocked(Layer* layer, bool bypass) {
+    DEBUG_LOG("%s: compose layer %ld", __FUNCTION__, layer->getId());
     if (layer == NULL || mTarget == NULL) {
         ALOGE("%s: invalid layer or target", __FUNCTION__);
         return -EINVAL;
@@ -337,11 +345,6 @@ int DeviceComposer::composeLayerLocked(Layer* layer, bool bypass) {
     auto transform = layer->getTransform();
     auto alpha = (uint8_t)(layer->getPlaneAlpha() * 255);
     gralloc_handle_t layerBuffer = (gralloc_handle_t)(layer->getBuffer().getBuffer());
-
-    if (bypass && (type == Composition::SOLID_COLOR)) {
-        ALOGV("%s: solid color layer bypassed", __FUNCTION__);
-        return 0;
-    }
 
     common::Rect srect = layer->getSourceCropInt();
     common::Rect drect = layer->getDisplayFrame();
