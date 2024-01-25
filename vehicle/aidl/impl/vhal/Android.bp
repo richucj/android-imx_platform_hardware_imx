@@ -42,3 +42,49 @@ cc_binary {
         "libbinder_ndk",
     ],
 }
+
+cc_library {
+    name: "DefaultVehicleHalImx",
+    vendor: true,
+    defaults: [
+        "VehicleHalDefaults",
+    ],
+    local_include_dirs: ["include"],
+    export_include_dirs: ["include"],
+    srcs: [
+        "src/ConnectedClient.cpp",
+        "src/DefaultVehicleHal.cpp",
+        "src/SubscriptionManager.cpp",
+    ],
+    static_libs: [
+        "VehicleHalUtils",
+    ],
+    header_libs: [
+        "IVehicleHardware",
+    ],
+    shared_libs: [
+        "libbinder_ndk",
+    ],
+}
+
+cc_fuzz {
+    name: "android.hardware.automotive.vehicle@V1-default-service_fuzzerImx",
+    vendor: true,
+    defaults: [
+        "FakeVehicleHardwareDefaults",
+        "VehicleHalDefaults",
+        "android-automotive-large-parcelable-defaults",
+        "service_fuzzer_defaults",
+    ],
+    static_libs: [
+        "DefaultVehicleHal",
+        "FakeVehicleHardwareImx",
+        "VehicleHalUtils",
+    ],
+    srcs: ["src/fuzzer.cpp"],
+    fuzz_config: {
+        cc: [
+            "keithmok@google.com",
+        ],
+    },
+}

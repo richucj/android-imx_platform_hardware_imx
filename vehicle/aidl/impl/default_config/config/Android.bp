@@ -1,0 +1,38 @@
+filegroup {
+    name: "VehicleHalDefaultPropertiesImx_JSON",
+    srcs: ["DefaultPropertiesImx.json"],
+}
+
+filegroup {
+    name: "VehicleHalTestPropertiesImx_JSON",
+    srcs: ["TestPropertiesImx.json"],
+}
+
+filegroup {
+    name: "VehicleHalVendorClusterTestPropertiesImx_JSON",
+    srcs: ["VendorClusterTestPropertiesImx.json"],
+}
+
+prebuilt_etc {
+    name: "Prebuilt_VehicleHalDefaultPropertiesImx_JSON",
+    filename_from_src: true,
+    src: "DefaultPropertiesImx.json",
+    sub_dir: "automotive/vhalconfig/",
+    vendor: true,
+}
+
+prebuilt_etc {
+    name: "Prebuilt_VehicleHalTestPropertiesImx_JSON",
+    filename_from_src: true,
+    src: "TestPropertiesImx.json",
+    sub_dir: "automotive/vhalconfig/",
+    vendor: true,
+}
+
+prebuilt_etc {
+    name: "Prebuilt_VehicleHalVendorClusterTestPropertiesImx_JSON",
+    filename_from_src: true,
+    src: "VendorClusterTestPropertiesImx.json",
+    sub_dir: "automotive/vhalconfig/",
+    vendor: true,
+}

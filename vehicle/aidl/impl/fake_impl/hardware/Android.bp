@@ -34,10 +34,11 @@ cc_defaults {
     name: "FakeVehicleHardwareDefaultsImx",
     header_libs: [
         "IVehicleHardware",
-        "VehicleHalDefaultConfigImx",
+        "VehicleHalTestUtilHeaders",
     ],
     export_header_lib_headers: ["IVehicleHardware"],
     static_libs: [
+        "VehicleHalJsonConfigLoaderEnableTestProperties",
         "VehicleHalUtils",
         "FakeVehicleHalValueGenerators",
         "FakeObd2Frame",
@@ -45,6 +46,11 @@ cc_defaults {
         "android.hardware.automotive.vehicle@2.0-libproto-native",
         "VehicleHalProtoMessageConverter",
         "VehicleHalProtos",
+    ],
+    required: [
+        "Prebuilt_VehicleHalDefaultPropertiesImx_JSON",
+        "Prebuilt_VehicleHalTestPropertiesImx_JSON",
+        "Prebuilt_VehicleHalVendorClusterTestPropertiesImx_JSON",
     ],
     shared_libs: [
         "libjsoncpp",
