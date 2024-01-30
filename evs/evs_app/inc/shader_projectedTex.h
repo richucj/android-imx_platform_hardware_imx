@@ -62,4 +62,4 @@ const char pixShader_projectedTexture[] =
         "    color = texture(tex, uv);                          \n"
         "}                                                      \n";
 
-#endif // SHADER_PROJECTED_TEX_H
+#endif  // SHADER_PROJECTED_TEX_H

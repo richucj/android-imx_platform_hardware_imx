@@ -1,34 +1,30 @@
+# imx_evs app
 type imx_evs_app, domain, coredomain;
-
 hal_client_domain(imx_evs_app, hal_evs)
 hal_client_domain(imx_evs_app, hal_vehicle)
 hal_client_domain(imx_evs_app, hal_configstore)
 hal_client_domain(imx_evs_app, hal_graphics_allocator)
 
+# allow init to launch processes in this context
 type imx_evs_app_exec, exec_type, file_type, system_file_type;
 init_daemon_domain(imx_evs_app)
 
-allow imx_evs_app gpu_device:chr_file rw_file_perms;
-allow imx_evs_app ion_device:chr_file r_file_perms;
-
+# gets access to its own files on disk
 type imx_evs_app_files, file_type, system_file_type;
 allow imx_evs_app imx_evs_app_files:file { getattr open read };
-allow imx_evs_app imx_evs_app_files:dir search;
-get_prop(imx_evs_app, vendor_evs_prop)
+allow imx_evs_app imx_evs_app_files:dir { getattr read search };
 
-allow imx_evs_app system_file:dir { read open };
+# Allow use of binder and find surfaceflinger
 binder_use(imx_evs_app);
 allow imx_evs_app surfaceflinger_service:service_manager find;
-allow imx_evs_app hal_configstore_default:binder { call };
-allow imx_evs_app ion_device:chr_file { read open ioctl };
-allow imx_evs_app hal_vehicle_hwservice:hwservice_manager { find };
-allow imx_evs_app hal_graphics_mapper_hwservice:hwservice_manager { find };
-allow imx_evs_app hal_configstore_ISurfaceFlingerConfigs:hwservice_manager { find };
-allow imx_evs_app gpu_device:chr_file { map };
-allow imx_evs_app hal_evs_hwservice:hwservice_manager { find };
-allow imx_evs_app system_data_file:dir search;
-dontaudit imx_evs_app vendor_default_prop:file { open read map getattr };
 
-# Allow use of cartelemetry service
+# Allow get a list of available services
+allow imx_evs_app servicemanager:service_manager list;
+
+# Allow find evsmanagerd service
 allow imx_evs_app cartelemetryd_service:service_manager find;
-binder_call(imx_evs_app, cartelemetryd)
+
+allow imx_evs_app gpu_device:chr_file { open read write ioctl };
+allow imx_evs_app vendor_evs_prop:file { getattr map open read };;
+allow imx_evs_app cartelemetryd:binder call;
+allow imx_evs_app system_data_file:dir search;

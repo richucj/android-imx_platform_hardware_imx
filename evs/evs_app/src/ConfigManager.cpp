@@ -15,12 +15,12 @@
  */
 #include "ConfigManager.h"
 
+#include "json/json.h"
+
 #include <assert.h>
 #include <math.h>
 
 #include <fstream>
-
-#include "json/json.h"
 
 static const float kDegreesToRadians = M_PI / 180.0f;
 
@@ -81,15 +81,22 @@ bool ConfigManager::initialize(const char* configFileName) {
     // Read display layout information
     //
     {
-        Json::Value displayNode = rootNode["display"];
-        if (!displayNode.isObject()) {
-            printf("Invalid configuration format -- we expect a display description\n");
+        Json::Value displayArray = rootNode["displays"];
+        if (!displayArray.isArray()) {
+            printf("Invalid configuration format -- we expect an array of displays\n");
             return false;
         }
-        complete &=
-                readChildNodeAsFloat("display", displayNode, "frontRange", &mFrontRangeInCarSpace);
-        complete &=
-                readChildNodeAsFloat("display", displayNode, "rearRange", &mRearRangeInCarSpace);
+
+        mDisplays.reserve(displayArray.size());
+        for (auto&& node : displayArray) {
+            DisplayInfo info;
+            info.port = node.get("displayPort", 0).asUInt();
+            info.function = node.get("function", "").asCString();
+            info.frontRangeInCarSpace = node.get("frontRange", -1).asFloat();
+            info.rearRangeInCarSpace = node.get("rearRange", -1).asFloat();
+
+            mDisplays.emplace_back(info);
+        }
     }
 
     //
@@ -129,11 +136,11 @@ bool ConfigManager::initialize(const char* configFileName) {
 
             float yaw = node.get("yaw", 0).asFloat();
             float pitch = node.get("pitch", 0).asFloat();
-            float roll  = node.get("roll", 0).asFloat();
+            float roll = node.get("roll", 0).asFloat();
             float hfov = node.get("hfov", 0).asFloat();
             float vfov = node.get("vfov", 0).asFloat();
-            bool  hflip = node.get("hflip", false).asBool();
-            bool  vflip = node.get("vflip", false).asBool();
+            bool hflip = node.get("hflip", false).asBool();
+            bool vflip = node.get("vflip", false).asBool();
 
             // Wrap the direction angles to be in the 180deg to -180deg range
             // Rotate 180 in yaw if necessary to flip the pitch into the +/-90degree range
@@ -174,11 +181,11 @@ bool ConfigManager::initialize(const char* configFileName) {
             info.position[2] = node.get("z", 0).asFloat();
             info.yaw = yaw * kDegreesToRadians;
             info.pitch = pitch * kDegreesToRadians;
-            info.roll        = roll  * kDegreesToRadians;
+            info.roll = roll * kDegreesToRadians;
             info.hfov = hfov * kDegreesToRadians;
             info.vfov = vfov * kDegreesToRadians;
-            info.hflip       = hflip;
-            info.vflip       = vflip;
+            info.hflip = hflip;
+            info.vflip = vflip;
             info.cameraId = cameraId;
             info.function = function;
 

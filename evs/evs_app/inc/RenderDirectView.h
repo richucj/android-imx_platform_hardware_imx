@@ -1,5 +1,6 @@
 /*
  * Copyright (C) 2017 The Android Open Source Project
+ * Copyright 2024 NXP
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -21,40 +22,38 @@
 #include "RenderBase.h"
 #include "VideoTex.h"
 
-#include <android/hardware/automotive/evs/1.1/IEvsEnumerator.h>
+#include <aidl/android/hardware/automotive/evs/BufferDesc.h>
+#include <aidl/android/hardware/automotive/evs/CameraDesc.h>
+#include <aidl/android/hardware/automotive/evs/IEvsEnumerator.h>
 #include <math/mat2.h>
-
-using namespace ::android::hardware::automotive::evs::V1_1;
-using ::android::hardware::camera::device::V3_2::Stream;
-
 
 /*
  * Renders the view from a single specified camera directly to the full display.
  */
-class RenderDirectView: public RenderBase {
+class RenderDirectView final : public RenderBase {
 public:
-    RenderDirectView(sp<IEvsEnumerator> enumerator,
-                     const CameraDesc& camDesc,
-                     const ConfigManager& config);
+    RenderDirectView(
+            std::shared_ptr<aidl::android::hardware::automotive::evs::IEvsEnumerator> enumerator,
+            const aidl::android::hardware::automotive::evs::CameraDesc& camDesc,
+            const ConfigManager& config);
 
     virtual bool activate() override;
     virtual void deactivate() override;
 
-    virtual bool drawFrame(const BufferDesc& tgtBuffer);
+    virtual bool drawFrame(const aidl::android::hardware::automotive::evs::BufferDesc& tgtBuffer);
     void renderColorLines();
 
 protected:
-    sp<IEvsEnumerator>              mEnumerator;
-    ConfigManager::CameraInfo       mCameraInfo;
-    CameraDesc                      mCameraDesc;
-    const ConfigManager&            mConfig;
+    std::shared_ptr<aidl::android::hardware::automotive::evs::IEvsEnumerator> mEnumerator;
+    ConfigManager::CameraInfo mCameraInfo;
+    aidl::android::hardware::automotive::evs::CameraDesc mCameraDesc;
+    const ConfigManager& mConfig;
 
-    std::unique_ptr<VideoTex>       mTexture;
+    std::unique_ptr<VideoTex> mTexture;
 
-    GLuint                          mShaderProgram = 0;
-    GLuint                          mLineShaderProgram = 0;
-    android::mat2                   mRotationMat;
+    GLuint mShaderProgram = 0;
+    GLuint mLineShaderProgram = 0;
+    android::mat2 mRotationMat;
 };
 
-
-#endif //CAR_EVS_APP_RENDERDIRECTVIEW_H
+#endif  // CAR_EVS_APP_RENDERDIRECTVIEW_H

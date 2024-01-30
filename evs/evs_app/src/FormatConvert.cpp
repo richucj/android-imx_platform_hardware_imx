@@ -16,6 +16,8 @@
 
 #include "FormatConvert.h"
 
+#include <android/hardware_buffer.h>
+
 // Round up to the nearest multiple of the given alignment value
 template <unsigned alignment>
 int align(int value) {
@@ -27,10 +29,8 @@ int align(int value) {
 
 // Limit the given value to the provided range.  :)
 static inline float clamp(float v, float min, float max) {
-    if (v < min)
-        return min;
-    if (v > max)
-        return max;
+    if (v < min) return min;
+    if (v > max) return max;
     return v;
 }
 
@@ -48,7 +48,7 @@ static uint32_t yuvToRgbx(const unsigned char Y, const unsigned char Uin, const 
     unsigned char G = (unsigned char)clamp(Gf, 0.0f, 255.0f);
     unsigned char B = (unsigned char)clamp(Bf, 0.0f, 255.0f);
 
-    return (R) | (G << 8) | (B << 16) | 0xFF000000; // Fill the alpha channel with ones
+    return (R) | (G << 8) | (B << 16) | 0xFF000000;  // Fill the alpha channel with ones
 }
 
 void copyNV21toRGB32(unsigned width, unsigned height, uint8_t* src, uint32_t* dst,
@@ -58,7 +58,7 @@ void copyNV21toRGB32(unsigned width, unsigned height, uint8_t* src, uint32_t* ds
     // stride that is an even multiple of 16 bytes for both the Y and UV arrays.
     unsigned strideLum = align<16>(width);
     unsigned sizeY = strideLum * height;
-    unsigned strideColor = strideLum; // 1/2 the samples, but two interleaved channels
+    unsigned strideColor = strideLum;  // 1/2 the samples, but two interleaved channels
     unsigned offsetUV = sizeY;
 
     uint8_t* srcY = src;
@@ -72,8 +72,8 @@ void copyNV21toRGB32(unsigned width, unsigned height, uint8_t* src, uint32_t* ds
         uint32_t* rowDest = dst + r * dstStridePixels;
 
         for (unsigned c = 0; c < width; c++) {
-            unsigned uCol = (c & ~1); // uCol is always even and repeats 1:2 with Y values
-            unsigned vCol = uCol | 1; // vCol is always odd
+            unsigned uCol = (c & ~1);  // uCol is always even and repeats 1:2 with Y values
+            unsigned vCol = uCol | 1;  // vCol is always odd
             rowDest[c] = yuvToRgbx(rowY[c], rowUV[uCol], rowUV[vCol]);
         }
     }
@@ -115,8 +115,8 @@ void copyYUYVtoRGB32(unsigned width, unsigned height, uint8_t* src, unsigned src
     uint32_t* srcWords = (uint32_t*)src;
 
     const int srcRowPadding32 =
-            srcStridePixels / 2 - width / 2;             // 2 bytes per pixel, 4 bytes per word
-    const int dstRowPadding32 = dstStridePixels - width; // 4 bytes per pixel, 4 bytes per word
+            srcStridePixels / 2 - width / 2;              // 2 bytes per pixel, 4 bytes per word
+    const int dstRowPadding32 = dstStridePixels - width;  // 4 bytes per pixel, 4 bytes per word
 
     for (unsigned r = 0; r < height; r++) {
         for (unsigned c = 0; c < width / 2; c++) {
@@ -151,22 +151,4 @@ void copyMatchedInterleavedFormats(unsigned width, unsigned height, void* src,
         src = (uint8_t*)src + srcStridePixels * pixelSize;
         dst = (uint8_t*)dst + dstStridePixels * pixelSize;
     }
-}
-
-
-BufferDesc_1_1 convertBufferDesc(const BufferDesc_1_0& src) {
-    BufferDesc_1_1 dst = {};
-    AHardwareBuffer_Desc* pDesc = reinterpret_cast<AHardwareBuffer_Desc*>(&dst.buffer.description);
-    pDesc->width = src.width;
-    pDesc->height = src.height;
-    pDesc->layers = 1;
-    pDesc->format = src.format;
-    pDesc->usage = static_cast<uint64_t>(src.usage);
-    pDesc->stride = src.stride;
-
-    dst.buffer.nativeHandle = src.memHandle;
-    dst.pixelSize = src.pixelSize;
-    dst.bufferId = src.bufferId;
-
-    return dst;
 }

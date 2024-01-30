@@ -37,4 +37,4 @@ protected:
 
 TexWrapper* createTextureFromPng(const char* filename);
 
-#endif // TEXWRAPPER_H
+#endif  // TEXWRAPPER_H

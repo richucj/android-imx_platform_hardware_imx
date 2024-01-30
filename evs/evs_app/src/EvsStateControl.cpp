@@ -1,5 +1,6 @@
 /*
  * Copyright (C) 2016 The Android Open Source Project
+ * Copyright 2024 NXP
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -20,6 +21,10 @@
 #include "RenderPixelCopy.h"
 #include "RenderTopView.h"
 
+#include <aidl/android/hardware/automotive/evs/CameraDesc.h>
+#include <aidl/android/hardware/automotive/evs/DisplayState.h>
+#include <aidl/android/hardware/automotive/evs/IEvsDisplay.h>
+#include <aidl/android/hardware/automotive/evs/IEvsEnumerator.h>
 #include <aidl/android/hardware/automotive/vehicle/VehicleGear.h>
 #include <aidl/android/hardware/automotive/vehicle/VehicleProperty.h>
 #include <aidl/android/hardware/automotive/vehicle/VehiclePropertyType.h>
@@ -27,44 +32,47 @@
 #include <android-base/logging.h>
 #include <android/binder_manager.h>
 #include <utils/SystemClock.h>
-#include <cutils/properties.h>
-#include <system/camera_metadata.h>
 
 #include <inttypes.h>
 #include <stdio.h>
 #include <string.h>
 
-using ::aidl::android::hardware::automotive::vehicle::StatusCode;
-using ::aidl::android::hardware::automotive::vehicle::VehicleGear;
-using ::aidl::android::hardware::automotive::vehicle::VehicleProperty;
-using ::aidl::android::hardware::automotive::vehicle::VehiclePropertyType;
-using ::aidl::android::hardware::automotive::vehicle::VehiclePropValue;
-using ::aidl::android::hardware::automotive::vehicle::VehicleTurnSignal;
-using ::android::base::Result;
-using ::android::frameworks::automotive::vhal::IHalPropValue;
-using ::android::frameworks::automotive::vhal::IVhalClient;
-using ::android::hardware::automotive::evs::V1_0::EvsResult;
-using ::android::hardware::automotive::vehicle::VhalResult;
-using EvsDisplayState = ::android::hardware::automotive::evs::V1_0::DisplayState;
-using BufferDesc_1_0 = ::android::hardware::automotive::evs::V1_0::BufferDesc;
-using ::android::hardware::graphics::common::V1_0::PixelFormat;
+namespace {
 
+using aidl::android::hardware::automotive::evs::BufferDesc;
+using aidl::android::hardware::automotive::evs::CameraDesc;
+using aidl::android::hardware::automotive::evs::DisplayState;
+using aidl::android::hardware::automotive::evs::IEvsDisplay;
+using aidl::android::hardware::automotive::evs::IEvsEnumerator;
+using aidl::android::hardware::automotive::vehicle::VehicleGear;
+using aidl::android::hardware::automotive::vehicle::VehicleProperty;
+using aidl::android::hardware::automotive::vehicle::VehiclePropertyType;
+using aidl::android::hardware::automotive::vehicle::VehiclePropValue;
+using aidl::android::hardware::automotive::vehicle::VehicleTurnSignal;
+using android::frameworks::automotive::vhal::ErrorCode;
+using android::frameworks::automotive::vhal::IHalPropValue;
+using android::frameworks::automotive::vhal::IVhalClient;
+using android::frameworks::automotive::vhal::VhalClientResult;
 
-// TODO:  Seems like it'd be nice if the Vehicle HAL provided such helpers (but how & where?)
-inline constexpr VehiclePropertyType getPropType(VehicleProperty prop) {
-    return static_cast<VehiclePropertyType>(
-            static_cast<int32_t>(prop)
-            & static_cast<int32_t>(VehiclePropertyType::MASK));
+bool isSfReady() {
+    return ndk::SpAIBinder(AServiceManager_checkService("SurfaceFlinger")).get() != nullptr;
 }
 
+inline constexpr VehiclePropertyType getPropType(VehicleProperty prop) {
+    return static_cast<VehiclePropertyType>(static_cast<int32_t>(prop) &
+                                            static_cast<int32_t>(VehiclePropertyType::MASK));
+}
+
+}  // namespace
+
 EvsStateControl::EvsStateControl(std::shared_ptr<IVhalClient> pVnet,
-                                 android::sp<IEvsEnumerator> pEvs,
-                                 android::sp<IEvsDisplay> pDisplay,
+                                 std::shared_ptr<IEvsEnumerator> pEvs,
+                                 const std::shared_ptr<IEvsDisplay>& pDisplay,
                                  const ConfigManager& config) :
-    mVehicle(pVnet),
-    mEvs(pEvs),
-    mDisplay(pDisplay),
-    mConfig(config),
+      mVehicle(pVnet),
+      mEvs(pEvs),
+      mDisplay(pDisplay),
+      mConfig(config),
       mCurrentState(OFF),
       mEvsStats(EvsStats::build()) {
     // Initialize the property value containers we'll be updating (they'll be zeroed by default)
@@ -73,65 +81,65 @@ EvsStateControl::EvsStateControl(std::shared_ptr<IVhalClient> pVnet,
     static_assert(getPropType(VehicleProperty::TURN_SIGNAL_STATE) == VehiclePropertyType::INT32,
                   "Unexpected type for TURN_SIGNAL_STATE property");
 
-    mGearValue.prop       = static_cast<int32_t>(VehicleProperty::GEAR_SELECTION);
+    mGearValue.prop = static_cast<int32_t>(VehicleProperty::GEAR_SELECTION);
     mTurnSignalValue.prop = static_cast<int32_t>(VehicleProperty::TURN_SIGNAL_STATE);
 
     // This way we only ever deal with cameras which exist in the system
     // Build our set of cameras for the states we support
     LOG(DEBUG) << "Requesting camera list";
-    mEvs->getCameraList_1_1(
-        [this, &config](hidl_vec<CameraDesc> cameraList) {
-                            LOG(INFO) << "Camera list callback received " << cameraList.size() << "cameras.";
-                            for (auto&& cam: cameraList) {
-                                LOG(DEBUG) << "Found camera " << cam.v1.cameraId;
-                                bool cameraConfigFound = false;
+    std::vector<CameraDesc> cameraList;
+    if (auto status = mEvs->getCameraList(&cameraList); !status.isOk()) {
+        LOG(ERROR) << "Failed to get the camera list.";
+        return;
+    }
 
-                                // Check our configuration for information about this camera
-                                // Note that a camera can have a compound function string
-                                // such that a camera can be "right/reverse" and be used for both.
-                                // If more than one camera is listed for a given function, we'll
-                                // list all of them and let the UX/rendering logic use one, some
-                                // or all of them as appropriate.
-                                for (auto&& info: config.getCameras()) {
-                                    if (cam.v1.cameraId == info.cameraId) {
-                                        // We found a match!
-                                        if (info.function.find("reverse") != std::string::npos) {
-                                            mCameraList[State::REVERSE].emplace_back(info);
-                                            mCameraDescList[State::REVERSE].emplace_back(cam);
-                                        }
-                                        if (info.function.find("right") != std::string::npos) {
-                                            mCameraList[State::RIGHT].emplace_back(info);
-                                            mCameraDescList[State::RIGHT].emplace_back(cam);
-                                        }
-                                        if (info.function.find("left") != std::string::npos) {
-                                            mCameraList[State::LEFT].emplace_back(info);
-                                            mCameraDescList[State::LEFT].emplace_back(cam);
-                                        }
-                                        if (info.function.find("park") != std::string::npos) {
-                                            mCameraList[State::PARKING].emplace_back(info);
-                                            mCameraDescList[State::PARKING].emplace_back(cam);
-                                        }
-                                        cameraConfigFound = true;
-                                        break;
-                                    }
-                                }
-                                if (!cameraConfigFound) {
-                                    LOG(WARNING) << "No config information for hardware camera "
-                                                 << cam.v1.cameraId;
-                                }
-                            }
-                        }
-    );
+    LOG(INFO) << "Camera list callback received " << cameraList.size() << " camera/s.";
+    for (auto&& cam : cameraList) {
+        LOG(DEBUG) << "Found camera " << cam.id;
+        bool cameraConfigFound = false;
 
-    LOG(DEBUG) << "State controller ready";
+        // Check our configuration for information about this camera
+        // Note that a camera can have a compound function string
+        // such that a camera can be "right/reverse" and be used for both.
+        // If more than one camera is listed for a given function, we'll
+        // list all of them and let the UX/rendering logic use one, some
+        // or all of them as appropriate.
+        for (auto&& info : config.getCameras()) {
+            if (cam.id == info.cameraId) {
+                // We found a match!
+                if (info.function.find("reverse") != std::string::npos) {
+                    mCameraList[State::REVERSE].emplace_back(info);
+                    mCameraDescList[State::REVERSE].emplace_back(cam);
+                }
+                if (info.function.find("right") != std::string::npos) {
+                    mCameraList[State::RIGHT].emplace_back(info);
+                    mCameraDescList[State::RIGHT].emplace_back(cam);
+                }
+                if (info.function.find("left") != std::string::npos) {
+                    mCameraList[State::LEFT].emplace_back(info);
+                    mCameraDescList[State::LEFT].emplace_back(cam);
+                }
+                if (info.function.find("park") != std::string::npos) {
+                    mCameraList[State::PARKING].emplace_back(info);
+                    mCameraDescList[State::PARKING].emplace_back(cam);
+                }
+                cameraConfigFound = true;
+                break;
+            }
+        }
+        if (!cameraConfigFound) {
+            LOG(WARNING) << "No config information for hardware camera " << cam.id;
+        }
+    }
+
+    LOG(INFO) << "State controller ready";
 }
 
 bool EvsStateControl::startUpdateLoop() {
     // Create the thread and report success if it gets started
-    mRenderThread = std::thread([this](){ updateLoop(); });
+    mRenderThread = std::thread([this]() { updateLoop(); });
     return mRenderThread.joinable();
 }
-
 
 void EvsStateControl::terminateUpdateLoop() {
     if (mRenderThread.get_id() == std::this_thread::get_id()) {
@@ -142,7 +150,6 @@ void EvsStateControl::terminateUpdateLoop() {
         mRenderThread.join();
     }
 }
-
 
 void EvsStateControl::postCommand(const Command& cmd, bool clear) {
     // Push the command onto the queue watched by updateLoop
@@ -159,30 +166,37 @@ void EvsStateControl::postCommand(const Command& cmd, bool clear) {
     mWakeSignal.notify_all();
 }
 
-
 void EvsStateControl::updateLoop() {
     LOG(DEBUG) << "Starting EvsStateControl update loop";
 
     bool run = true;
     while (run) {
         // Process incoming commands
+        std::shared_ptr<IEvsDisplay> displayHandle;
         {
-            std::lock_guard <std::mutex> lock(mLock);
+            std::lock_guard lock(mLock);
             while (!mCommandQueue.empty()) {
                 const Command& cmd = mCommandQueue.front();
                 switch (cmd.operation) {
-                case Op::EXIT:
-                    run = false;
-                    break;
-                case Op::CHECK_VEHICLE_STATE:
-                    // Just running selectStateForCurrentConditions below will take care of this
-                    break;
-                case Op::TOUCH_EVENT:
-                    // Implement this given the x/y location of the touch event
-                    break;
+                    case Op::EXIT:
+                        run = false;
+                        break;
+                    case Op::CHECK_VEHICLE_STATE:
+                        // Just running selectStateForCurrentConditions below will take care of this
+                        break;
+                    case Op::TOUCH_EVENT:
+                        // Implement this given the x/y location of the touch event
+                        break;
                 }
                 mCommandQueue.pop();
             }
+
+            displayHandle = mDisplay.lock();
+        }
+
+        if (!displayHandle) {
+            LOG(ERROR) << "We've lost the display";
+            break;
         }
 
         // Review vehicle state and choose an appropriate renderer
@@ -194,23 +208,19 @@ void EvsStateControl::updateLoop() {
         // If we have an active renderer, give it a chance to draw
         if (mCurrentRenderer) {
             // Get the output buffer we'll use to display the imagery
-            BufferDesc_1_0 tgtBuffer = {};
-            mDisplay->getTargetBuffer([&tgtBuffer](const BufferDesc_1_0& buff) {
-                                          tgtBuffer = buff;
-                                      }
-            );
-
-            if (tgtBuffer.memHandle == nullptr) {
+            BufferDesc tgtBuffer;
+            if (auto status = displayHandle->getTargetBuffer(&tgtBuffer); !status.isOk()) {
                 LOG(ERROR) << "Didn't get requested output buffer -- skipping this frame.";
+                run = false;
             } else {
                 // Generate our output image
-                if (!mCurrentRenderer->drawFrame(convertBufferDesc(tgtBuffer))) {
+                if (!mCurrentRenderer->drawFrame(tgtBuffer)) {
                     // If drawing failed, we want to exit quickly so an app restart can happen
                     run = false;
                 }
 
                 // Send the finished image back for display
-                mDisplay->returnTargetBufferForDisplay(tgtBuffer);
+                displayHandle->returnTargetBufferForDisplay(tgtBuffer);
 
                 if (!mFirstFrameIsDisplayed) {
                     mFirstFrameIsDisplayed = true;
@@ -240,41 +250,39 @@ void EvsStateControl::updateLoop() {
     LOG(ERROR) << "Shutting down app due to state control loop ending";
 }
 
-
 bool EvsStateControl::selectStateForCurrentConditions() {
-    static int32_t sDummyGear   = int32_t(VehicleGear::GEAR_REVERSE);
-    static int32_t sDummySignal = int32_t(VehicleTurnSignal::NONE);
+    static int32_t sMockGear = mConfig.getMockGearSignal();
+    static int32_t sMockSignal = int32_t(VehicleTurnSignal::NONE);
 
     if (mVehicle != nullptr) {
         // Query the car state
-        if (invokeGet(&mGearValue) != StatusCode::OK) {
+        if (invokeGet(&mGearValue) != ErrorCode::OK) {
             LOG(ERROR) << "GEAR_SELECTION not available from vehicle.  Exiting.";
             return false;
         }
-        if ((mTurnSignalValue.prop == 0) || (invokeGet(&mTurnSignalValue) != StatusCode::OK)) {
+        if ((mTurnSignalValue.prop == 0) || (invokeGet(&mTurnSignalValue) != ErrorCode::OK)) {
             // Silently treat missing turn signal state as no turn signal active
-            mTurnSignalValue.value.int32Values = {sDummySignal};
+            mTurnSignalValue.value.int32Values = {sMockSignal};
             mTurnSignalValue.prop = 0;
         }
     } else {
         // While testing without a vehicle, behave as if we're in reverse for the first 20 seconds
-        static const int kShowTime = 20;    // seconds
+        static const int kShowTime = 20;  // seconds
 
         // See if it's time to turn off the default reverse camera
         static std::chrono::steady_clock::time_point start = std::chrono::steady_clock::now();
         std::chrono::steady_clock::time_point now = std::chrono::steady_clock::now();
         if (std::chrono::duration_cast<std::chrono::seconds>(now - start).count() > kShowTime) {
             // Switch to drive (which should turn off the reverse camera)
-            sDummyGear = int32_t(VehicleGear::GEAR_DRIVE);
+            sMockGear = int32_t(VehicleGear::GEAR_DRIVE);
         }
 
         // Build the placeholder vehicle state values (treating single values as 1 element vectors)
-        mGearValue.value.int32Values = {sDummyGear};
-        mTurnSignalValue.value.int32Values = {sDummySignal};
+        mGearValue.value.int32Values = {sMockGear};
+        mTurnSignalValue.value.int32Values = {sMockSignal};
     }
 
     // Choose our desired EVS state based on the current car state
-    // TODO:  Update this logic, and consider user input when choosing if a view should be presented
     State desiredState = OFF;
     if (mGearValue.value.int32Values[0] == int32_t(VehicleGear::GEAR_REVERSE)) {
         desiredState = REVERSE;
@@ -290,22 +298,23 @@ bool EvsStateControl::selectStateForCurrentConditions() {
     return configureEvsPipeline(desiredState);
 }
 
-StatusCode EvsStateControl::invokeGet(VehiclePropValue* pRequestedPropValue) {
+ErrorCode EvsStateControl::invokeGet(VehiclePropValue* pRequestedPropValue) {
     auto halPropValue = mVehicle->createHalPropValue(pRequestedPropValue->prop);
     // We are only setting int32Values.
     halPropValue->setInt32Values(pRequestedPropValue->value.int32Values);
 
-    VhalResult<std::unique_ptr<IHalPropValue>> result = mVehicle->getValueSync(*halPropValue);
+    VhalClientResult<std::unique_ptr<IHalPropValue>> result = mVehicle->getValueSync(*halPropValue);
 
     if (!result.ok()) {
-        return static_cast<StatusCode>(result.error().code());
+        return static_cast<ErrorCode>(result.error().code());
     }
     pRequestedPropValue->value.int32Values = result.value()->getInt32Values();
     pRequestedPropValue->timestamp = result.value()->getTimestamp();
-    return StatusCode::OK;
+    return ErrorCode::OK;
 }
 
 bool EvsStateControl::configureEvsPipeline(State desiredState) {
+    static bool isGlReady = false;
 
     if (mCurrentState == desiredState) {
         // Nothing to do here...
@@ -316,90 +325,94 @@ bool EvsStateControl::configureEvsPipeline(State desiredState) {
     auto desiredStateTimeMillis = android::uptimeMillis();
 
     LOG(DEBUG) << "Switching to state " << desiredState;
-    LOG(DEBUG) << "  Current state " << mCurrentState
-               << " has " << mCameraList[mCurrentState].size() << " cameras";
-    LOG(DEBUG) << "  Desired state " << desiredState
-               << " has " << mCameraList[desiredState].size() << " cameras";
+    LOG(DEBUG) << "  Current state " << mCurrentState << " has "
+               << mCameraList[mCurrentState].size() << " cameras";
+    LOG(DEBUG) << "  Desired state " << desiredState << " has " << mCameraList[desiredState].size()
+               << " cameras";
 
-  int cpuRender = property_get_int32(EVS_CPU_RENDER, 0);
-  if (cpuRender != 0) {
-        LOG(DEBUG) << "Using simple CPU renderer.";
+    if (!isGlReady && !isSfReady()) {
         // Graphics is not ready yet; using CPU renderer.
         if (mCameraList[desiredState].size() >= 1) {
-            mDesiredRenderer = std::make_unique<RenderPixelCopy>(mEvs,
-                                                                 mCameraList[desiredState][0]);
+            mDesiredRenderer =
+                    std::make_unique<RenderPixelCopy>(mEvs, mCameraList[desiredState][0]);
             if (!mDesiredRenderer) {
                 LOG(ERROR) << "Failed to construct Pixel Copy renderer.  Skipping state change.";
                 return false;
             }
         } else {
-            LOG(DEBUG) << "Unsupported, desiredState " << desiredState
-                       << " has " << mCameraList[desiredState].size() << " cameras.";
+            LOG(DEBUG) << "Unsupported, desiredState " << desiredState << " has "
+                       << mCameraList[desiredState].size() << " cameras.";
         }
     } else {
-        LOG(DEBUG) << "Using GL renderer.";
+        // Assumes that SurfaceFlinger is available always after being launched.
 
         // Do we need a new direct view renderer?
         if (mCameraList[desiredState].size() == 1) {
             // We have a camera assigned to this state for direct view.
-            mDesiredRenderer = std::make_unique<RenderDirectView>(mEvs,
-                                                                  mCameraDescList[desiredState][0],
-                                                                  mConfig);
+            mDesiredRenderer =
+                    std::make_unique<RenderDirectView>(mEvs, mCameraDescList[desiredState][0],
+                                                       mConfig);
             if (!mDesiredRenderer) {
                 LOG(ERROR) << "Failed to construct direct renderer.  Skipping state change.";
                 return false;
             }
-        } else if (mCameraList[desiredState].size() > 1 || desiredState == PARKING) {
+        } else if (mCameraList[desiredState].size() > 1 ||
+                   (mCameraList[desiredState].size() > 0 && desiredState == PARKING)) {
+            // TODO(b/140668179): RenderTopView needs to be updated to use new
+            //                    ConfigManager.
             std::unique_ptr<Stream> targetCfg(new Stream());
 
             targetCfg->width = WIDTH_FOR_TOP_VIEW;
             targetCfg->height = HEIGHT_FOR_TOP_VIEW;
-            targetCfg->format =
-                            static_cast<PixelFormat>(HAL_PIXEL_FORMAT_RGB_888);
+            targetCfg->format = aidl::android::hardware::graphics::common::PixelFormat::RGB_888;
 
-            mDesiredRenderer = std::make_unique<RenderTopView>(mEvs,
-                                                               mCameraList[desiredState],
-                                                               mConfig,
-                                                               std::move(targetCfg));
+            mDesiredRenderer =
+                    std::make_unique<RenderTopView>(mEvs, mCameraList[desiredState], mConfig, std::move(targetCfg));
             if (!mDesiredRenderer) {
                 LOG(ERROR) << "Failed to construct top view renderer.  Skipping state change.";
                 return false;
             }
         } else {
-            LOG(DEBUG) << "Unsupported, desiredState " << desiredState
-                       << " has " << mCameraList[desiredState].size() << " cameras.";
+            LOG(DEBUG) << "Unsupported, desiredState " << desiredState << " has "
+                       << mCameraList[desiredState].size() << " cameras.";
         }
+
+        // GL renderer is now ready.
+        isGlReady = true;
     }
 
     // Since we're changing states, shut down the current renderer
-    if (mCurrentRenderer != nullptr) {
+    if (mCurrentRenderer) {
         mCurrentRenderer->deactivate();
-        mCurrentRenderer = nullptr; // It's a smart pointer, so destructs on assignment to null
+        mCurrentRenderer.reset();
     }
 
     // Now set the display state based on whether we have a video feed to show
-    if (mDesiredRenderer == nullptr) {
+    std::shared_ptr<IEvsDisplay> displayHandle = mDisplay.lock();
+    if (!displayHandle) {
+        return false;
+    }
+
+    if (!mDesiredRenderer) {
         LOG(DEBUG) << "Turning off the display";
-        mDisplay->setDisplayState(EvsDisplayState::NOT_VISIBLE);
+        displayHandle->setDisplayState(DisplayState::NOT_VISIBLE);
     } else {
         mCurrentRenderer = std::move(mDesiredRenderer);
 
         // Start the camera stream
-        LOG(DEBUG) << "EvsStartCameraStreamTiming start time: "
-                   << android::elapsedRealtime() << " ms.";
+        LOG(DEBUG) << "EvsStartCameraStreamTiming start time: " << android::elapsedRealtime()
+                   << " ms.";
         if (!mCurrentRenderer->activate()) {
             LOG(ERROR) << "New renderer failed to activate";
             return false;
         }
 
         // Activate the display
-        LOG(DEBUG) << "EvsActivateDisplayTiming start time: "
-                   << android::elapsedRealtime() << " ms.";
-        Return<EvsResult> result = mDisplay->setDisplayState(
-                EvsDisplayState::VISIBLE_ON_NEXT_FRAME);
-        if (result != EvsResult::OK) {
-            LOG(ERROR) << "setDisplayState returned an error "
-                       << result.description();
+        LOG(DEBUG) << "EvsActivateDisplayTiming start time: " << android::elapsedRealtime()
+                   << " ms.";
+        if (auto status = displayHandle->setDisplayState(DisplayState::VISIBLE_ON_NEXT_FRAME);
+            !status.isOk()) {
+            LOG(ERROR) << "Failed to set a display state as VISIBLE_ON_NEXT_FRAME.";
             return false;
         }
     }
@@ -410,7 +423,7 @@ bool EvsStateControl::configureEvsPipeline(State desiredState) {
 
     mFirstFrameIsDisplayed = false;  // Got a new renderer, mark first frame is not displayed.
 
-    if (mCurrentRenderer != nullptr && desiredState == State::REVERSE) {
+    if (mCurrentRenderer && desiredState == State::REVERSE) {
         // Start computing the latency when the evs state changes.
         mEvsStats.startComputingFirstFrameLatency(desiredStateTimeMillis);
     }

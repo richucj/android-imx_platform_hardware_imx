@@ -22,4 +22,4 @@
 // Create a program object given vertex and pixels shader source
 GLuint buildShaderProgram(const char* vtxSrc, const char* pxlSrc, const char* name);
 
-#endif // SHADER_H
+#endif  // SHADER_H

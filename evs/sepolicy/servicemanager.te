@@ -1,3 +1,0 @@
-allow servicemanager imx_evs_app:dir search;
-allow servicemanager imx_evs_app:file r_file_perms;
-allow servicemanager imx_evs_app:process getattr;

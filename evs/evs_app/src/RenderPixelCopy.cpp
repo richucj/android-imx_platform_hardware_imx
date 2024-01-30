@@ -15,32 +15,47 @@
  */
 
 #include "RenderPixelCopy.h"
+
 #include "FormatConvert.h"
+#include "Utils.h"
 
+#include <aidl/android/hardware/automotive/evs/IEvsCamera.h>
+#include <aidl/android/hardware/automotive/evs/IEvsEnumerator.h>
+#include <aidl/android/hardware/automotive/evs/Stream.h>
+#include <aidlcommonsupport/NativeHandle.h>
 #include <android-base/logging.h>
+#include <android-base/scopeguard.h>
+#include <android/binder_manager.h>
 
+namespace {
 
-RenderPixelCopy::RenderPixelCopy(sp<IEvsEnumerator> enumerator,
-                                   const ConfigManager::CameraInfo& cam) {
+using aidl::android::hardware::automotive::evs::BufferDesc;
+using aidl::android::hardware::automotive::evs::IEvsCamera;
+using aidl::android::hardware::automotive::evs::IEvsEnumerator;
+using aidl::android::hardware::automotive::evs::Stream;
+
+}  // namespace
+
+RenderPixelCopy::RenderPixelCopy(std::shared_ptr<IEvsEnumerator> enumerator,
+                                 const ConfigManager::CameraInfo& cam) {
     mEnumerator = enumerator;
     mCameraInfo = cam;
 }
 
-
 bool RenderPixelCopy::activate() {
     // Set up the camera to feed this texture
-    sp<IEvsCamera> pCamera =
-        IEvsCamera::castFrom(mEnumerator->openCamera(mCameraInfo.cameraId.c_str()))
-        .withDefault(nullptr);
-
-    if (pCamera.get() == nullptr) {
+    Stream emptyConfig;
+    std::shared_ptr<IEvsCamera> pCamera;
+    if (auto status = mEnumerator->openCamera(mCameraInfo.cameraId.c_str(), emptyConfig, &pCamera);
+        !status.isOk()) {
         LOG(ERROR) << "Failed to allocate new EVS Camera interface";
         return false;
     }
 
     // Initialize the stream that will help us update this texture's contents
-    sp<StreamHandler> pStreamHandler = new StreamHandler(pCamera);
-    if (pStreamHandler.get() == nullptr) {
+    std::shared_ptr<StreamHandler> pStreamHandler =
+            ndk::SharedRefBase::make<StreamHandler>(pCamera);
+    if (!pStreamHandler) {
         LOG(ERROR) << "Failed to allocate FrameHandler";
         return false;
     }
@@ -52,29 +67,30 @@ bool RenderPixelCopy::activate() {
     }
 
     mStreamHandler = pStreamHandler;
-
     return true;
 }
 
-
 void RenderPixelCopy::deactivate() {
-    mStreamHandler = nullptr;
+    mStreamHandler.reset();
 }
-
 
 bool RenderPixelCopy::drawFrame(const BufferDesc& tgtBuffer) {
     bool success = true;
-    const AHardwareBuffer_Desc* pTgtDesc =
-       reinterpret_cast<const AHardwareBuffer_Desc *>(&tgtBuffer.buffer.description);
+    native_handle_t* targetBufferNativeHandle = getNativeHandle(tgtBuffer);
+    if (targetBufferNativeHandle == nullptr) {
+        LOG(ERROR) << "Target buffer has an invalid native handle.";
+        return false;
+    }
 
-    sp<android::GraphicBuffer> tgt = new android::GraphicBuffer(tgtBuffer.buffer.nativeHandle,
-                                                                android::GraphicBuffer::CLONE_HANDLE,
-                                                                pTgtDesc->width,
-                                                                pTgtDesc->height,
-                                                                pTgtDesc->format,
-                                                                1, //pTgtDesc->layers,
-                                                                pTgtDesc->usage,
-                                                                pTgtDesc->stride);
+    const auto handleGuard = android::base::make_scope_guard(
+            [targetBufferNativeHandle] { free(targetBufferNativeHandle); });
+    const AHardwareBuffer_Desc* pTgtDesc =
+            reinterpret_cast<const AHardwareBuffer_Desc*>(&tgtBuffer.buffer.description);
+    android::sp<android::GraphicBuffer> tgt =
+            new android::GraphicBuffer(targetBufferNativeHandle,
+                                       android::GraphicBuffer::CLONE_HANDLE, pTgtDesc->width,
+                                       pTgtDesc->height, pTgtDesc->format, pTgtDesc->layers,
+                                       pTgtDesc->usage, pTgtDesc->stride);
 
     // Lock our target buffer for writing (should be RGBA8888 format)
     uint32_t* tgtPixels = nullptr;
@@ -89,45 +105,45 @@ bool RenderPixelCopy::drawFrame(const BufferDesc& tgtBuffer) {
             // Make sure we have the latest frame data
             if (mStreamHandler->newFrameAvailable()) {
                 const BufferDesc& srcBuffer = mStreamHandler->getNewFrame();
-                const AHardwareBuffer_Desc* pSrcDesc =
-                      reinterpret_cast<const AHardwareBuffer_Desc *>(&srcBuffer.buffer.description);
+                native_handle_t* srcBufferNativeHandle = getNativeHandle(srcBuffer);
+                if (srcBufferNativeHandle == nullptr) {
+                    LOG(ERROR) << "Target buffer has an invalid native handle.";
+                    return false;
+                }
 
-                // Lock our source buffer for reading (current expectation are for this to be NV21 format)
-                sp<android::GraphicBuffer> src = new android::GraphicBuffer(srcBuffer.buffer.nativeHandle,
-                                                                            android::GraphicBuffer::CLONE_HANDLE,
-                                                                            pSrcDesc->width,
-                                                                            pSrcDesc->height,
-                                                                            pSrcDesc->format,
-                                                                            1, //pSrcDesc->layers,
-                                                                            pSrcDesc->usage,
-                                                                            pSrcDesc->stride);
+                const auto handleGuard = android::base::make_scope_guard(
+                        [srcBufferNativeHandle] { free(srcBufferNativeHandle); });
+                const AHardwareBuffer_Desc* pSrcDesc =
+                        reinterpret_cast<const AHardwareBuffer_Desc*>(
+                                &srcBuffer.buffer.description);
+
+                // Lock our source buffer for reading (current expectation are for this to be NV21
+                // format)
+                android::sp<android::GraphicBuffer> src =
+                        new android::GraphicBuffer(srcBufferNativeHandle,
+                                                   android::GraphicBuffer::CLONE_HANDLE,
+                                                   pSrcDesc->width, pSrcDesc->height,
+                                                   pSrcDesc->format, pSrcDesc->layers,
+                                                   pSrcDesc->usage, pSrcDesc->stride);
 
                 unsigned char* srcPixels = nullptr;
                 src->lock(GRALLOC_USAGE_SW_READ_OFTEN, (void**)&srcPixels);
                 if (srcPixels != nullptr) {
                     // Make sure we don't run off the end of either buffer
-                    const unsigned width     = std::min(pTgtDesc->width,
-                                                         pSrcDesc->width);
-                    const unsigned height    = std::min(pTgtDesc->height,
-                                                        pSrcDesc->height);
+                    const unsigned width = std::min(pTgtDesc->width, pSrcDesc->width);
+                    const unsigned height = std::min(pTgtDesc->height, pSrcDesc->height);
 
-                    if (pSrcDesc->format == HAL_PIXEL_FORMAT_YCRCB_420_SP) {   // 420SP == NV21
-                        copyNV21toRGB32(width, height,
-                                        srcPixels,
-                                        tgtPixels, pTgtDesc->stride);
-                    } else if (pSrcDesc->format == HAL_PIXEL_FORMAT_YV12) { // YUV_420P == YV12
-                        copyYV12toRGB32(width, height,
-                                        srcPixels,
-                                        tgtPixels, pTgtDesc->stride);
-                    } else if (pSrcDesc->format == HAL_PIXEL_FORMAT_YCBCR_422_I) { // YUYV
-                        copyYUYVtoRGB32(width, height,
-                                        srcPixels, pSrcDesc->stride,
-                                        tgtPixels, pTgtDesc->stride);
+                    if (pSrcDesc->format == HAL_PIXEL_FORMAT_YCRCB_420_SP) {  // 420SP == NV21
+                        copyNV21toRGB32(width, height, srcPixels, tgtPixels, pTgtDesc->stride);
+                    } else if (pSrcDesc->format == HAL_PIXEL_FORMAT_YV12) {  // YUV_420P == YV12
+                        copyYV12toRGB32(width, height, srcPixels, tgtPixels, pTgtDesc->stride);
+                    } else if (pSrcDesc->format == HAL_PIXEL_FORMAT_YCBCR_422_I) {  // YUYV
+                        copyYUYVtoRGB32(width, height, srcPixels, pSrcDesc->stride, tgtPixels,
+                                        pTgtDesc->stride);
                     } else if (pSrcDesc->format == pTgtDesc->format) {  // 32bit RGBA
-                        copyMatchedInterleavedFormats(width, height,
-                                                      srcPixels, pSrcDesc->stride,
+                        copyMatchedInterleavedFormats(width, height, srcPixels, pSrcDesc->stride,
                                                       tgtPixels, pTgtDesc->stride,
-                                                      tgtBuffer.pixelSize);
+                                                      tgtBuffer.pixelSizeBytes);
                     }
                 } else {
                     LOG(ERROR) << "Failed to get pointer into src image data";

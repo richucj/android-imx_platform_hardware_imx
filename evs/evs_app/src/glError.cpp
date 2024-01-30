@@ -16,9 +16,10 @@
 
 #include <EGL/egl.h>
 #include <GLES3/gl3.h>
+
 #include <stdio.h>
 
-const char *getEGLError(void) {
+const char* getEGLError(void) {
     switch (eglGetError()) {
         case EGL_SUCCESS:
             return "EGL_SUCCESS";
@@ -55,7 +56,7 @@ const char *getEGLError(void) {
     }
 }
 
-const char *getGLFramebufferError(void) {
+const char* getGLFramebufferError(void) {
     switch (glCheckFramebufferStatus(GL_FRAMEBUFFER)) {
         case GL_FRAMEBUFFER_COMPLETE:
             return "GL_FRAMEBUFFER_COMPLETE";

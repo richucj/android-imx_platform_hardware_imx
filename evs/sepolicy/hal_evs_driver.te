@@ -1,23 +1,43 @@
-get_prop(hal_evs_driver, vendor_default_prop)
-get_prop(hal_evs_driver, vendor_evs_prop)
+# evs_mock mock hardware driver service
+type hal_evs_driver, domain;
+hal_server_domain(hal_evs_driver, hal_evs)
+hal_client_domain(hal_evs_driver, hal_evs)
 
-allow hal_evs_driver ion_device:chr_file { read open ioctl };
-allow hal_evs_driver binder_device:chr_file { read write open ioctl map };
-allow hal_evs_driver hal_configstore_default:binder { call };
-allow hal_evs_driver video_device:chr_file { map };
-allow hal_evs_driver hal_evs_hwservice:hwservice_manager { add };
-allow hal_evs_driver hidl_base_hwservice:hwservice_manager { add };
-allow hal_evs_driver gpu_device:chr_file { map };
-allow hal_evs_driver opencl_cache_file:dir { create_dir_perms };
-allow hal_evs_driver opencl_cache_file:file { create_file_perms };
-allow hal_evs_driver sysfs:file { open read getattr };
-allow hal_evs_driver vendor_evs_prop:property_service { set };
-allow hal_evs_driver property_socket:sock_file { write };
-allow hal_evs_driver init:unix_stream_socket { connectto };
-allow hal_evs_driver hal_graphics_composer_hwservice:hwservice_manager { find };
-allow hal_evs_driver hal_graphics_composer_default:binder { call };
-allow hal_evs_driver device:dir { watch };
-allow hal_evs_driver sysfs:dir { read open };
-allow hal_evs_driver dmabuf_heap_device:chr_file { read open ioctl };
-allow hal_evs_driver dmabuf_system_heap_device:chr_file { read open ioctl };
-#allow hal_evs_driver automotive_display_service:fd { use };
+# allow init to launch processes in this context
+type hal_evs_driver_exec, exec_type, file_type, vendor_file_type;
+init_daemon_domain(hal_evs_driver)
+binder_use(hal_evs_driver)
+
+# allow to use a graphic buffer
+hal_client_domain(hal_evs_driver, hal_configstore)
+hal_client_domain(hal_evs_driver, hal_graphics_allocator)
+hal_client_domain(hal_evs_driver, hal_graphics_composer)
+
+# allow to use automotive display service
+binder_call(hal_evs_driver, automotive_display_service_server)
+allow hal_evs_driver fwk_automotive_display_hwservice:hwservice_manager find;
+allow hal_evs_driver fwk_automotive_display_service:service_manager find;
+
+# allow to use hidl token service to retrieve HGBP object
+allow hal_evs_driver hidl_token_hwservice:hwservice_manager find;
+
+# allow to access data from surfaceflinger
+allow hal_evs_driver surfaceflinger:fd use;
+
+# allow to access EGL
+allow hal_evs_driver gpu_device:chr_file rw_file_perms;
+allow hal_evs_driver gpu_device:dir search;
+
+# allow to monitor uevents and access video devices
+allow hal_evs_driver device:dir r_dir_perms;
+allow hal_evs_driver video_device:chr_file rw_file_perms;
+
+# allow to access graphics related properties
+get_prop(hal_evs_driver, graphics_config_prop);
+
+allow hal_evs_driver graphics_config_writable_prop:file { getattr map open read };
+allow hal_evs_driver init:unix_stream_socket connectto;
+allow hal_evs_driver property_socket:sock_file write;
+allow hal_evs_driver sysfs:file { getattr open read };
+allow hal_evs_driver vendor_evs_prop:file { getattr map open read };
+allow hal_evs_driver vendor_evs_prop:property_service set;

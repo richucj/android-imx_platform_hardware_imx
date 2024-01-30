@@ -1,6 +1,6 @@
-
 /*
  * Copyright (C) 2017 The Android Open Source Project
+ * Copyright 2024 NXP
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -18,16 +18,15 @@
 #ifndef CAR_EVS_APP_RENDERTOPVIEW_H
 #define CAR_EVS_APP_RENDERTOPVIEW_H
 
-
-#include "RenderBase.h"
-
-#include <android/hardware/automotive/evs/1.1/IEvsEnumerator.h>
 #include "ConfigManager.h"
+#include "RenderBase.h"
 #include "VideoTex.h"
+
+#include <aidl/android/hardware/automotive/evs/BufferDesc.h>
+#include <aidl/android/hardware/automotive/evs/IEvsEnumerator.h>
 #include <math/mat4.h>
 
-
-using namespace ::android::hardware::automotive::evs::V1_1;
+using namespace ::aidl::android::hardware::automotive::evs;
 /*
  * For RenderTopView, mActiveCameras info is from jason file.
  * jason file include the four camera view relationship(offset/x/y)
@@ -43,33 +42,32 @@ using namespace ::android::hardware::automotive::evs::V1_1;
 /*
  * Combines the views from all available cameras into one reprojected top down view.
  */
-class RenderTopView: public RenderBase {
+class RenderTopView final : public RenderBase {
 public:
-    RenderTopView(sp<IEvsEnumerator> enumerator,
-                  const std::vector<ConfigManager::CameraInfo>& camList,
-                  const ConfigManager& config,
-                  std::unique_ptr<Stream> targetCfg);
+    RenderTopView(
+            std::shared_ptr<aidl::android::hardware::automotive::evs::IEvsEnumerator> enumerator,
+            const std::vector<ConfigManager::CameraInfo>& camList, const ConfigManager& config, std::unique_ptr<Stream> targetCfg);
 
     virtual bool activate() override;
     virtual void deactivate() override;
 
-    virtual bool drawFrame(const BufferDesc& tgtBuffer);
+    virtual bool drawFrame(const aidl::android::hardware::automotive::evs::BufferDesc& tgtBuffer);
 
 protected:
     struct ActiveCamera {
-        const ConfigManager::CameraInfo&    info;
-        std::unique_ptr<VideoTex>           tex;
+        const ConfigManager::CameraInfo& info;
+        std::unique_ptr<VideoTex> tex;
 
-        ActiveCamera(const ConfigManager::CameraInfo& c) : info(c) {};
+        ActiveCamera(const ConfigManager::CameraInfo& c) : info(c){};
     };
 
     void renderCarTopView();
     void renderCameraOntoGroundPlane(const ActiveCamera& cam);
 
-    sp<IEvsEnumerator>              mEnumerator;
-    const ConfigManager&            mConfig;
-    std::vector<ActiveCamera>       mActiveCameras;
-    std::shared_ptr<Stream>         mTargetCfg;
+    std::shared_ptr<aidl::android::hardware::automotive::evs::IEvsEnumerator> mEnumerator;
+    const ConfigManager& mConfig;
+    std::vector<ActiveCamera> mActiveCameras;
+    std::shared_ptr<Stream>   mTargetCfg;
 
     struct {
         std::unique_ptr<TexWrapper> checkerBoard;
@@ -81,8 +79,7 @@ protected:
         GLuint projectedTexture;
     } mPgmAssets;
 
-    android::mat4   orthoMatrix;
+    android::mat4 orthoMatrix;
 };
 
-
-#endif //CAR_EVS_APP_RENDERTOPVIEW_H
+#endif  // CAR_EVS_APP_RENDERTOPVIEW_H

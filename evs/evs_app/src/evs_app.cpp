@@ -1,5 +1,6 @@
 /*
  * Copyright (C) 2016 The Android Open Source Project
+ * Copyright 2024 NXP
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -18,16 +19,16 @@
 #include "EvsStateControl.h"
 #include "EvsVehicleListener.h"
 
+#include <aidl/android/hardware/automotive/evs/IEvsDisplay.h>
+#include <aidl/android/hardware/automotive/evs/IEvsEnumerator.h>
 #include <aidl/android/hardware/automotive/vehicle/SubscribeOptions.h>
 #include <aidl/android/hardware/automotive/vehicle/VehicleGear.h>
 #include <aidl/android/hardware/automotive/vehicle/VehicleProperty.h>
 #include <android-base/logging.h>
-#include <android-base/macros.h>    // arraysize
-#include <android/hardware/automotive/evs/1.1/IEvsDisplay.h>
-#include <android/hardware/automotive/evs/1.1/IEvsEnumerator.h>
-#include <hidl/HidlTransportSupport.h>
-#include <hwbinder/IPCThreadState.h>
-#include <hwbinder/ProcessState.h>
+#include <android-base/strings.h>
+#include <android/binder_ibinder.h>
+#include <android/binder_manager.h>
+#include <android/binder_process.h>
 #include <utils/Errors.h>
 #include <utils/Log.h>
 #include <utils/StrongPointer.h>
@@ -39,55 +40,30 @@
 
 namespace {
 
-using ::aidl::android::hardware::automotive::vehicle::VehicleGear;
-using ::aidl::android::hardware::automotive::vehicle::VehicleProperty;
-// libhidl:
-using ::android::frameworks::automotive::vhal::ISubscriptionClient;
-using ::android::frameworks::automotive::vhal::IVhalClient;
-using android::hardware::configureRpcThreadpool;
-using android::hardware::joinRpcThreadpool;
+using aidl::android::hardware::automotive::evs::IEvsDisplay;
+using aidl::android::hardware::automotive::evs::IEvsEnumerator;
+using aidl::android::hardware::automotive::vehicle::VehicleGear;
+using aidl::android::hardware::automotive::vehicle::VehicleProperty;
+using android::base::EqualsIgnoreCase;
+using android::frameworks::automotive::vhal::ISubscriptionClient;
+using android::frameworks::automotive::vhal::IVhalClient;
 
-android::sp<IEvsEnumerator> pEvs;
-android::sp<IEvsDisplay> pDisplay;
-EvsStateControl *pStateController;
+std::shared_ptr<IEvsEnumerator> pEvsService;
+std::shared_ptr<IEvsDisplay> pDisplay;
+EvsStateControl* pStateController;
 
-void sigHandler(int sig) {
-    LOG(WARNING) << "evs_app is being terminated on receiving a signal " << sig;
-    if (pEvs != nullptr) {
-        // Attempt to clean up the resources
-        pStateController->postCommand({EvsStateControl::Op::EXIT, 0, 0}, true);
-        pStateController->terminateUpdateLoop();
-        pEvs->closeDisplay(pDisplay);
-    }
-
-    android::hardware::IPCThreadState::self()->stopProcess();
-    exit(EXIT_FAILURE);
-}
-
-void registerSigHandler() {
-    struct sigaction sa;
-    sigemptyset(&sa.sa_mask);
-    sa.sa_flags = 0;
-    sa.sa_handler = sigHandler;
-    sigaction(SIGABRT, &sa, nullptr);
-    sigaction(SIGTERM, &sa, nullptr);
-    sigaction(SIGINT,  &sa, nullptr);
-}
-
-} // namespace
-
-// Helper to subscribe to VHal notifications
-static bool subscribeToVHal(ISubscriptionClient* client, VehicleProperty propertyId) {
+// Helper to subscribe to Vhal notifications
+bool subscribeToVHal(ISubscriptionClient* client, VehicleProperty propertyId) {
     assert(pVnet != nullptr);
     assert(listener != nullptr);
 
     // Register for vehicle state change callbacks we care about
     // Changes in these values are what will trigger a reconfiguration of the EVS pipeline
     std::vector<aidl::android::hardware::automotive::vehicle::SubscribeOptions> options = {
-        {
-            .propId = static_cast<int32_t>(propertyId),
-            .areaIds = {},
-        },
+            {
+                    .propId = static_cast<int32_t>(propertyId),
+                    .areaIds = {},
+            },
     };
     if (auto result = client->subscribe(options); !result.ok()) {
         LOG(WARNING) << "VHAL subscription for property " << static_cast<int32_t>(propertyId)
@@ -98,20 +74,38 @@ static bool subscribeToVHal(ISubscriptionClient* client, VehicleProperty propert
     return true;
 }
 
+bool convertStringToFormat(const char* str, android_pixel_format_t* output) {
+    bool result = true;
+    if (EqualsIgnoreCase(str, "RGBA8888")) {
+        *output = HAL_PIXEL_FORMAT_RGBA_8888;
+    } else if (EqualsIgnoreCase(str, "YV12")) {
+        *output = HAL_PIXEL_FORMAT_YV12;
+    } else if (EqualsIgnoreCase(str, "NV21")) {
+        *output = HAL_PIXEL_FORMAT_YCrCb_420_SP;
+    } else if (EqualsIgnoreCase(str, "YUYV")) {
+        *output = HAL_PIXEL_FORMAT_YCBCR_422_I;
+    } else {
+        result = false;
+    }
+
+    return result;
+}
+
+}  // namespace
 
 // Main entry point
-int main(int argc, char** argv)
-{
+int main(int argc, char** argv) {
     LOG(INFO) << "EVS app starting";
-
-    // Register a signal handler
-    registerSigHandler();
 
     // Set up default behavior, then check for command line options
     bool useVehicleHal = true;
     bool printHelp = false;
     const char* evsServiceName = "default";
-    for (int i=1; i< argc; i++) {
+    int displayId = -1;
+    bool useExternalMemory = false;
+    android_pixel_format_t extMemoryFormat = HAL_PIXEL_FORMAT_RGBA_8888;
+    int32_t mockGearSignal = static_cast<int32_t>(VehicleGear::GEAR_REVERSE);
+    for (int i = 1; i < argc; i++) {
         if (strcmp(argv[i], "--test") == 0) {
             useVehicleHal = false;
         } else if (strcmp(argv[i], "--hw") == 0) {
@@ -120,6 +114,37 @@ int main(int argc, char** argv)
             evsServiceName = "EvsEnumeratorHw-Mock";
         } else if (strcmp(argv[i], "--help") == 0) {
             printHelp = true;
+        } else if (strcmp(argv[i], "--display") == 0) {
+            displayId = std::stoi(argv[++i]);
+        } else if (strcmp(argv[i], "--extmem") == 0) {
+            useExternalMemory = true;
+            if (i + 1 >= argc) {
+                // use RGBA8888 by default
+                LOG(INFO) << "External buffer format is not set.  "
+                          << "RGBA8888 will be used.";
+            } else {
+                if (!convertStringToFormat(argv[i + 1], &extMemoryFormat)) {
+                    LOG(WARNING) << "Color format string " << argv[i + 1]
+                                 << " is unknown or not supported.  RGBA8888 will be used.";
+                } else {
+                    // move the index
+                    ++i;
+                }
+            }
+        } else if (strcmp(argv[i], "--gear") == 0) {
+            // Gear signal to simulate
+            if (i + 1 >= argc) {
+                LOG(INFO) << "Gear signal is not set.  "
+                          << "Reverse signal will be used.";
+                continue;
+            }
+            i += 1;  // increase an index to next argument
+            if (strcasecmp(argv[i], "Park") == 0) {
+                mockGearSignal = static_cast<int32_t>(VehicleGear::GEAR_PARK);
+            } else if (strcasecmp(argv[i], "Reverse") != 0) {
+                LOG(WARNING) << "Unknown gear signal, " << argv[i] << ", is ignored "
+                             << "and the reverse signal will be used instead";
+            }
         } else {
             printf("Ignoring unrecognized command line arg '%s'\n", argv[i]);
             printHelp = true;
@@ -128,9 +153,26 @@ int main(int argc, char** argv)
     if (printHelp) {
         printf("Options include:\n");
         printf("  --test\n\tDo not talk to Vehicle Hal, "
-               "but simulate 'reverse' instead\n");
+               "but simulate a given mock gear signal instead\n");
+        printf("  --gear\n\tMock gear signal for the test mode.");
+        printf("  Available options are Reverse and Park (case insensitive)\n");
         printf("  --hw\n\tBypass EvsManager by connecting directly to EvsEnumeratorHw\n");
         printf("  --mock\n\tConnect directly to EvsEnumeratorHw-Mock\n");
+        printf("  --display\n\tSpecify the display to use.  If this is not set, the first"
+               "display in config.json's list will be used.\n");
+        printf("  --extmem  <format>\n\t"
+               "Application allocates buffers to capture camera frames.  "
+               "Available format strings are (case insensitive):\n");
+        printf("\t\tRGBA8888: 4x8-bit RGBA format.  This is the default format to be used "
+               "when no format is specified.\n");
+        printf("\t\tYV12: YUV420 planar format with a full resolution Y plane "
+               "followed by a V values, with U values last.\n");
+        printf("\t\tNV21: A biplanar format with a full resolution Y plane "
+               "followed by a single chrome plane with weaved V and U values.\n");
+        printf("\t\tYUYV: Packed format with a half horizontal chrome resolution.  "
+               "Known as YUV4:2:2.\n");
+
+        return EXIT_FAILURE;
     }
 
     // Load our configuration information
@@ -150,28 +192,51 @@ int main(int argc, char** argv)
     // This pool will handle the EvsCameraStream callbacks.
     // Note:  This _will_ run in parallel with the EvsListener run() loop below which
     // runs the application logic that reacts to the async events.
-    configureRpcThreadpool(1, false /* callerWillJoin */);
+    if (!ABinderProcess_setThreadPoolMaxThreadCount(/* numThreads= */ 1)) {
+        LOG(ERROR) << "Failed to confgiure the binder thread pool.";
+        return EXIT_FAILURE;
+    }
+    ABinderProcess_startThreadPool();
 
     // Construct our async helper object
     std::shared_ptr<EvsVehicleListener> pEvsListener = std::make_shared<EvsVehicleListener>();
 
     // Get the EVS manager service
     LOG(INFO) << "Acquiring EVS Enumerator";
-    pEvs = IEvsEnumerator::getService(evsServiceName);
-    if (pEvs.get() == nullptr) {
-        LOG(ERROR) << "getService(" << evsServiceName
-                   << ") returned NULL.  Exiting.";
+    std::string serviceName =
+            std::string(IEvsEnumerator::descriptor) + "/" + std::string(evsServiceName);
+    if (!AServiceManager_isDeclared(serviceName.c_str())) {
+        LOG(ERROR) << serviceName << " is not declared. Exiting.";
+        return EXIT_FAILURE;
+    }
+
+    pEvsService = IEvsEnumerator::fromBinder(
+            ndk::SpAIBinder(AServiceManager_checkService(serviceName.c_str())));
+    if (!pEvsService) {
+        LOG(ERROR) << "Failed to get " << serviceName << ". Exiting.";
         return EXIT_FAILURE;
     }
 
     // Request exclusive access to the EVS display
     LOG(INFO) << "Acquiring EVS Display";
 
-    pDisplay = pEvs->openDisplay_1_1(0);
-    if (pDisplay.get() == nullptr) {
+    // We'll use an available display device.
+    displayId = config.setActiveDisplayId(displayId);
+    if (displayId < 0) {
+        PLOG(ERROR) << "EVS Display is unknown.  Exiting.";
+        return EXIT_FAILURE;
+    }
+
+    if (auto status = pEvsService->openDisplay(displayId, &pDisplay); !status.isOk()) {
         LOG(ERROR) << "EVS Display unavailable.  Exiting.";
         return EXIT_FAILURE;
     }
+
+    config.useExternalMemory(useExternalMemory);
+    config.setExternalMemoryFormat(extMemoryFormat);
+
+    // Set a mock gear signal for the test mode
+    config.setMockGearSignal(mockGearSignal);
 
     // Connect to the Vehicle HAL so we can monitor state
     std::shared_ptr<IVhalClient> pVnet;
@@ -199,7 +264,7 @@ int main(int argc, char** argv)
 
     // Configure ourselves for the current vehicle state at startup
     LOG(INFO) << "Constructing state controller";
-    pStateController = new EvsStateControl(pVnet, pEvs, pDisplay, config);
+    pStateController = new EvsStateControl(pVnet, pEvsService, pDisplay, config);
     if (!pStateController->startUpdateLoop()) {
         LOG(ERROR) << "Initial configuration failed.  Exiting.";
         return EXIT_FAILURE;

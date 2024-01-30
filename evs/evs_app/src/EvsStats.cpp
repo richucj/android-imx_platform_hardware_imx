@@ -21,6 +21,7 @@
 #include <aidl/android/frameworks/automotive/telemetry/ICarTelemetry.h>
 #include <android-base/logging.h>
 #include <android/binder_manager.h>
+#include <binder/IServiceManager.h>
 #include <utils/SystemClock.h>
 
 #include <vector>
@@ -47,7 +48,17 @@ const int kEvsFirstFrameLatencyId = 1;
 // static
 EvsStats EvsStats::build() {
     // No need to enable stats if ICarTelemetry is not available.
-    bool enabled = ::AServiceManager_isDeclared(kCarTelemetryServiceName);
+    bool enabled = false;
+    android::sp<android::IServiceManager> mgr = android::defaultServiceManager();
+    if (mgr) {
+        android::Vector<android::String16> services = mgr->listServices();
+        enabled = std::find(services.begin(), services.end(),
+                            android::String16(kCarTelemetryServiceName)) != services.end();
+    }
+
+    if (!enabled) {
+        LOG(DEBUG) << "Telemetry service is not available.";
+    }
     return EvsStats(enabled);
 }
 
@@ -72,8 +83,8 @@ void EvsStats::finishComputingFirstFrameLatency(int64_t finishTimeMillis) {
     EvsFirstFrameLatency latency;
     latency.set_start_timestamp_millis(mFirstFrameLatencyStartTimeMillis);
     latency.set_latency_millis(firstFrameLatencyMillis);
-    std::vector<uint8_t> bytes(latency.ByteSize());
-    latency.SerializeToArray(&bytes[0], latency.ByteSize());
+    std::vector<uint8_t> bytes(latency.ByteSizeLong());
+    latency.SerializeToArray(&bytes[0], latency.ByteSizeLong());
     CarData msg;
     msg.id = kEvsFirstFrameLatencyId;
     msg.content = std::move(bytes);
@@ -111,7 +122,7 @@ std::shared_ptr<ICarTelemetry> EvsStats::getCarTelemetry(bool waitIfNotReady) {
 
     AIBinder* binder;
     if (waitIfNotReady) {
-        binder = ::AServiceManager_getService(kCarTelemetryServiceName);
+        binder = ::AServiceManager_waitForService(kCarTelemetryServiceName);
     } else {
         binder = ::AServiceManager_checkService(kCarTelemetryServiceName);
     }
@@ -123,6 +134,11 @@ std::shared_ptr<ICarTelemetry> EvsStats::getCarTelemetry(bool waitIfNotReady) {
 
     const std::scoped_lock<std::mutex> lock(mMutex);  // locks until the end of the method
     mCarTelemetry = ICarTelemetry::fromBinder(ndk::SpAIBinder(binder));
+    if (!mCarTelemetry) {
+        LOG(WARNING) << "CarTelemetry service is not available.";
+        return nullptr;
+    }
+
     auto status = ndk::ScopedAStatus::fromStatus(
             ::AIBinder_linkToDeath(mCarTelemetry->asBinder().get(), mBinderDeathRecipient.get(),
                                    this));

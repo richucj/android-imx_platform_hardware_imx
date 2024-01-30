@@ -21,12 +21,15 @@
 
 #include <IVhalClient.h>
 
+#include <vector>
+
 /*
  * This class listens for asynchronous updates from the Vehicle HAL.  While the EVS
  * applications is active, it can poll the vehicle state directly.  However, when it goes to
  * sleep, we need these notifications to bring it active again.
  */
-class EvsVehicleListener : public android::frameworks::automotive::vhal::ISubscriptionCallback {
+class EvsVehicleListener final :
+      public android::frameworks::automotive::vhal::ISubscriptionCallback {
 public:
     void onPropertyEvent([[maybe_unused]] const std::vector<
                          std::unique_ptr<android::frameworks::automotive::vhal::IHalPropValue>>&
@@ -53,7 +56,7 @@ public:
         return (result == std::cv_status::no_timeout);
     }
 
-    void run(EvsStateControl *pStateController) {
+    void run(EvsStateControl* pStateController) {
         while (true) {
             // Wait until we have an event to which to react
             // (wake up and validate our current state "just in case" every so often)
@@ -61,9 +64,9 @@ public:
 
             // If we were delivered an event (or it's been a while) update as necessary
             EvsStateControl::Command cmd = {
-                .operation = EvsStateControl::Op::CHECK_VEHICLE_STATE,
-                .arg1      = 0,
-                .arg2      = 0,
+                    .operation = EvsStateControl::Op::CHECK_VEHICLE_STATE,
+                    .arg1 = 0,
+                    .arg2 = 0,
             };
             pStateController->postCommand(cmd);
         }
@@ -74,4 +77,4 @@ private:
     std::condition_variable mEventCond;
 };
 
-#endif //CAR_EVS_APP_VEHICLELISTENER_H
+#endif  // CAR_EVS_APP_VEHICLELISTENER_H

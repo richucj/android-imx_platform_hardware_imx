@@ -1,5 +1,6 @@
 /*
  * Copyright (C) 2017 The Android Open Source Project
+ * Copyright 2024 NXP
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -25,44 +26,46 @@
 #include <GLES2/gl2ext.h>
 #include <GLES3/gl3.h>
 #include <GLES3/gl3ext.h>
+#include <aidl/android/hardware/automotive/evs/BufferDesc.h>
+#include <aidl/android/hardware/automotive/evs/IEvsCamera.h>
+#include <aidl/android/hardware/automotive/evs/IEvsEnumerator.h>
+#include <aidl/android/hardware/automotive/evs/Stream.h>
 
-#include <android/hardware/automotive/evs/1.1/IEvsEnumerator.h>
-using ::android::hardware::camera::device::V3_2::Stream;
-using namespace ::android::hardware::automotive::evs::V1_1;
+#include <system/graphics-base.h>
 
-
-class VideoTex: public TexWrapper {
-    friend VideoTex* createVideoTexture(sp<IEvsEnumerator> pEnum,
-                                        const char * evsCameraId,
-                                        std::shared_ptr<Stream> streamCfg,
-                                        EGLDisplay glDisplay);
+class VideoTex final : public TexWrapper {
+    friend VideoTex* createVideoTexture(
+            const std::shared_ptr<aidl::android::hardware::automotive::evs::IEvsEnumerator>& pEnum,
+            const char* evsCameraId,
+            std::shared_ptr<aidl::android::hardware::automotive::evs::Stream> streamCfg,
+            EGLDisplay glDisplay, bool useExternalMemory, android_pixel_format_t format);
 
 public:
     VideoTex() = delete;
     virtual ~VideoTex();
 
-    bool refresh();     // returns true if the texture contents were updated
+    bool refresh();  // returns true if the texture contents were updated
 
+    VideoTex(std::shared_ptr<aidl::android::hardware::automotive::evs::IEvsEnumerator> pEnum,
+             std::shared_ptr<aidl::android::hardware::automotive::evs::IEvsCamera> pCamera,
+             std::shared_ptr<StreamHandler> pStreamHandler, EGLDisplay glDisplay);
 private:
-    VideoTex(sp<IEvsEnumerator> pEnum,
-             sp<IEvsCamera> pCamera,
-             sp<StreamHandler> pStreamHandler,
-             EGLDisplay glDisplay);
+    std::shared_ptr<aidl::android::hardware::automotive::evs::IEvsEnumerator> mEnumerator;
+    std::shared_ptr<aidl::android::hardware::automotive::evs::IEvsCamera> mCamera;
+    std::shared_ptr<StreamHandler> mStreamHandler;
+    aidl::android::hardware::automotive::evs::BufferDesc mImageBuffer;
 
-    sp<IEvsEnumerator>  mEnumerator;
-    sp<IEvsCamera>      mCamera;
-    sp<StreamHandler>   mStreamHandler;
-    BufferDesc          mImageBuffer;
-
-    EGLDisplay          mDisplay;
+    EGLDisplay mDisplay;
     EGLImageKHR mKHRimage = EGL_NO_IMAGE_KHR;
 };
 
+// Creates a video texture to draw the camera preview.  format is effective only
+// when useExternalMemory is true.
+VideoTex* createVideoTexture(
+        const std::shared_ptr<aidl::android::hardware::automotive::evs::IEvsEnumerator>& pEnum,
+        const char* deviceName,
+        std::shared_ptr<aidl::android::hardware::automotive::evs::Stream> streamCfg,
+        EGLDisplay glDisplay, bool useExternalMemory = false,
+        android_pixel_format_t format = HAL_PIXEL_FORMAT_RGBA_8888);
 
-// Creates a video texture to draw the camera preview.
-VideoTex* createVideoTexture(sp<IEvsEnumerator> pEnum,
-                             const char * deviceName,
-                             std::shared_ptr<Stream> streamCfg,
-                             EGLDisplay glDisplay);
-
-#endif // VIDEOTEX_H
+#endif  // VIDEOTEX_H

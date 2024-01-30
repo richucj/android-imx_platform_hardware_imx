@@ -40,4 +40,4 @@ const char pixShader_simpleTexture[] = "#version 300 es                         
                                        "    color = texel;                         \n"
                                        "}                                          \n";
 
-#endif // SHADER_SIMPLE_TEX_H
+#endif  // SHADER_SIMPLE_TEX_H
