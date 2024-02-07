@@ -2254,28 +2254,28 @@
             "areas": [
                 {
                     "areaId": "Constants::SEAT_1_LEFT",
-                    "minInt32Value": -2,
-                    "maxInt32Value": 2
+                    "minInt32Value": 0,
+                    "maxInt32Value": 3
                 },
                 {
                     "areaId": "Constants::SEAT_1_RIGHT",
-                    "minInt32Value": -2,
-                    "maxInt32Value": 2
+                    "minInt32Value": 0,
+                    "maxInt32Value": 3
                 },
                 {
                     "areaId": "Constants::SEAT_2_LEFT",
-                    "minInt32Value": -2,
-                    "maxInt32Value": 2
+                    "minInt32Value": 0,
+                    "maxInt32Value": 3
                 },
                 {
                     "areaId": "Constants::SEAT_2_RIGHT",
-                    "minInt32Value": -2,
-                    "maxInt32Value": 2
+                    "minInt32Value": 0,
+                    "maxInt32Value": 3
                 },
                 {
                     "areaId": "Constants::SEAT_2_CENTER",
-                    "minInt32Value": -2,
-                    "maxInt32Value": 2
+                    "minInt32Value": 0,
+                    "maxInt32Value": 3
                 }
             ],
             "comment": "+ve values for heating and -ve for cooling"
