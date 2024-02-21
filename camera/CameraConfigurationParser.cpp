@@ -511,45 +511,6 @@ bool ParseCharacteristics(CameraDefinition* camera, const Json::Value& root,
     else
         static_meta[cam_index].mMaxHeight = MAX_SENSOR_HEIGHT;
 
-    if(root.isMember(kMinWidth))
-        static_meta[cam_index].mMinWidth = strtol(root[kMinWidth].asString().c_str(), NULL, 10);
-    else
-        static_meta[cam_index].mMinWidth = 0;
-
-    if(root.isMember(kMinHeight))
-        static_meta[cam_index].mMinHeight = strtol(root[kMinHeight].asString().c_str(), NULL, 10);
-    else
-        static_meta[cam_index].mMinHeight = 0;
-
-    ALOGI("%s: res min %dx%d, max %dx%d", __func__,
-        static_meta[cam_index].mMinWidth, static_meta[cam_index].mMinHeight, static_meta[cam_index].mMaxWidth, static_meta[cam_index].mMaxHeight);
-
-    int given_res_index = 0;
-    for (Json::ValueConstIterator resIter = root[kGivenResKey].begin();
-                resIter != root[kGivenResKey].end(); ++resIter) {
-
-        std::string kGivenResWidthStr = (*resIter)[kGivenResWidthKey].asString();
-        const char *kGivenResWidthData = kGivenResWidthStr.c_str ();
-        static_meta[cam_index].mGivenRes[given_res_index].width = strtol(kGivenResWidthData, &endptr, 10);
-        if (*endptr != '\0') {
-            ALOGE("%s: Invalid camera given width. got %s.", __func__, kGivenResWidthData);
-        }
-
-        std::string kGivenResHeightStr = (*resIter)[kGivenResHeightKey].asString();
-        const char *kGivenResHeightData = kGivenResHeightStr.c_str ();
-        static_meta[cam_index].mGivenRes[given_res_index].height = strtol(kGivenResHeightData, &endptr, 10);
-        if (*endptr != '\0') {
-            ALOGE("%s: Invalid camera given height. got %s.", __func__, kGivenResHeightData);
-        }
-
-        ALOGI("%s: given resolution %dx%d", __func__, static_meta[cam_index].mGivenRes[given_res_index].width, static_meta[cam_index].mGivenRes[given_res_index].height);
-
-        given_res_index++;
-        if(given_res_index >= GIVEN_RESOLUTION_NUM)
-            break;
-    }
-    static_meta[cam_index].mGivenResNum = given_res_index;
-
     if (root.isMember(kMinWidth))
         static_meta[cam_index].mMinWidth = strtol(root[kMinWidth].asString().c_str(), NULL, 10);
     else
