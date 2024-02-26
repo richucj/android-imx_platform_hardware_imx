@@ -48,6 +48,9 @@ iio_sensor_defaults {
         "-Wextra",
         "-Werror",
     ],
+    required: [
+        "sensor_hal_configuration.xml"
+    ],
     generated_sources: ["sensor_hal_configuration_V1_0_nxp"],
     generated_headers: ["sensor_hal_configuration_V1_0_nxp"],
 
@@ -73,4 +76,11 @@ bootstrap_go_package {
 cc_library {
     name: "android.hardware.sensors@2.1-nxp-IIO-Subhal",
     defaults: ["iio_sensor_default"],
+}
+
+prebuilt_etc {
+    name: "sensor_hal_configuration.xml",
+    soc_specific: true,
+    src: "config/sensor_hal_configuration.xml",
+    sub_dir: "sensors",
 }

@@ -159,6 +159,7 @@ Result AccMagSensor::flush() {
     ev.u.meta.what = MetaDataEventType::META_DATA_FLUSH_COMPLETE;
     std::vector<Event> evs{ev};
     mCallback->postEvents(evs, isWakeUpSensor());
+    sendAdditionalInfoReport();
     return Result::OK;
 }
 
@@ -166,6 +167,7 @@ void AccMagSensor::activate(bool enable) {
     std::unique_lock<std::mutex> lock(mRunMutex);
     std::string buffer_path;
     if (mIsEnabled != enable) {
+        sendAdditionalInfoReport();
         buffer_path = "/dev/iio:device";
         buffer_path.append(std::to_string(mIioData.iio_dev_num));
         if (enable) {

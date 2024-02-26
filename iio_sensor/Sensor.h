@@ -137,11 +137,12 @@ private:
     void setOrientation(std::optional<std::vector<Configuration>> config);
     void setAxisDefaultValues();
     status_t setAdditionalInfoFrames(const std::optional<std::vector<Configuration>>& config);
-    void sendAdditionalInfoReport();
     status_t getSensorPlacement(AdditionalInfo* sensorPlacement,
                                 const std::optional<std::vector<Configuration>>& config);
     ssize_t calculateScanSize();
     void processScanData(uint8_t* data, Event* evt);
+protected:
+    void sendAdditionalInfoReport();
 };
 
 } // namespace nxp_sensors_subhal
