@@ -27,6 +27,11 @@
 #define V4L2_BUFFER_NUM 10
 typedef v4l2_buffer imageBuffer;
 
+typedef struct {
+    void *start;
+    size_t length;
+} PixelBuffers;
+
 class VideoCapture final {
 public:
     bool open(const char* deviceName, const int32_t width = 0, const int32_t height = 0, int pixel_format = 0);
@@ -50,7 +55,7 @@ public:
 
         // Return a pointer to the buffer captured most recently
         const int latestBufferId = *mFrames.end();
-        return mPixelBuffers[latestBufferId];
+        return mPixelBuffers[latestBufferId].start;
     }
 
     bool isFrameReady() { return !mFrames.empty(); }
@@ -69,8 +74,8 @@ private:
     int mDeviceFd = -1;
 
     int mNumBuffers = 0;
-    std::unique_ptr<v4l2_buffer[]> mBufferInfos = nullptr;
-    std::unique_ptr<void*[]> mPixelBuffers = nullptr;
+    std::unique_ptr<v4l2_buffer[]> mBufferInfos;
+    std::unique_ptr<PixelBuffers[]> mPixelBuffers = nullptr;
 
     __u32 mFormat = 0;
     __u32 mWidth = 0;

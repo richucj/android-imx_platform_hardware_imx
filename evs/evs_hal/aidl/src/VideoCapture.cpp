@@ -181,6 +181,7 @@ bool VideoCapture::startStream(std::function<void(VideoCapture*, imageBuffer*, v
 
     // Tell the L4V2 driver to prepare our streaming buffers
     v4l2_requestbuffers bufrequest;
+    memset(&bufrequest, 0, sizeof(bufrequest));
     bufrequest.type = V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE;
     bufrequest.memory = V4L2_MEMORY_MMAP;
     bufrequest.count = V4L2_BUFFER_NUM;
@@ -191,7 +192,7 @@ bool VideoCapture::startStream(std::function<void(VideoCapture*, imageBuffer*, v
 
     mNumBuffers = bufrequest.count;
     mBufferInfos = std::make_unique<v4l2_buffer[]>(mNumBuffers);
-    mPixelBuffers = std::make_unique<void*[]>(mNumBuffers);
+    mPixelBuffers = std::make_unique<PixelBuffers[]>(mNumBuffers);
 
      struct v4l2_plane planes;
      memset(&planes, 0, sizeof(struct v4l2_plane));
@@ -216,15 +217,16 @@ bool VideoCapture::startStream(std::function<void(VideoCapture*, imageBuffer*, v
         LOG(DEBUG) << "  flags : " << std::hex << mBufferInfos[i].flags;
 
         // Get a pointer to the buffer contents by mapping into our address space
-        mPixelBuffers[i] = mmap(NULL, mBufferInfos[i].m.planes->length, PROT_READ | PROT_WRITE, MAP_SHARED,
+        mPixelBuffers[i].start = mmap(NULL, mBufferInfos[i].m.planes->length, PROT_READ | PROT_WRITE, MAP_SHARED,
                                 mDeviceFd,mBufferInfos[i].m.planes->m.mem_offset);
-        if (mPixelBuffers[i] == MAP_FAILED) {
+        mPixelBuffers[i].length = mBufferInfos[i].m.planes->length;
+        if (mPixelBuffers[i].start == MAP_FAILED) {
             PLOG(ERROR) << "mmap() failed";
             return false;
         }
 
-        memset(mPixelBuffers[i], 0, mBufferInfos[i].length);
-        LOG(INFO) << "Buffer mapped at " << mPixelBuffers[i];
+        memset(mPixelBuffers[i].start, 0, mPixelBuffers[i].length);
+        LOG(INFO) << "Buffer mapped at " << mPixelBuffers[i].start;
 
         // Queue the first capture buffer
         if (ioctl(mDeviceFd, VIDIOC_QBUF, &mBufferInfos[i]) < 0) {
@@ -277,7 +279,7 @@ void VideoCapture::stopStream() {
 
     for (int i = 0; i < mNumBuffers; ++i) {
         // Unmap the buffers we allocated
-        munmap(mPixelBuffers[i], mBufferInfos[i].length);
+        munmap(mPixelBuffers[i].start, mPixelBuffers[i].length);
     }
 
     // Tell the L4V2 driver to release our streaming buffers
@@ -341,7 +343,7 @@ void VideoCapture::collectFrames() {
 
         // If a callback was requested per frame, do that now
         if (mCallback) {
-            mCallback(this, &mBufferInfos[buf.index], mPixelBuffers[buf.index]);
+            mCallback(this, &mBufferInfos[buf.index], mPixelBuffers[buf.index].start);
         }
     }
 
