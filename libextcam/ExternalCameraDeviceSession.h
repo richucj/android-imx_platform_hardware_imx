@@ -26,6 +26,9 @@
 #include <aidl/android/hardware/camera/device/Stream.h>
 #include <android-base/properties.h>
 #include <android-base/unique_fd.h>
+#include <android/hardware/graphics/mapper/2.0/IMapper.h>
+#include <android/hardware/graphics/mapper/3.0/IMapper.h>
+#include <android/hardware/graphics/mapper/4.0/IMapper.h>
 #include <fmq/AidlMessageQueue.h>
 #include <utils/Thread.h>
 
@@ -64,9 +67,11 @@ using ::android::base::unique_fd;
 using ::android::hardware::camera::common::helper::SimpleThread;
 using ::android::hardware::camera::external::common::ExternalCameraConfig;
 using ::android::hardware::camera::external::common::SizeHasher;
+using ::android::hardware::graphics::mapper::V2_0::YCbCrLayout;
 using ::ndk::ScopedAStatus;
 
 constexpr char kCameraMjpegDecoderType[] = "vendor.camera.mjpg.decoder";
+constexpr char kCameraMjpegCopy[] = "vendor.camera.mjpg.copy";
 
 class ExternalCameraDeviceSession : public BnCameraDeviceSession, public OutputThreadInterface {
 public:
@@ -123,6 +128,8 @@ public:
 
     // Get the hardwareDec flag according to the usb camera
     virtual bool getHardwareDecFlag() const override;
+
+    virtual Size getMaxThumbSize() { return mMaxThumbResolution; }
 
     // Called by CameraDevice to dump active device states
     binder_status_t dump(int fd, const char** args, uint32_t numArgs) override;
@@ -195,6 +202,7 @@ public:
         std::list<std::shared_ptr<HalRequest>> switchToOffline();
 
         void setMjpegDecoderType(bool type);
+        void setMjpegCopy(bool bCopy);
 
         HwDecoder* mDecoder;
         uint64_t mDecedFrames = 0;
@@ -249,9 +257,6 @@ public:
         std::unordered_map<Size, std::shared_ptr<AllocatedFrame>, SizeHasher> mScaledYu12Frames;
         YCbCrLayout mYu12FrameLayout;
         YCbCrLayout mYu12ThumbFrameLayout;
-        std::shared_ptr<AllocatedFrame> mI420Frame; // If media buffer format (mYu12Frame) is NV12,
-                                                    // convert to I420, then encode jpeg.
-        YCbCrLayout mI420FrameLayout;
         std::vector<uint8_t> mMuteTestPatternFrame;
         uint32_t mTestPatternData[4] = {0, 0, 0, 0};
         bool mCameraMuted = false;
@@ -263,6 +268,7 @@ public:
         std::string mExifModel;
 
         bool mHardwareDecoder;
+        bool mMjpgCopy;
         bool mDebug;
         uint32_t mInterBufFormat = V4L2_PIX_FMT_NV12;
 
@@ -287,9 +293,9 @@ private:
     // To init/close different version of output thread
     void initOutputThread();
     void closeOutputThread();
-    void closeOutputThreadImpl();
+    void closeBufferRequestThread();
 
-    void close(bool callerIsDtor);
+    void closeImpl();
     Status initStatus() const;
     status_t initDefaultRequests();
 
@@ -435,6 +441,7 @@ private:
     std::string mExifMake;
     std::string mExifModel;
     bool mHardwareDecoder;
+    bool mMjpgCopy;
     bool mUseHalBufManager = false;
 
     /* End of members not changed after initialize() */

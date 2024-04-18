@@ -1,5 +1,5 @@
 /*
- * Copyright 2023 NXP
+ * Copyright 2023-2024 NXP
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,8 +16,7 @@
 
 #include "DummyClient.h"
 
-#include <gralloc_handle.h>
-
+#include "BufferInfo.h"
 #include "Common.h"
 #include "DeviceComposer.h"
 #include "Drm.h"
@@ -51,7 +50,7 @@ HWC3::Error DummyClient::init(char* path, uint32_t* baseId) {
 
     mConfigs->emplace(mActiveConfigId, newConfig);
 
-    uint32_t format = FORMAT_RGBA8888;
+    uint32_t format = static_cast<uint32_t>(common::PixelFormat::RGBA_8888);
     ALOGI("Dummy Client used, only support one display\n"
           "Display Id   = %d \n"
           "configId     = %d \n"
@@ -86,15 +85,16 @@ HWC3::Error DummyClient::getDisplayConfigs(std::vector<HalMultiConfigs>* configs
 }
 
 std::tuple<HWC3::Error, std::shared_ptr<DrmBuffer>> DummyClient::create(
-        const native_handle_t* handle, common::Rect displayFrame, common::Rect sourceCrop) {
-    gralloc_handle_t memHandle = (gralloc_handle_t)handle;
-    if (memHandle == nullptr) {
-        ALOGE("%s: invalid gralloc_handle", __FUNCTION__);
-        return std::make_tuple(HWC3::Error::NoResources, nullptr);
+        const native_handle_t* handle, common::Rect displayFrame, common::Rect sourceCrop,
+        BufferType type) {
+    HandleInfo info;
+    if (handle == nullptr || (getInfoFromHandle(handle, &info) != 0)) {
+        ALOGE("%s: invalid native handle", __FUNCTION__);
+        return std::make_tuple(HWC3::Error::BadParameter, nullptr);
     }
 
     auto buffer = std::shared_ptr<DrmBuffer>(new DrmBuffer(*this));
-    buffer->mBufferAddress = memHandle->phys;
+    buffer->mBufferAddress = info.phys;
     DEBUG_LOG("%s: get framebuffer address 0x%" PRIx64, __FUNCTION__, *buffer->mBufferAddress);
 
     return std::make_tuple(HWC3::Error::None, std::move(buffer));
@@ -114,7 +114,7 @@ std::tuple<HWC3::Error, ::android::base::unique_fd> DummyClient::flushToDisplay(
 std::tuple<HWC3::Error, buffer_handle_t> DummyClient::getComposerTarget(
         std::shared_ptr<DeviceComposer> composer, int displayId, bool secure) {
     if (mComposerTargets.size() > 0) {
-        if (++mTargetIndex >= MAX_COMPOSER_TARGETS_PER_DISPLAY) {
+        if (++mTargetIndex >= mMaxComposerTargetsPerDisplay) {
             mTargetIndex = 0;
         }
         DEBUG_LOG("%s: get pre-allocated %s buffer:%d", __FUNCTION__,
@@ -125,16 +125,12 @@ std::tuple<HWC3::Error, buffer_handle_t> DummyClient::getComposerTarget(
     uint32_t width = DUMMY_DISPLAY_WIDTH;
     uint32_t height = DUMMY_DISPLAY_HEIGHT;
     uint32_t format = static_cast<int>(common::PixelFormat::RGBA_8888);
-    gralloc_handle_t bufferHandles[MAX_COMPOSER_TARGETS_PER_DISPLAY];
-    auto ret = composer->prepareDeviceFrameBuffer(width, height, format, bufferHandles,
-                                                  MAX_COMPOSER_TARGETS_PER_DISPLAY, false);
+    mComposerTargets.reserve(mMaxComposerTargetsPerDisplay);
+    auto ret = composer->prepareDeviceFrameBuffer(width, height, format, mComposerTargets,
+                                                  mMaxComposerTargetsPerDisplay, false);
     if (ret) {
         ALOGE("%s: create framebuffer failed", __FUNCTION__);
         return std::make_tuple(HWC3::Error::NoResources, nullptr);
-    }
-
-    for (int i = 0; i < MAX_COMPOSER_TARGETS_PER_DISPLAY; i++) {
-        mComposerTargets.push_back(bufferHandles[i]);
     }
 
     mTargetIndex = 0;

@@ -63,7 +63,8 @@ private:
     int ConvertImageByDPU(ImxImageBuffer& dstBuf, ImxImageBuffer& srcBuf);
     int ConvertImageByGPU_2D(ImxImageBuffer& dstBuf, ImxImageBuffer& srcBuf);
     int ConvertImageByG2D(ImxImageBuffer& dstBuf, ImxImageBuffer& srcBuf, ImxEngine engine);
-    void convertYUYVtoNV12SP(uint8_t* inputBuffer, uint8_t* outputBuffer, int width, int height);
+    void convertYUYVtoNV12SP(uint8_t* inputBuffer, uint8_t* outputBuffer, int width, int height,
+                             int srcStride, int dstStride);
     void convertNV12toYV12(uint8_t* inputBuffer, uint8_t* outputBuffer, int width, int height);
     int resizeWrapper(ImxImageBuffer& src, ImxImageBuffer& dst, ImxEngine engine);
 
@@ -77,6 +78,7 @@ private:
     int openEngine(void** handle);
     int closeEngine(void* handle);
     void getModule(char* path, const char* name);
+    bool getDefaultG2DLib(char *libName, int size);
 
 private:
     ImageProcess();
@@ -115,6 +117,8 @@ private:
     hwc_func1 mCLFlush;
     hwc_func1 mCLFinish;
     Mutex mCLLock;
+
+    bool mbVIVG2D;
 };
 
 } // namespace fsl

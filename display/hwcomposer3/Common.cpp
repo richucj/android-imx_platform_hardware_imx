@@ -1,6 +1,6 @@
 /*
  * Copyright 2022 The Android Open Source Project
- * Copyright 2023 NXP
+ * Copyright 2023-2024 NXP
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -37,9 +37,11 @@ bool IsOverlayUserDisabled() {
 }
 
 bool Is2DCompositionUserDisabled() {
-    const std::string g2d = ::android::base::GetProperty("vendor.sys.hwc.disable", "0");
-    DEBUG_LOG("%s: sysprop vendor.sys.hwc.disable is %s", __FUNCTION__, g2d.c_str());
-    return g2d == "1";
+    const std::string disable = ::android::base::GetProperty("vendor.sys.hwc.disable", "0");
+    DEBUG_LOG("%s: sysprop vendor.sys.hwc.disable is %s", __FUNCTION__, disable.c_str());
+    const std::string dpu = ::android::base::GetProperty("ro.boot.dpu_composition", "");
+    DEBUG_LOG("%s: sysprop ro.boot.dpu_composition is %s", __FUNCTION__, dpu.c_str());
+    return (disable == "1") || (dpu == "0");
 }
 
 bool Is2DCompositionUserPrefered() {
@@ -316,11 +318,16 @@ static void dump_frame(char *pbuf, int width, int height, int size) {
 }
 
 void debug_dump_frame(buffer_handle_t handle) {
-    gralloc_handle_t buffer = (gralloc_handle_t)handle;
-    if (buffer->base == 0) {
+    HandleInfo info;
+    if (handle == nullptr || (getInfoFromHandle(handle, &info) != 0)) {
+        ALOGE("%s: invalid native handle", __FUNCTION__);
+        return;
+    }
+
+    if (info.base == 0) {
         void *vaddr = NULL;
-        int usage = buffer->usage | USAGE_SW_READ_OFTEN;
-        const ::android::Rect rect{0, 0, buffer->width, buffer->height};
+        int usage = info.usage | USAGE_SW_READ_OFTEN;
+        const ::android::Rect rect{0, 0, info.width, info.height};
         ::android::status_t err =
                 ::android::GraphicBufferMapper::get().lock(const_cast<native_handle_t *>(handle),
                                                            usage, rect, &vaddr);
@@ -329,7 +336,7 @@ void debug_dump_frame(buffer_handle_t handle) {
             return;
         }
 
-        dump_frame((char *)vaddr, buffer->width, buffer->height, buffer->size);
+        dump_frame((char *)vaddr, info.width, info.height, info.size);
 
         err = ::android::GraphicBufferMapper::get().unlock(buffer);
         if (err) {
@@ -337,7 +344,7 @@ void debug_dump_frame(buffer_handle_t handle) {
             return;
         }
     } else {
-        dump_frame((char *)buffer->base, buffer->width, buffer->height, buffer->size);
+        dump_frame((char *)info.base, info.width, info.height, info.size);
     }
 }
 #endif

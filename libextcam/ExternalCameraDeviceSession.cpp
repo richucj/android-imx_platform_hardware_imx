@@ -186,6 +186,12 @@ bool ExternalCameraDeviceSession::initialize() {
         mHardwareDecoder = false;
     }
 
+    if (GetProperty(kCameraMjpegCopy, "true") == "true") {
+        mMjpgCopy = true;
+    } else {
+        mMjpgCopy = false;
+    }
+
     struct v4l2_capability capability;
     int ret = ioctl(mV4l2Fd.get(), VIDIOC_QUERYCAP, &capability);
     std::string make, model;
@@ -225,6 +231,7 @@ bool ExternalCameraDeviceSession::initialize() {
     }
 
     mOutputThread->setMjpegDecoderType(mHardwareDecoder);
+    mOutputThread->setMjpegCopy(mMjpgCopy);
     mOutputThread->setExifMakeModel(mExifMake, mExifModel);
 
     status_t status = initDefaultRequests();
@@ -281,15 +288,6 @@ void ExternalCameraDeviceSession::initOutputThread() {
 }
 
 void ExternalCameraDeviceSession::closeOutputThread() {
-    closeOutputThreadImpl();
-}
-
-void ExternalCameraDeviceSession::closeOutputThreadImpl() {
-    if (mBufferRequestThread != nullptr) {
-        mBufferRequestThread->requestExitAndWait();
-        mBufferRequestThread.reset();
-    }
-
     if (mOutputThread != nullptr) {
         mOutputThread->flush();
         mOutputThread->requestExitAndWait();
@@ -301,6 +299,13 @@ void ExternalCameraDeviceSession::closeOutputThreadImpl() {
         }
 
         mOutputThread.reset();
+    }
+}
+
+void ExternalCameraDeviceSession::closeBufferRequestThread() {
+    if (mBufferRequestThread != nullptr) {
+        mBufferRequestThread->requestExitAndWait();
+        mBufferRequestThread.reset();
     }
 }
 
@@ -317,7 +322,7 @@ Status ExternalCameraDeviceSession::initStatus() const {
 ExternalCameraDeviceSession::~ExternalCameraDeviceSession() {
     if (!isClosed()) {
         ALOGE("ExternalCameraDeviceSession deleted before close!");
-        close(/*callerIsDtor*/ true);
+        closeImpl();
     }
 }
 
@@ -493,16 +498,23 @@ ScopedAStatus ExternalCameraDeviceSession::configureStreams(
         return fromStatus(status);
     }
 
+    char socType[128] = {0};
+    property_get("ro.boot.soc_type", socType, "");
+    int64_t flagBufferUsage = 0;
     std::vector<HalStream>& out = *_aidl_return;
     out.resize(in_requestedConfiguration.streams.size());
     for (size_t i = 0; i < in_requestedConfiguration.streams.size(); i++) {
         out[i].overrideDataSpace = in_requestedConfiguration.streams[i].dataSpace;
         out[i].id = in_requestedConfiguration.streams[i].id;
         // TODO: double check should we add those CAMERA flags
+        flagBufferUsage = ((int64_t)in_requestedConfiguration.streams[i].usage) |
+                ((int64_t)BufferUsage::CPU_WRITE_OFTEN) | ((int64_t)BufferUsage::CAMERA_OUTPUT);
+
+        if (strcmp(socType, "imx95") == 0) {
+            flagBufferUsage |= GRALLOC_USAGE_PRIVATE_3;
+        }
         mStreamMap[in_requestedConfiguration.streams[i].id].usage = out[i].producerUsage =
-                static_cast<BufferUsage>(((int64_t)in_requestedConfiguration.streams[i].usage) |
-                                         ((int64_t)BufferUsage::CPU_WRITE_OFTEN) |
-                                         ((int64_t)BufferUsage::CAMERA_OUTPUT));
+                static_cast<BufferUsage>(flagBufferUsage);
         out[i].consumerUsage = static_cast<BufferUsage>(0);
         out[i].maxBuffers = static_cast<int32_t>(mV4L2BufferCount);
 
@@ -864,9 +876,9 @@ Status ExternalCameraDeviceSession::switchToOffline(
                 outputBuffer.bufferId = buffer.bufferId;
                 outputBuffer.status = BufferStatus::ERROR;
                 if (buffer.acquireFence >= 0) {
-                    native_handle_t* handle = native_handle_create(/*numFds*/ 1, /*numInts*/ 0);
-                    handle->data[0] = buffer.acquireFence;
-                    outputBuffer.releaseFence = android::makeToAidl(handle);
+                    outputBuffer.releaseFence.fds.resize(1);
+                    outputBuffer.releaseFence.fds.at(0).set(buffer.acquireFence);
+
                 }
             } else {
                 offlineBuffers.push_back(buffer);
@@ -1549,19 +1561,16 @@ Status ExternalCameraDeviceSession::importBufferLocked(int32_t streamId, uint64_
 }
 
 ScopedAStatus ExternalCameraDeviceSession::close() {
-    close(false);
+    closeImpl();
     return fromStatus(Status::OK);
 }
 
-void ExternalCameraDeviceSession::close(bool callerIsDtor) {
+void ExternalCameraDeviceSession::closeImpl() {
     Mutex::Autolock _il(mInterfaceLock);
     bool closed = isClosed();
     if (!closed) {
-        if (callerIsDtor) {
-            closeOutputThreadImpl();
-        } else {
-            closeOutputThread();
-        }
+        closeOutputThread();
+        closeBufferRequestThread();
 
         Mutex::Autolock _l(mLock);
         // free all buffers
@@ -1906,9 +1915,8 @@ Status ExternalCameraDeviceSession::processCaptureRequestError(
         result.outputBuffers[i].bufferId = req->buffers[i].bufferId;
         result.outputBuffers[i].status = BufferStatus::ERROR;
         if (req->buffers[i].acquireFence >= 0) {
-            native_handle_t* handle = native_handle_create(/*numFds*/ 1, /*numInts*/ 0);
-            handle->data[0] = req->buffers[i].acquireFence;
-            result.outputBuffers[i].releaseFence = ::android::makeToAidl(handle);
+            result.outputBuffers[i].releaseFence.fds.resize(1);
+            result.outputBuffers[i].releaseFence.fds.at(0).set(req->buffers[i].acquireFence);
         }
     }
 
@@ -1952,18 +1960,16 @@ Status ExternalCameraDeviceSession::processCaptureResult(std::shared_ptr<HalRequ
         if (req->buffers[i].fenceTimeout) {
             result.outputBuffers[i].status = BufferStatus::ERROR;
             if (req->buffers[i].acquireFence >= 0) {
-                native_handle_t* handle = native_handle_create(/*numFds*/ 1, /*numInts*/ 0);
-                handle->data[0] = req->buffers[i].acquireFence;
-                result.outputBuffers[i].releaseFence = ::android::makeToAidl(handle);
+                result.outputBuffers[i].releaseFence.fds.resize(1);
+                result.outputBuffers[i].releaseFence.fds.at(0).set(req->buffers[i].acquireFence);
             }
             notifyError(req->frameNumber, req->buffers[i].streamId, ErrorCode::ERROR_BUFFER);
         } else {
             result.outputBuffers[i].status = BufferStatus::OK;
             // TODO: refactor
             if (req->buffers[i].acquireFence >= 0) {
-                native_handle_t* handle = native_handle_create(/*numFds*/ 1, /*numInts*/ 0);
-                handle->data[0] = req->buffers[i].acquireFence;
-                result.outputBuffers[i].releaseFence = ::android::makeToAidl(handle);
+                result.outputBuffers[i].releaseFence.fds.resize(1);
+                result.outputBuffers[i].releaseFence.fds.at(0).set(req->buffers[i].acquireFence);
             }
         }
     }
@@ -2319,35 +2325,25 @@ Status ExternalCameraDeviceSession::OutputThread::allocateIntermediateBuffers(
             ALOGI("%s: mYu12Frame size %ux%u, format 0x%x", __func__, mYu12Frame->mWidth,
                 mYu12Frame->mHeight, mYu12Frame->mFourcc);
         }
-
-        if (mInterBufFormat == V4L2_PIX_FMT_NV12) {
-            mI420Frame.reset();
-            if (mHardwareDecoder && parent->getHardwareDecFlag())
-                mI420Frame = std::make_shared<AllocatedFramePhyMem>(v4lSize.width, v4lSize.height,
-                                                                    V4L2_PIX_FMT_YUV420);
-            else
-                mI420Frame = std::make_shared<AllocatedFrame>(v4lSize.width, v4lSize.height,
-                                                              V4L2_PIX_FMT_YUV420);
-
-            int ret = mI420Frame->allocate(&mI420FrameLayout);
-            if (ret != 0) {
-                ALOGE("%s: allocating I420 frame failed!", __FUNCTION__);
-                return Status::INTERNAL_ERROR;
-            }
-        }
-
     }
 
     // Allocating intermediate YU12 thumbnail frame
     if (mYu12ThumbFrame == nullptr || mYu12ThumbFrame->mWidth != thumbSize.width ||
         mYu12ThumbFrame->mHeight != thumbSize.height) {
         mYu12ThumbFrame.reset();
-        mYu12ThumbFrame =
-                std::make_shared<AllocatedFrame>(thumbSize.width, thumbSize.height, format);
-        int ret = mYu12ThumbFrame->allocate(&mYu12ThumbFrameLayout);
-        if (ret != 0) {
-            ALOGE("%s: allocating YU12 thumb frame failed!", __FUNCTION__);
-            return Status::INTERNAL_ERROR;
+
+        if (mHardwareDecoder && parent->getHardwareDecFlag())
+            ALOGI("%s: mYu12ThumbFrame will allocate after haredware decode", __func__);
+        else
+            mYu12ThumbFrame =
+                    std::make_shared<AllocatedFrame>(thumbSize.width, thumbSize.height, format);
+
+        if (mYu12ThumbFrame) {
+            int ret = mYu12ThumbFrame->allocate(&mYu12ThumbFrameLayout);
+            if (ret != 0) {
+               ALOGE("%s: allocating YU12 thumb frame failed!", __FUNCTION__);
+               return Status::INTERNAL_ERROR;
+            }
         }
     }
 
@@ -2465,9 +2461,12 @@ void ExternalCameraDeviceSession::OutputThread::setMjpegDecoderType(bool type) {
     mHardwareDecoder = type;
 }
 
+void ExternalCameraDeviceSession::OutputThread::setMjpegCopy(bool bCopy) {
+    mMjpgCopy = bCopy;
+}
+
 int ExternalCameraDeviceSession::OutputThread::initVpuThread() {
-    const char* mime = "video/x-motion-jpeg";
-    mDecoder = new HwDecoder(mime);
+    mDecoder = new HwDecoder();
     if (!mDecoder) {
         ALOGE("%s: Create HwDecoder Instance for MJPEG failed \n", __FUNCTION__);
         return -errno;
@@ -2501,6 +2500,8 @@ int ExternalCameraDeviceSession::OutputThread::initVpuThread() {
         mEngine = ENG_DPU;
     else if (strcmp(socType, "imx8mq") == 0)
         mEngine = ENG_G3D;
+    else if (strcmp(socType, "imx95") == 0)
+        mEngine = ENG_CPU;
     else
         mEngine = ENG_NOTCARE;
 
@@ -2816,14 +2817,46 @@ int ExternalCameraDeviceSession::OutputThread::cropAndScaleThumbLocked(
         return ret;
     }
 
-    ret = libyuv::I420Scale(static_cast<uint8_t*>(inputLayout.y), inputLayout.yStride,
-                            static_cast<uint8_t*>(inputLayout.cb), inputLayout.cStride,
-                            static_cast<uint8_t*>(inputLayout.cr), inputLayout.cStride,
-                            inputCrop.width, inputCrop.height,
-                            static_cast<uint8_t*>(outFullLayout.y), outFullLayout.yStride,
-                            static_cast<uint8_t*>(outFullLayout.cb), outFullLayout.cStride,
-                            static_cast<uint8_t*>(outFullLayout.cr), outFullLayout.cStride,
-                            outSz.width, outSz.height, libyuv::FilterMode::kFilterNone);
+    if (in->mFourcc == V4L2_PIX_FMT_YUV420)
+        ret = libyuv::I420Scale(static_cast<uint8_t*>(inputLayout.y), inputLayout.yStride,
+                                static_cast<uint8_t*>(inputLayout.cb), inputLayout.cStride,
+                                static_cast<uint8_t*>(inputLayout.cr), inputLayout.cStride,
+                                inputCrop.width, inputCrop.height,
+                                static_cast<uint8_t*>(outFullLayout.y), outFullLayout.yStride,
+                                static_cast<uint8_t*>(outFullLayout.cb), outFullLayout.cStride,
+                                static_cast<uint8_t*>(outFullLayout.cr), outFullLayout.cStride,
+                                outSz.width, outSz.height, libyuv::FilterMode::kFilterNone);
+    else if (in->mFourcc == V4L2_PIX_FMT_NV12)
+        ret = libyuv::NV12Scale(static_cast<uint8_t*>(inputLayout.y), inputLayout.yStride,
+                                static_cast<uint8_t*>(inputLayout.cb), inputLayout.cStride,
+                                inputCrop.width, inputCrop.height,
+                                static_cast<uint8_t*>(outFullLayout.y), outFullLayout.yStride,
+                                static_cast<uint8_t*>(outFullLayout.cb), outFullLayout.cStride,
+                                outSz.width, outSz.height, libyuv::FilterMode::kFilterNone);
+    else if ((in->mFourcc == V4L2_PIX_FMT_NV16) || (in->mFourcc == V4L2_PIX_FMT_YUYV)) {
+        uint64_t outPhy = 0;
+        uint8_t* outVirt = NULL;
+        size_t outSize = 0;
+        uint64_t inPhy = 0;
+        uint8_t* inVirt = NULL;
+        size_t inSize = 0;
+
+        mYu12ThumbFrame->getPhyAddr(outPhy);
+        mYu12ThumbFrame->getData(&outVirt, &outSize);
+        in->getPhyAddr(inPhy);
+        in->getData(&inVirt, &inSize);
+
+        ALOGI("%s: fmt 0x%x, outPhy 0x%llx, outVirt %p, outSize %d, inPhy 0x%llx, inVirt %p, inSize %d",
+              __func__, in->mFourcc, (unsigned long long)outPhy, outVirt, (int)outSize,
+              (unsigned long long)inPhy, inVirt, (int)inSize);
+
+        ret = handleFrame(outSz.width, outSz.height, in->mFourcc, mYu12ThumbFrame->mFourcc, outPhy,
+                          inPhy, in->mWidth, in->mHeight, in->mWidth, outSz.width, (void*)inVirt,
+                          (void*)outVirt);
+    } else {
+        ALOGW("%s: unsupported v4l2 format 0x%x", __func__, in->mFourcc);
+        return -1;
+    }
 
     if (ret != 0) {
         ALOGE("%s: failed to scale buffer from %dx%d to %dx%d. Ret %d", __FUNCTION__,
@@ -2938,27 +2971,9 @@ int ExternalCameraDeviceSession::OutputThread::createJpegLocked(
     /* Temporary thumbnail code buffer */
     std::vector<uint8_t> thumbCode(outputThumbnail ? maxThumbCodeSize : 0);
 
-    if (mInterBufFormat == V4L2_PIX_FMT_NV12) {
-        libyuv::NV12ToI420(static_cast<uint8_t*>(mYu12FrameLayout.y),
-                           static_cast<int32_t>(mYu12FrameLayout.yStride),
-                           static_cast<uint8_t*>(mYu12FrameLayout.cb),
-                           static_cast<int32_t>(mYu12FrameLayout.cStride),
-                           static_cast<uint8_t*>(mI420FrameLayout.y),
-                           static_cast<int32_t>(mI420FrameLayout.yStride),
-                           static_cast<uint8_t*>(mI420FrameLayout.cb),
-                           static_cast<int32_t>(mI420FrameLayout.cStride),
-                           static_cast<uint8_t*>(mI420FrameLayout.cr),
-                           static_cast<int32_t>(mI420FrameLayout.cStride),
-                           static_cast<int32_t>(mYu12Frame->mWidth),
-                           static_cast<int32_t>(mYu12Frame->mHeight));
-    }
-
     YCbCrLayout yu12Thumb;
     if (outputThumbnail) {
-        if (mInterBufFormat == V4L2_PIX_FMT_YUV420)
-            ret = cropAndScaleThumbLocked(mYu12Frame, thumbSize, &yu12Thumb);
-        else
-            ret = cropAndScaleThumbLocked(mI420Frame, thumbSize, &yu12Thumb);
+        ret = cropAndScaleThumbLocked(mYu12Frame, thumbSize, &yu12Thumb);
 
         if (ret != 0) {
             return lfail("%s: crop and scale thumbnail failed!", __FUNCTION__);
@@ -2966,10 +2981,7 @@ int ExternalCameraDeviceSession::OutputThread::createJpegLocked(
     }
 
     /* Scale and crop main jpeg */
-    if (mInterBufFormat == V4L2_PIX_FMT_YUV420)
-        ret = cropAndScaleLocked(mYu12Frame, jpegSize, &yu12Main);
-    else
-        ret = cropAndScaleLocked(mI420Frame, jpegSize, &yu12Main);
+    ret = cropAndScaleLocked(mYu12Frame, jpegSize, &yu12Main);
 
     if (ret != 0) {
         return lfail("%s: crop and scale main failed!", __FUNCTION__);
@@ -2977,11 +2989,11 @@ int ExternalCameraDeviceSession::OutputThread::createJpegLocked(
 
     /* Encode the thumbnail image */
     if (outputThumbnail) {
-        ret = encodeJpegYU12(thumbSize, yu12Thumb, thumbQuality, 0, 0, &thumbCode[0],
-                             maxThumbCodeSize, thumbCodeSize);
+        ret = encodeJpeg(mYu12Frame->mFourcc, thumbSize, yu12Thumb, thumbQuality, 0, 0,
+                         &thumbCode[0], maxThumbCodeSize, thumbCodeSize);
 
         if (ret != 0) {
-            return lfail("%s: thumbnail encodeJpegYU12 failed with %d", __FUNCTION__, ret);
+            return lfail("%s: thumbnail encodeJpeg failed with %d", __FUNCTION__, ret);
         }
     }
 
@@ -3018,8 +3030,8 @@ int ExternalCameraDeviceSession::OutputThread::createJpegLocked(
     }
 
     /* Encode the main jpeg image */
-    ret = encodeJpegYU12(jpegSize, yu12Main, jpegQuality, exifData, exifDataSize, bufPtr,
-                         maxJpegCodeSize, jpegCodeSize);
+    ret = encodeJpeg(mYu12Frame->mFourcc, jpegSize, yu12Main, jpegQuality, exifData, exifDataSize,
+                     bufPtr, maxJpegCodeSize, jpegCodeSize);
 
     /* TODO: Not sure this belongs here, maybe better to pass jpegCodeSize out
      * and do this when returning buffer to parent */
@@ -3036,7 +3048,7 @@ int ExternalCameraDeviceSession::OutputThread::createJpegLocked(
 
     /* Check if our JPEG actually succeeded */
     if (ret != 0) {
-        return lfail("%s: encodeJpegYU12 failed with %d", __FUNCTION__, ret);
+        return lfail("%s: encodeJpeg failed with %d", __FUNCTION__, ret);
     }
 
     ALOGV("%s: encoded JPEG (ret:%d) with Q:%d max size: %zu", __FUNCTION__, ret, jpegQuality,
@@ -3048,7 +3060,6 @@ int ExternalCameraDeviceSession::OutputThread::createJpegLocked(
 void ExternalCameraDeviceSession::OutputThread::clearIntermediateBuffers() {
     std::lock_guard<std::mutex> lk(mBufferLock);
     mYu12Frame.reset();
-    mI420Frame.reset();
     mYu12ThumbFrame.reset();
     mIntermediateBuffers.clear();
     mMuteTestPatternFrame.clear();
@@ -3097,6 +3108,14 @@ int pixel_format_nv16_to_nv12(uint8_t* nv16_buff, uint8_t* nv12_buff, int w, int
 int ExternalCameraDeviceSession::OutputThread::VpuDecGetBuffer(uint8_t* inData, size_t inDataSize) {
     if ((inData == NULL) || (inDataSize == 0))
         return BAD_VALUE;
+
+    auto parent = mParent.lock();
+    if (parent == nullptr) {
+        ALOGE("%s: session has been disconnected!", __FUNCTION__);
+        return BAD_VALUE;
+    }
+
+    Size thumbSize = parent->getMaxThumbSize();
 
     std::unique_ptr<DecoderInputBuffer> inputbuf = std::make_unique<DecoderInputBuffer>();
     inputbuf->pInBuffer = inData;
@@ -3160,6 +3179,21 @@ int ExternalCameraDeviceSession::OutputThread::VpuDecGetBuffer(uint8_t* inData, 
 
     dumpStream((uint8_t*)vaddr, size, 1);
 
+    // Allocating intermediate YU12 thumbnail frame
+    if (mYu12ThumbFrame == nullptr || mYu12ThumbFrame->mWidth != thumbSize.width ||
+        mYu12ThumbFrame->mHeight != thumbSize.height) {
+        mYu12ThumbFrame.reset();
+
+        mYu12ThumbFrame =
+                std::make_shared<AllocatedFramePhyMem>(thumbSize.width, thumbSize.height, fourcc);
+
+        int ret = mYu12ThumbFrame->allocate(&mYu12ThumbFrameLayout);
+        if (ret != 0) {
+            ALOGE("%s: allocating YU12 thumb frame failed!", __FUNCTION__);
+            return BAD_VALUE;
+        }
+    }
+
     return 0;
 }
 
@@ -3188,9 +3222,33 @@ int ExternalCameraDeviceSession::OutputThread::CopyFromPrcdBuf(HalStreamBuffer &
 
         Size sz{halBuf.width, halBuf.height};
 
-        IMapper::Rect outRect{0, 0, static_cast<int32_t>(halBuf.width), static_cast<int32_t>(halBuf.height)};
-        YCbCrLayout outLayout = sHandleImporter.lockYCbCr(*(halBuf.bufPtr), static_cast<uint64_t>(halBuf.usage), outRect);
-        YCbCrLayout prcdOutLayout = sHandleImporter.lockYCbCr(*(prcdBuf->bufPtr), static_cast<uint64_t>(prcdBuf->usage), outRect);
+        android::Rect outRect{0, 0, static_cast<int32_t>(halBuf.width), static_cast<int32_t>(halBuf.height)};
+        android_ycbcr result = sHandleImporter.lockYCbCr(*(halBuf.bufPtr), static_cast<uint64_t>(halBuf.usage), outRect);
+        if (result.ystride > UINT32_MAX || result.cstride > UINT32_MAX ||
+            result.chroma_step > UINT32_MAX) {
+            ALOGE("%s: lockYCbCr failed. Unexpected values!", __FUNCTION__);
+            return ret;
+        }
+        YCbCrLayout outLayout = {.y = result.y,
+                                 .cb = result.cb,
+                                 .cr = result.cr,
+                                 .yStride = static_cast<uint32_t>(result.ystride),
+                                 .cStride = static_cast<uint32_t>(result.cstride),
+                                 .chromaStep = static_cast<uint32_t>(result.chroma_step)};
+
+        result = sHandleImporter.lockYCbCr(*(prcdBuf->bufPtr), static_cast<uint64_t>(prcdBuf->usage), outRect);
+        if (result.ystride > UINT32_MAX || result.cstride > UINT32_MAX ||
+            result.chroma_step > UINT32_MAX) {
+            ALOGE("%s: lockYCbCr failed. Unexpected values!", __FUNCTION__);
+            return ret;
+        }
+        YCbCrLayout prcdOutLayout = {.y = result.y,
+                                 .cb = result.cb,
+                                 .cr = result.cr,
+                                 .yStride = static_cast<uint32_t>(result.ystride),
+                                 .cStride = static_cast<uint32_t>(result.cstride),
+                                 .chromaStep = static_cast<uint32_t>(result.chroma_step)};
+
         uint32_t outputFourcc = getFourCcFromLayout(outLayout);
 
         formatConvert(prcdOutLayout, outLayout, sz, outputFourcc, outputFourcc);
@@ -3237,7 +3295,7 @@ int ExternalCameraDeviceSession::OutputThread::handleFrame(uint32_t dstWidth, ui
     else if (srcHeight == 128)
         srcValidHeight = 120;
 
-    if (srcWidth == 432) {
+    if (srcWidth == 432 && dstWidth == 424) {
         srcValidWidth = 424;
     }
 
@@ -3516,7 +3574,8 @@ bool ExternalCameraDeviceSession::OutputThread::threadLoop() {
         // Gralloc lockYCbCr the buffer
         switch (halBuf.format) {
             case PixelFormat::BLOB: {
-                if (req->frameIn->mFourcc == V4L2_PIX_FMT_MJPEG) {
+                if ((req->frameIn->mFourcc == V4L2_PIX_FMT_MJPEG) && mMjpgCopy) {
+                    ALOGI("take photo, directly copy MJPEG");
                     void* outLayout = sHandleImporter.lock(*(halBuf.bufPtr), (uint64_t)halBuf.usage,
                                                            inDataSize);
                     std::memcpy(outLayout, inData, inDataSize);
@@ -3527,6 +3586,7 @@ bool ExternalCameraDeviceSession::OutputThread::threadLoop() {
                     }
                 } else {
                     // TODO: add nv12 as jpeg source
+                    ALOGI("take photo, call createJpegLocked");
                     int ret = createJpegLocked(halBuf, req->setting);
                     if (ret != 0) {
                         if (mHardwareDecoder && parent->getHardwareDecFlag())
@@ -3558,14 +3618,24 @@ bool ExternalCameraDeviceSession::OutputThread::threadLoop() {
                 if (ret == 0)
                     continue;
 
-                IMapper::Rect outRect{0, 0, static_cast<int32_t>(halBuf.width),
+                android::Rect outRect{0, 0, static_cast<int32_t>(halBuf.width),
                                       static_cast<int32_t>(halBuf.height)};
-                YCbCrLayout outLayout =
+                android_ycbcr result =
                         sHandleImporter.lockYCbCr(*(halBuf.bufPtr),
                                                   static_cast<uint64_t>(halBuf.usage), outRect);
-                ALOGV("%s: outLayout y %p cb %p cr %p y_str %d c_str %d c_step %d", __FUNCTION__,
-                      outLayout.y, outLayout.cb, outLayout.cr, outLayout.yStride, outLayout.cStride,
-                      outLayout.chromaStep);
+                ALOGV("%s: outLayout y %p cb %p cr %p y_str %zu c_str %zu c_step %zu", __FUNCTION__,
+                      result.y, result.cb, result.cr, result.ystride, result.cstride,
+                      result.chroma_step);
+                if (result.ystride > UINT32_MAX || result.cstride > UINT32_MAX ||
+                    result.chroma_step > UINT32_MAX) {
+                    return onDeviceError("%s: lockYCbCr failed. Unexpected values!", __FUNCTION__);
+                }
+                YCbCrLayout outLayout = {.y = result.y,
+                                         .cb = result.cb,
+                                         .cr = result.cr,
+                                         .yStride = static_cast<uint32_t>(result.ystride),
+                                         .cStride = static_cast<uint32_t>(result.cstride),
+                                         .chromaStep = static_cast<uint32_t>(result.chroma_step)};
 
                 // Convert to output buffer size/format
                 uint32_t outputFourcc = getFourCcFromLayout(outLayout);
@@ -3629,8 +3699,13 @@ bool ExternalCameraDeviceSession::OutputThread::threadLoop() {
                     IMXGetBufferAddr(fslMem->fd, fslMem->size, dstPhyAddr, false);
                     ALOGV("%s: fslMem, fd %d, size %d, width %d, height %d, format 0x%x", __func__, fslMem->fd, fslMem->size, fslMem->width, fslMem->height, fslMem->format);
 
-                    fcret = handleFrame(halBuf.width, halBuf.height, outputFourcc, mYu12Frame->mFourcc, dstPhyAddr,
-                               scaledPhyAddr, scaledWidth, scaledHeight, scaledWidth, outLayout.yStride);
+                    uint8_t* outData;
+                    size_t dataSize;
+                    mYu12Frame->getData(&outData, &dataSize);
+                    fcret = handleFrame(halBuf.width, halBuf.height, outputFourcc,
+                                        mYu12Frame->mFourcc, dstPhyAddr, scaledPhyAddr, scaledWidth,
+                                        scaledHeight, scaledWidth, outLayout.yStride, outData,
+                                        (uint8_t*)outLayout.y);
                 } else {
                     fcret =
                         formatConvert(cropAndScaled, outLayout, sz, outputFourcc, mInterBufFormat);

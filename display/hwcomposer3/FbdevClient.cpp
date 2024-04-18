@@ -1,6 +1,6 @@
 /*
  * Copyright 2022 The Android Open Source Project
- * Copyright 2023 NXP
+ * Copyright 2023-2024 NXP
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -17,10 +17,10 @@
 
 #include "FbdevClient.h"
 
-#include <gralloc_handle.h>
 #include <linux/fb.h>
 #include <linux/mxcfb.h>
 
+#include "BufferInfo.h"
 #include "Common.h"
 #include "Drm.h"
 
@@ -108,15 +108,16 @@ bool FbdevClient::loadFbdevDisplays(uint32_t displayBaseId) {
 }
 
 std::tuple<HWC3::Error, std::shared_ptr<DrmBuffer>> FbdevClient::create(
-        const native_handle_t* handle, common::Rect displayFrame, common::Rect sourceCrop) {
-    gralloc_handle_t memHandle = (gralloc_handle_t)handle;
-    if (memHandle == nullptr) {
-        ALOGE("%s: invalid gralloc_handle", __FUNCTION__);
-        return std::make_tuple(HWC3::Error::NoResources, nullptr);
+        const native_handle_t* handle, common::Rect displayFrame, common::Rect sourceCrop,
+        BufferType type) {
+    HandleInfo info;
+    if (handle == nullptr || (getInfoFromHandle(handle, &info) != 0)) {
+        ALOGE("%s: invalid native handle", __FUNCTION__);
+        return std::make_tuple(HWC3::Error::BadParameter, nullptr);
     }
 
     auto buffer = std::shared_ptr<DrmBuffer>(new DrmBuffer(*this));
-    buffer->mBufferAddress = memHandle->phys;
+    buffer->mBufferAddress = info.phys;
     DEBUG_LOG("%s: get framebuffer address 0x%" PRIx64, __FUNCTION__, *buffer->mBufferAddress);
 
     return std::make_tuple(HWC3::Error::None, std::move(buffer));
@@ -187,7 +188,7 @@ std::tuple<HWC3::Error, buffer_handle_t> FbdevClient::getComposerTarget(
 
     if (mComposerTargets.find(displayId) != mComposerTargets.end()) {
         int32_t index = mTargetIndex[displayId];
-        if (++index >= MAX_COMPOSER_TARGETS_PER_DISPLAY) {
+        if (++index >= mMaxComposerTargetsPerDisplay) {
             index = 0;
         }
         mTargetIndex[displayId] = index;
@@ -196,22 +197,18 @@ std::tuple<HWC3::Error, buffer_handle_t> FbdevClient::getComposerTarget(
         return std::make_tuple(HWC3::Error::None, mComposerTargets[displayId][index]);
     }
 
+    std::vector<buffer_handle_t> buffers;
     uint32_t width, height, format;
-    gralloc_handle_t bufferHandles[MAX_COMPOSER_TARGETS_PER_DISPLAY];
+    buffers.reserve(mMaxComposerTargetsPerDisplay);
     mDisplays[displayId]->getFramebufferInfo(&width, &height, &format);
-    auto ret = composer->prepareDeviceFrameBuffer(width, height, format, bufferHandles,
-                                                  MAX_COMPOSER_TARGETS_PER_DISPLAY, false);
+    auto ret = composer->prepareDeviceFrameBuffer(width, height, format, buffers,
+                                                  mMaxComposerTargetsPerDisplay, false);
     if (ret) {
         ALOGE("%s: create framebuffer failed", __FUNCTION__);
         return std::make_tuple(HWC3::Error::NoResources, nullptr);
     }
 
-    std::vector<gralloc_handle_t> buffers;
-    for (int i = 0; i < MAX_COMPOSER_TARGETS_PER_DISPLAY; i++) {
-        buffers.push_back(bufferHandles[i]);
-    }
-
-    mComposerTargets.emplace(displayId, buffers);
+    mComposerTargets.emplace(displayId, std::move(buffers));
     mTargetIndex.emplace(displayId, 0);
 
     composer->freeSolidColorBuffer();

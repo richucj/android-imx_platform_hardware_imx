@@ -1,5 +1,5 @@
 /*
- * Copyright 2023 NXP
+ * Copyright 2023-2024 NXP
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -54,7 +54,8 @@ public:
 
     std::tuple<HWC3::Error, std::shared_ptr<DrmBuffer>> create(const native_handle_t* handle,
                                                                common::Rect displayFrame,
-                                                               common::Rect sourceCrop) override;
+                                                               common::Rect sourceCrop,
+                                                               BufferType type) override;
     HWC3::Error destroyDrmFramebuffer(DrmBuffer* buffer) override;
 
     std::tuple<HWC3::Error, ::android::base::unique_fd> flushToDisplay(
@@ -76,7 +77,7 @@ private:
     int32_t mActiveConfigId = -1;
     std::shared_ptr<HalConfig> mConfigs = std::make_shared<HalConfig>();
 
-    std::vector<gralloc_handle_t> mComposerTargets;
+    std::vector<buffer_handle_t> mComposerTargets;
     int32_t mTargetIndex;
 
     std::shared_ptr<DeviceComposer> mG2dComposer = nullptr;

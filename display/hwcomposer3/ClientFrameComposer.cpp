@@ -1,6 +1,6 @@
 /*
  * Copyright 2022 The Android Open Source Project
- * Copyright 2023 NXP
+ * Copyright 2023-2024 NXP
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -19,7 +19,9 @@
 
 #include <cutils/properties.h>
 #include <drm_fourcc.h>
+#include <hardware/gralloc.h>
 
+#include "BufferInfo.h"
 #include "Common.h"
 #include "Display.h"
 #include "Drm.h"
@@ -121,10 +123,10 @@ HWC3::Error ClientFrameComposer::init() {
     ret = checkClientFromSystem<DrmClient>("/dev/dri", "card", mDeviceClients, &baseId, 0);
     if (ret != HWC3::Error::None) {
         ALOGE("%s: Cannot find any DRM client", __FUNCTION__);
-    }
-    ret = checkClientFromSystem<FbdevClient>("/dev/graphics", "fb", mDeviceClients, &baseId, 1);
-    if (ret != HWC3::Error::None) {
-        ALOGE("%s: Cannot find any FBDEV client", __FUNCTION__);
+        ret = checkClientFromSystem<FbdevClient>("/dev/graphics", "fb", mDeviceClients, &baseId, 1);
+        if (ret != HWC3::Error::None) {
+            ALOGE("%s: Cannot find any FBDEV client", __FUNCTION__);
+        }
     }
 
     if (mDeviceClients.size() < 1) {
@@ -260,8 +262,8 @@ HWC3::Error ClientFrameComposer::onDisplayClientTargetSet(Display* display) {
     }
     common::Rect displayFrame = {0, 0, width, height};
     common::Rect sourceCrop = {0, 0, width, height};
-    auto [createError, drmBuffer] =
-            client->create(display->getClientTarget().getBuffer(), displayFrame, sourceCrop);
+    auto [createError, drmBuffer] = client->create(display->getClientTarget().getBuffer(),
+                                                   displayFrame, sourceCrop, DRM_BUFFER_FB);
     if (createError != HWC3::Error::None) {
         ALOGE("%s: display:%" PRIu64 " failed to create client target drm buffer", __FUNCTION__,
               displayId);
@@ -369,7 +371,7 @@ HWC3::Error ClientFrameComposer::validateDisplay(Display* display, DisplayChange
                 (composeType != Composition::DEVICE && composeType != Composition::CLIENT)) {
                 mergeRect(uiMaskedRect, rectFrame);
             } else {
-                auto handle = (gralloc_handle_t)layer->getBuffer().getBuffer();
+                auto handle = layer->getBuffer().getBuffer();
                 auto [error, planeId] = client->getPlaneForLayerBuffer(displayId, handle);
                 if (error == HWC3::Error::None) {
                     layersForOverlay.emplace(planeId, layer);
@@ -455,12 +457,14 @@ HWC3::Error ClientFrameComposer::presentDisplay(
         common::Rect rectFrame = layer->getDisplayFrame();
         common::Rect rectSource = layer->getSourceCropInt();
 
-        auto [createError, drmBuffer] = client->create(handle, rectFrame, rectSource);
+        auto [createError, drmBuffer] =
+                client->create(handle, rectFrame, rectSource, DRM_BUFFER_PLANE);
         if (createError != HWC3::Error::None) {
             ALOGE("%s: display:%" PRIu64 " failed to create overlay drm buffer", __FUNCTION__,
                   displayId);
             return HWC3::Error::NoResources;
         }
+        drmBuffer->mZpos = layer->getZOrder();
         displayBuffer.planeDrmBuffer[planeId] = std::move(drmBuffer);
 
         if (layer->getHdrMetadataState() == LAYER_HDR_METADATA_STATE_ADDED) {
@@ -469,8 +473,10 @@ HWC3::Error ClientFrameComposer::presentDisplay(
         }
 
         if (mHdcpEnabled) {
-            gralloc_handle_t buff = (gralloc_handle_t)layer->getBuffer().getBuffer();
-            if (buff && (buff->usage & USAGE_PROTECTED)) {
+            HandleInfo info;
+            auto buff = layer->getBuffer().getBuffer();
+            if (buff && (getInfoFromHandle(buff, &info) == 0) &&
+                (info.usage & GRALLOC_USAGE_PROTECTED)) {
                 client->setSecureMode(displayId, planeId, true);
             } else {
                 client->setSecureMode(displayId, planeId, false);
@@ -481,9 +487,11 @@ HWC3::Error ClientFrameComposer::presentDisplay(
     if (layersForComposition.size() > 0) {
         bool secure = false;
         for (auto& layer : layersForComposition) {
-            auto buff = (gralloc_handle_t)layer->waitAndGetBuffer();
+            HandleInfo info;
+            auto buff = layer->waitAndGetBuffer();
             // wait for all layer buffer ready, and check if there secure layer
-            if (buff && (buff->usage & USAGE_PROTECTED))
+            if (buff && (getInfoFromHandle(buff, &info) == 0) &&
+                (info.usage & GRALLOC_USAGE_PROTECTED))
                 secure = true;
         }
 
@@ -501,7 +509,8 @@ HWC3::Error ClientFrameComposer::presentDisplay(
         }
         common::Rect displayFrame = {0, 0, width, height};
         common::Rect sourceCrop = {0, 0, width, height};
-        auto [createError, drmBuffer] = client->create(renderTarget, displayFrame, sourceCrop);
+        auto [createError, drmBuffer] =
+                client->create(renderTarget, displayFrame, sourceCrop, DRM_BUFFER_FB);
         if (createError != HWC3::Error::None) {
             ALOGE("%s: display:%" PRIu64 " failed to create composer target drm buffer",
                   __FUNCTION__, displayId);
@@ -519,8 +528,9 @@ HWC3::Error ClientFrameComposer::presentDisplay(
     } else if (luckyLayer != nullptr) {
         common::Rect rectFrame = luckyLayer->getDisplayFrame();
         common::Rect rectSource = luckyLayer->getSourceCropInt();
-        auto buffer = (gralloc_handle_t)luckyLayer->waitAndGetBuffer();
-        auto [createError, drmBuffer] = client->create(buffer, rectFrame, rectSource);
+        auto buffer = luckyLayer->waitAndGetBuffer();
+        auto [createError, drmBuffer] =
+                client->create(buffer, rectFrame, rectSource, DRM_BUFFER_NONE);
         if (createError != HWC3::Error::None) {
             ALOGE("%s: display:%" PRIu64 " failed to create client target drm buffer", __FUNCTION__,
                   displayId);
@@ -546,22 +556,23 @@ HWC3::Error ClientFrameComposer::presentDisplay(
             auto layer = layersForPrivate.front();
             common::Rect rectFrame = layer->getDisplayFrame();
             common::Rect rectSource = layer->getSourceCropInt();
-            gralloc_handle_t buffer;
+            std::vector<buffer_handle_t> buffers;
             mG2dComposer->prepareDeviceFrameBuffer(rectFrame.right - rectFrame.left,
                                                    rectFrame.bottom - rectFrame.top,
                                                    static_cast<int>(common::PixelFormat::RGBA_8888),
-                                                   &buffer, 1, false);
-            auto [createError, drmBuffer] = client->create(buffer, rectFrame, rectSource);
+                                                   buffers, 1, false);
+            auto [createError, drmBuffer] =
+                    client->create(buffers[0], rectFrame, rectSource, DRM_BUFFER_NONE);
             if (createError != HWC3::Error::None) {
                 ALOGE("%s: display:%" PRIu64 " failed to create client target drm buffer",
                       __FUNCTION__, displayId);
                 return HWC3::Error::NoResources;
             }
             displayBuffer.clientTargetDrmBuffer = drmBuffer;
-            displayBuffer.dummyDrmBuffer.emplace(buffer, std::move(drmBuffer));
+            displayBuffer.dummyDrmBuffer.emplace(buffers[0], std::move(drmBuffer));
         }
     } else if (displayBuffer.dummyDrmBuffer.size() > 0) {
-        std::vector<gralloc_handle_t> handles;
+        std::vector<buffer_handle_t> handles;
         handles.push_back(displayBuffer.dummyDrmBuffer.begin()->first);
         mG2dComposer->freeDeviceFrameBuffer(handles);
         displayBuffer.dummyDrmBuffer.clear();
@@ -579,8 +590,8 @@ HWC3::Error ClientFrameComposer::presentDisplay(
             display->getDisplayAttribute(activeConfigId, DisplayAttribute::VSYNC_PERIOD, &period);
 
         TimePoint now = std::chrono::steady_clock::now();
-        if (now < *presentTime - Nanoseconds(period))
-            std::this_thread::sleep_until(*presentTime - Nanoseconds(period));
+        if (now < *presentTime - Nanoseconds(period / 2))
+            std::this_thread::sleep_until(*presentTime - Nanoseconds(period / 2));
     }
 
     auto [flushError, flushCompleteFence] =

@@ -1,5 +1,5 @@
 /*
- * Copyright 2017-2023 NXP.
+ * Copyright 2017-2024 NXP.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -17,6 +17,7 @@
 
 #include <cutils/properties.h>
 #include <dlfcn.h>
+#include <drm_fourcc.h>
 #include <hardware/gralloc.h>
 #include <inttypes.h>
 #include <ui/GraphicBufferAllocator.h>
@@ -31,6 +32,15 @@
 #define G2DENGINE "libg2d"
 
 namespace aidl::android::hardware::graphics::composer3::impl {
+
+// Uncomment to enable additional debug logging for g2d only.
+// #define DEBUG_NXP_HWC_G2D
+
+#if defined(DEBUG_NXP_HWC_G2D)
+#define DEBUG_LOG_G2D ALOGI
+#else
+#define DEBUG_LOG_G2D(...) ((void)0)
+#endif
 
 Mutex DeviceComposer::sLock(Mutex::PRIVATE);
 thread_local void* DeviceComposer::sHandle(0);
@@ -124,6 +134,7 @@ DeviceComposer::DeviceComposer() {
         mDisableFunction = (hwc_func2)dlsym(mG2dHandle, "g2d_disable");
         mFinishEngine = (hwc_func1)dlsym(mG2dHandle, "g2d_finish");
         mQueryFeature = (hwc_func3)dlsym(mG2dHandle, "g2d_query_feature");
+        mBuffInfoFromFd = (hwc_buf_func)dlsym(mG2dHandle, "g2d_buf_from_fd");
     }
 }
 
@@ -161,7 +172,8 @@ bool DeviceComposer::isValid() {
 }
 
 int DeviceComposer::prepareDeviceFrameBuffer(uint32_t width, uint32_t height, uint32_t format,
-                                             gralloc_handle_t* buffers, int count, bool secure) {
+                                             std::vector<buffer_handle_t>& buffers, int count,
+                                             bool secure) {
     uint64_t usage;
     uint32_t bufferStride;
     buffer_handle_t bufferHandle;
@@ -182,13 +194,13 @@ int DeviceComposer::prepareDeviceFrameBuffer(uint32_t width, uint32_t height, ui
             return status;
         }
 
-        buffers[i] = (gralloc_handle_t)bufferHandle;
+        buffers.push_back(bufferHandle);
     }
 
     return 0;
 }
 
-int DeviceComposer::freeDeviceFrameBuffer(std::vector<gralloc_handle_t>& buffers) {
+int DeviceComposer::freeDeviceFrameBuffer(std::vector<buffer_handle_t>& buffers) {
     for (auto buf : buffers) {
         ::android::GraphicBufferAllocator::get().free(buf);
     }
@@ -197,14 +209,15 @@ int DeviceComposer::freeDeviceFrameBuffer(std::vector<gralloc_handle_t>& buffers
 }
 
 int DeviceComposer::prepareSolidColorBuffer() {
-    if (mTarget == NULL) {
+    HandleInfo info;
+    if (mTarget == NULL || (getInfoFromHandle(mTarget, &info) != 0)) {
         return 0;
     }
 
     if ((mSolidColorBuffer != NULL) &&
-        (mTarget->width == mSolidColorBuffer->width &&
-         mTarget->height == mSolidColorBuffer->height &&
-         mTarget->fslFormat == mSolidColorBuffer->fslFormat)) {
+        (info.width == mSolidColorBuffInfo.width &&
+         info.height == mSolidColorBuffInfo.height &&
+         info.format == mSolidColorBuffInfo.format)) {
         return 0;
     }
 
@@ -217,12 +230,12 @@ int DeviceComposer::prepareSolidColorBuffer() {
     buffer_handle_t bufferHandle;
     uint64_t usage = GRALLOC_USAGE_HW_RENDER | GRALLOC_USAGE_HW_COMPOSER | GRALLOC_USAGE_HW_2D |
             GRALLOC_USAGE_SW_READ_OFTEN | GRALLOC_USAGE_SW_WRITE_OFTEN;
-    if (mTarget->usage & GRALLOC_USAGE_PROTECTED)
+    if (info.usage & GRALLOC_USAGE_PROTECTED)
         usage |= GRALLOC_USAGE_PROTECTED;
 
     auto status =
-            ::android::GraphicBufferAllocator::get().allocate(mTarget->width, mTarget->height,
-                                                              mTarget->format, /*layerCount=*/1,
+            ::android::GraphicBufferAllocator::get().allocate(info.width, info.height,
+                                                              info.format, /*layerCount=*/1,
                                                               usage, &bufferHandle, &bufferStride,
                                                               "HwcSolidColor");
     if (status != ::android::OK) {
@@ -230,12 +243,13 @@ int DeviceComposer::prepareSolidColorBuffer() {
         return -1;
     }
 
-    mSolidColorBuffer = (gralloc_handle_t)bufferHandle;
+    mSolidColorBuffer = bufferHandle;
+    getInfoFromHandle(mSolidColorBuffer, &mSolidColorBuffInfo);
 
     common::Rect rect;
     rect.left = rect.top = 0;
-    rect.right = mTarget->width;
-    rect.bottom = mTarget->height;
+    rect.right = info.width;
+    rect.bottom = info.height;
     lockSurface(mSolidColorBuffer);
     clearRect(mSolidColorBuffer, rect);
 
@@ -257,12 +271,18 @@ int DeviceComposer::finishComposite() {
     return 0;
 }
 
-int DeviceComposer::setRenderTarget(gralloc_handle_t memory) {
+int DeviceComposer::setRenderTarget(buffer_handle_t memory) {
     mTarget = memory;
+    HandleInfo info;
+    if (mTarget == NULL || (getInfoFromHandle(mTarget, &info) != 0)) {
+        return -EINVAL;
+    }
+    DEBUG_LOG_G2D("%s: --------target(fd=%d, %d x %d)--------", __FUNCTION__, info.fd, info.width,
+                  info.height);
     return 0;
 }
 
-int DeviceComposer::clearRect(gralloc_handle_t target, common::Rect& rect) {
+int DeviceComposer::clearRect(buffer_handle_t target, common::Rect& rect) {
     if (target == NULL || isRectEmpty(rect)) {
         return 0;
     }
@@ -275,13 +295,15 @@ int DeviceComposer::clearRect(gralloc_handle_t target, common::Rect& rect) {
     surface.clrcolor = 0xff << 24;
     clearFunction(getHandle(), &surface);
 
-    DEBUG_LOG("clearRect: rect(l:%d,t:%d,r:%d,b:%d)", rect.left, rect.top, rect.right, rect.bottom);
+    DEBUG_LOG_G2D("clearRect: rect(l:%d,t:%d,r:%d,b:%d)", rect.left, rect.top, rect.right,
+                  rect.bottom);
     return 0;
 }
 
 int DeviceComposer::clearWormHole(std::vector<Layer*>& layers) {
     DEBUG_LOG("%s: clear worm hole", __FUNCTION__);
-    if (mTarget == NULL) {
+    HandleInfo info;
+    if (mTarget == NULL || (getInfoFromHandle(mTarget, &info) != 0)) {
         ALOGE("%s: no effective render buffer", __FUNCTION__);
         return -EINVAL;
     }
@@ -305,7 +327,7 @@ int DeviceComposer::clearWormHole(std::vector<Layer*>& layers) {
     }
 
     // calculate worm hole.
-    ::android::Region screen(::android::Rect(mTarget->width, mTarget->height));
+    ::android::Region screen(::android::Rect(info.width, info.height));
     screen.subtractSelf(opaque);
     const ::android::Rect* holes = NULL;
     size_t numRect = 0;
@@ -314,6 +336,8 @@ int DeviceComposer::clearWormHole(std::vector<Layer*>& layers) {
     struct g2d_surfaceEx surfaceX;
     memset(&surfaceX, 0, sizeof(surfaceX));
     struct g2d_surface& surface = surfaceX.base;
+    DEBUG_LOG_G2D("%s: clear %zu worm holes", __FUNCTION__, numRect);
+    int clrcolor = 0x00 << 24; // make alpha be 0(transparent) for DRM_FORMAT_ABGR8888 like format.
     for (size_t i = 0; i < numRect; i++) {
         if (holes[i].isEmpty()) {
             continue;
@@ -324,9 +348,10 @@ int DeviceComposer::clearWormHole(std::vector<Layer*>& layers) {
         rect.top = holes[i].top;
         rect.right = holes[i].right;
         rect.bottom = holes[i].bottom;
-        ALOGV("clearhole: hole(l:%d,t:%d,r:%d,b:%d)", rect.left, rect.top, rect.right, rect.bottom);
+        DEBUG_LOG_G2D("clearhole: hole(l:%d,t:%d,r:%d,b:%d)", rect.left, rect.top, rect.right,
+                      rect.bottom);
         setG2dSurface(surfaceX, mTarget, rect);
-        surface.clrcolor = 0xff << 24;
+        surface.clrcolor = clrcolor;
         clearFunction(getHandle(), &surface);
     }
 
@@ -335,7 +360,8 @@ int DeviceComposer::clearWormHole(std::vector<Layer*>& layers) {
 
 int DeviceComposer::composeLayerLocked(Layer* layer, bool bypass) {
     DEBUG_LOG("%s: compose layer %ld", __FUNCTION__, layer->getId());
-    if (layer == NULL || mTarget == NULL) {
+    HandleInfo info;
+    if (layer == NULL || mTarget == NULL || (getInfoFromHandle(mTarget, &info) != 0)) {
         ALOGE("%s: invalid layer or target", __FUNCTION__);
         return -EINVAL;
     }
@@ -344,7 +370,7 @@ int DeviceComposer::composeLayerLocked(Layer* layer, bool bypass) {
     auto mode = layer->getBlendMode();
     auto transform = layer->getTransform();
     auto alpha = (uint8_t)(layer->getPlaneAlpha() * 255);
-    gralloc_handle_t layerBuffer = (gralloc_handle_t)(layer->getBuffer().getBuffer());
+    auto layerBuffer = layer->getBuffer().getBuffer();
 
     common::Rect srect = layer->getSourceCropInt();
     common::Rect drect = layer->getDisplayFrame();
@@ -365,25 +391,28 @@ int DeviceComposer::composeLayerLocked(Layer* layer, bool bypass) {
     std::vector<common::Rect>& visible = layer->getVisibleRegion();
     for (auto& clip : visible) {
         if (isRectEmpty(clip)) {
-            ALOGV("%s: invalid clip", __FUNCTION__);
+            DEBUG_LOG_G2D("%s: invalid clip", __FUNCTION__);
             continue;
         }
 
         if (!rectIntersect(drect, clip)) {
-            ALOGV("%s: invalid clip rect", __FUNCTION__);
+            DEBUG_LOG_G2D("%s: invalid clip rect", __FUNCTION__);
             continue;
         }
 
         setClipping(srect, drect, clip, transform);
-        ALOGV("index:%ld, sourceCrop(l:%d,t:%d,r:%d,b:%d), visible(l:%d,t:%d,r:%d,b:%d), "
-              "display(l:%d,t:%d,r:%d,b:%d)",
-              layer->getId(), srect.left, srect.top, srect.right, srect.bottom, clip.left, clip.top,
-              clip.right, clip.bottom, drect.left, drect.top, drect.right, drect.bottom);
+        DEBUG_LOG_G2D("layer:%ld, sourceCrop(l:%d,t:%d,r:%d,b:%d), visible(l:%d,t:%d,r:%d,b:%d), "
+                      "display(l:%d,t:%d,r:%d,b:%d)",
+                      layer->getId(), srect.left, srect.top, srect.right, srect.bottom, clip.left,
+                      clip.top, clip.right, clip.bottom, drect.left, drect.top, drect.right,
+                      drect.bottom);
 
-        if (layerBuffer != nullptr)
-            ALOGV("zorder:0x%x, layer phys:0x%" PRIx64, layer->getZOrder(), layerBuffer->phys);
+        HandleInfo layerInfo;
+        if (layerBuffer != nullptr && (getInfoFromHandle(layerBuffer, &layerInfo) == 0)) {
+            DEBUG_LOG_G2D("zorder:0x%x, phys:0x%" PRIx64, layer->getZOrder(), layerInfo.phys);
+        }
 
-        ALOGV("transform:0x%x, blend:0x%x, alpha:0x%x", transform, mode, alpha);
+        DEBUG_LOG_G2D("transform:0x%x, blend:0x%x, alpha:0x%x", transform, mode, alpha);
 
         setG2dSurface(dSurfaceX, mTarget, drect);
 
@@ -393,10 +422,10 @@ int DeviceComposer::composeLayerLocked(Layer* layer, bool bypass) {
 
         if (!(type == Composition::SOLID_COLOR) && layerBuffer) {
             setG2dSurface(sSurfaceX, layerBuffer, srect);
-            if ((mTarget->fslFormat == FORMAT_RGB565) &&
-                (layerBuffer->fslFormat == FORMAT_RGBA8888 ||
-                 layerBuffer->fslFormat == FORMAT_RGBX8888 ||
-                 layerBuffer->fslFormat == FORMAT_BGRA8888)) {
+            if ((info.format == static_cast<uint32_t>(common::PixelFormat::RGB_565)) &&
+                (layerInfo.format == static_cast<uint32_t>(common::PixelFormat::RGBA_8888) ||
+                 layerInfo.format == static_cast<uint32_t>(common::PixelFormat::RGBX_8888) ||
+                 layerInfo.format == static_cast<uint32_t>(common::PixelFormat::BGRA_8888))) {
                 needDither = true;
             }
 
@@ -434,22 +463,27 @@ int DeviceComposer::composeLayerLocked(Layer* layer, bool bypass) {
     return 0;
 }
 
-int DeviceComposer::setG2dSurface(struct g2d_surfaceEx& surfaceX, gralloc_handle_t handle,
+int DeviceComposer::setG2dSurface(struct g2d_surfaceEx& surfaceX, buffer_handle_t handle,
                                   common::Rect& rect) {
     int alignWidth = 0, alignHeight = 0;
     struct g2d_surface& surface = surfaceX.base;
+    HandleInfo info;
+    if (handle == NULL || (getInfoFromHandle(handle, &info) != 0)) {
+        ALOGE("%s: handle is invalid!", __FUNCTION__);
+        return -1;
+    }
 
     int ret = getAlignedSize(handle, NULL, &alignHeight);
     if (ret != 0) {
-        alignHeight = handle->height;
+        alignHeight = info.height;
     }
 
-    alignWidth = handle->stride;
-    surface.format = convertFormat(handle->fslFormat, handle);
+    alignWidth = info.stride;
+    surface.format = convertFormat(info.drm_format, handle);
     surface.stride = alignWidth;
     enum g2d_tiling tile = G2D_LINEAR;
     getTiling(handle, &tile);
-    if (handle->fslFormat == FORMAT_NV12_TILED) {
+    if (info.modifier == DRM_FORMAT_MOD_AMPHION_TILED) {
         surfaceX.tiling = G2D_AMPHION_TILED;
     } else {
         surfaceX.tiling = tile;
@@ -461,9 +495,15 @@ int DeviceComposer::setG2dSurface(struct g2d_surfaceEx& surfaceX, gralloc_handle
         resolveTileStatus(handle);
     }
 
+    int phys = 0;
     int offset = 0;
+    if (info.phys)
+        phys = info.phys;
+    else
+        getBuffPhys(handle, &phys);
+
     getFlipOffset(handle, &offset);
-    surface.planes[0] = (int)handle->phys + offset;
+    surface.planes[0] = phys + offset;
 
     switch (surface.format) {
         case G2D_RGB565:
@@ -498,47 +538,49 @@ int DeviceComposer::setG2dSurface(struct g2d_surfaceEx& surfaceX, gralloc_handle
     surface.top = rect.top;
     surface.right = rect.right;
     surface.bottom = rect.bottom;
-    surface.width = handle->width;
-    surface.height = handle->height;
+    surface.width = info.width;
+    surface.height = info.height;
+
+    DEBUG_LOG_G2D("%s: dimension(%d,%d,%d,%d, %d x %d), format=%d, stride=%d, tiling=%d, "
+                  "plane0=0x%x, plane1=0x%x, plane2=0x%x",
+                  __FUNCTION__, surface.left, surface.top, surface.right, surface.bottom,
+                  surface.width, surface.height, surface.format, surface.stride, surfaceX.tiling,
+                  surface.planes[0], surface.planes[1], surface.planes[2]);
 
     return 0;
 }
 
-enum g2d_format DeviceComposer::convertFormat(int format, gralloc_handle_t handle) {
+enum g2d_format DeviceComposer::convertFormat(int format, buffer_handle_t handle) {
     enum g2d_format halFormat;
     switch (format) {
-        case FORMAT_RGBA8888:
+        case DRM_FORMAT_ABGR8888:
             halFormat = G2D_RGBA8888;
             break;
-        case FORMAT_RGBX8888:
+        case DRM_FORMAT_XBGR8888:
             halFormat = G2D_RGBX8888;
             break;
-        case FORMAT_RGB565:
+        case DRM_FORMAT_RGB565:
             halFormat = G2D_RGB565;
             break;
-        case FORMAT_BGRA8888:
+        case DRM_FORMAT_ARGB8888:
             halFormat = G2D_BGRA8888;
             break;
-
-        case FORMAT_NV21:
+        case DRM_FORMAT_NV21:
             halFormat = G2D_NV21;
             break;
-        case FORMAT_NV12:
-        case FORMAT_NV12_TILED:
+        case DRM_FORMAT_NV12:
             halFormat = G2D_NV12;
             break;
-
-        case FORMAT_I420:
+        case DRM_FORMAT_YUV420:
             halFormat = G2D_I420;
             break;
-        case FORMAT_YV12:
+        case DRM_FORMAT_YVU420_ANDROID:
             halFormat = G2D_YV12;
             break;
-
-        case FORMAT_NV16:
+        case DRM_FORMAT_NV16:
             halFormat = G2D_NV16;
             break;
-        case FORMAT_YUYV:
+        case DRM_FORMAT_YUYV:
             halFormat = G2D_YUYV;
             break;
 
@@ -613,7 +655,7 @@ int DeviceComposer::convertBlending(common::BlendMode blending, struct g2d_surfa
     return 0;
 }
 
-int DeviceComposer::getAlignedSize(gralloc_handle_t handle, int* width, int* height) {
+int DeviceComposer::getAlignedSize(buffer_handle_t handle, int* width, int* height) {
     if (mGetAlignedSize == NULL) {
         return -EINVAL;
     }
@@ -621,7 +663,7 @@ int DeviceComposer::getAlignedSize(gralloc_handle_t handle, int* width, int* hei
     return (*mGetAlignedSize)((void*)handle, (void*)width, (void*)height);
 }
 
-int DeviceComposer::getFlipOffset(gralloc_handle_t handle, int* offset) {
+int DeviceComposer::getFlipOffset(buffer_handle_t handle, int* offset) {
     if (mGetFlipOffset == NULL) {
         return -EINVAL;
     }
@@ -629,7 +671,7 @@ int DeviceComposer::getFlipOffset(gralloc_handle_t handle, int* offset) {
     return (*mGetFlipOffset)((void*)handle, (void*)offset);
 }
 
-int DeviceComposer::getTiling(gralloc_handle_t handle, enum g2d_tiling* tile) {
+int DeviceComposer::getTiling(buffer_handle_t handle, enum g2d_tiling* tile) {
     if (mGetTiling == NULL) {
         return -EINVAL;
     }
@@ -637,7 +679,7 @@ int DeviceComposer::getTiling(gralloc_handle_t handle, enum g2d_tiling* tile) {
     return (*mGetTiling)((void*)handle, (void*)tile);
 }
 
-enum g2d_format DeviceComposer::alterFormat(gralloc_handle_t handle, enum g2d_format format) {
+enum g2d_format DeviceComposer::alterFormat(buffer_handle_t handle, enum g2d_format format) {
     if (mAlterFormat == NULL) {
         return format;
     }
@@ -645,19 +687,15 @@ enum g2d_format DeviceComposer::alterFormat(gralloc_handle_t handle, enum g2d_fo
     return (enum g2d_format)(*mAlterFormat)((void*)handle, (void*)format);
 }
 
-int DeviceComposer::lockSurface(gralloc_handle_t handle) {
+int DeviceComposer::lockSurface(buffer_handle_t handle) {
     if (mLockSurface == NULL) {
         return -EINVAL;
     }
 
-    uint64_t phys = handle->phys;
-    int ret = (*mLockSurface)((void*)handle);
-    const_cast<gralloc_handle*>(handle)->phys = phys;
-
-    return ret;
+    return (*mLockSurface)((void*)handle);
 }
 
-int DeviceComposer::unlockSurface(gralloc_handle_t handle) {
+int DeviceComposer::unlockSurface(buffer_handle_t handle) {
     if (mUnlockSurface == NULL) {
         return -EINVAL;
     }
@@ -740,6 +778,29 @@ bool DeviceComposer::isFeatureSupported(g2d_feature feature) {
     return (enable != 0);
 }
 
+int DeviceComposer::getBuffPhys(buffer_handle_t handle, int *phys) {
+    if (mBuffInfoFromFd == NULL) {
+        return -EINVAL;
+    }
+
+    HandleInfo info;
+    if (handle == NULL || (getInfoFromHandle(handle, &info) != 0)) {
+        ALOGE("%s: handle is invalid!", __FUNCTION__);
+        return -EINVAL;
+    }
+
+    struct g2d_buf* buf = (struct g2d_buf*)(*mBuffInfoFromFd)((void*)(intptr_t)info.fd);
+    if (buf && buf->buf_paddr)
+        *phys = buf->buf_paddr;
+
+    if (buf) {
+        free(buf->buf_handle);
+        free(buf);
+    }
+
+    return 0;
+}
+
 int DeviceComposer::alignTile(int* width, int* height, int format, int usage) {
     if (mAlignTile == NULL) {
         return -EINVAL;
@@ -747,7 +808,7 @@ int DeviceComposer::alignTile(int* width, int* height, int format, int usage) {
     return (*mAlignTile)(width, height, (void*)(intptr_t)format, (void*)(intptr_t)usage);
 }
 
-int DeviceComposer::getTileStatus(gralloc_handle_t handle, struct g2d_surfaceEx* surfaceX) {
+int DeviceComposer::getTileStatus(buffer_handle_t handle, struct g2d_surfaceEx* surfaceX) {
     if (mGetTileStatus == NULL) {
         return -EINVAL;
     }
@@ -755,7 +816,7 @@ int DeviceComposer::getTileStatus(gralloc_handle_t handle, struct g2d_surfaceEx*
     return (*mGetTileStatus)((void*)handle, surfaceX);
 }
 
-int DeviceComposer::resolveTileStatus(gralloc_handle_t handle) {
+int DeviceComposer::resolveTileStatus(buffer_handle_t handle) {
     if (mResolveTileStatus == NULL) {
         return -EINVAL;
     }
@@ -766,10 +827,15 @@ int DeviceComposer::resolveTileStatus(gralloc_handle_t handle) {
 bool DeviceComposer::checkMustDeviceComposition(Layer* layer) {
     DEBUG_LOG("%s: check layer %ld", __FUNCTION__, layer->getId());
 
-    gralloc_handle_t layerBuffer = (gralloc_handle_t)(layer->getBuffer().getBuffer());
+    auto layerBuffer = layer->getBuffer().getBuffer();
+    HandleInfo info;
+    if (layerBuffer == NULL || (getInfoFromHandle(layerBuffer, &info) != 0)) {
+        return false;
+    }
+
     // vpu tile format must be handled by device.
     if (layerBuffer != nullptr &&
-        (layerBuffer->fslFormat == FORMAT_NV12_TILED || layerBuffer->usage & USAGE_PROTECTED)) {
+        (info.modifier == DRM_FORMAT_MOD_AMPHION_TILED || info.usage & GRALLOC_USAGE_PROTECTED)) {
         return true;
     }
 
@@ -784,8 +850,11 @@ bool DeviceComposer::checkDeviceComposition(Layer* layer) {
         return false;
     }
 
-    gralloc_handle_t layerBuffer = (gralloc_handle_t)(layer->getBuffer().getBuffer());
-    common::Dataspace dataspace = layer->getDataspace();
+    auto layerBuffer = layer->getBuffer().getBuffer();
+    HandleInfo info;
+    if (layerBuffer == NULL || (getInfoFromHandle(layerBuffer, &info) != 0)) {
+        return false;
+    }
 
     if (layer->getCompositionType() == Composition::CLIENT) {
         DEBUG_LOG("%s: Not process type=CLIENT layer", __FUNCTION__);
@@ -804,24 +873,13 @@ bool DeviceComposer::checkDeviceComposition(Layer* layer) {
         return false;
     }
 
+#ifdef G2D_LIMITATION_VIV
+    common::Dataspace dataspace = layer->getDataspace();
     // video nv12 full range should be handled by client
-    if (layerBuffer != nullptr && layerBuffer->fslFormat == FORMAT_NV12 &&
+    if (layerBuffer != nullptr && info.drm_format == DRM_FORMAT_NV12 &&
         ((common::Dataspace)((int)dataspace & (int)common::Dataspace::RANGE_MASK) ==
          common::Dataspace::RANGE_FULL)) {
         DEBUG_LOG("%s: g2d can't support video nv12 full range", __FUNCTION__);
-        return false;
-    }
-
-#ifdef WORKAROUND_DPU_ALPHA_BLENDING
-    auto alpha = (uint8_t)(layer->getPlaneAlpha() * 255);
-    // pixel alpha + blending + global alpha case skip device composition.
-    if (layerBuffer != nullptr && alpha != 0xff &&
-        layer->getBlendMode() == common::BlendMode::PREMULTIPLIED &&
-        (layerBuffer->fslFormat == FORMAT_RGBA8888 || layerBuffer->fslFormat == FORMAT_BGRA8888 ||
-         layerBuffer->fslFormat == FORMAT_RGBA1010102 ||
-         layerBuffer->fslFormat == FORMAT_RGBAFP16)) {
-        DEBUG_LOG("%s: format=%x, alpha=%x, blend=%x cannot process in DPU of imx8q", __func__,
-                  layerBuffer->fslFormat, alpha, layer->getBlendMode());
         return false;
     }
 #endif
@@ -830,7 +888,7 @@ bool DeviceComposer::checkDeviceComposition(Layer* layer) {
 }
 
 bool DeviceComposer::composeLayers(std::vector<Layer*> layers, buffer_handle_t target) {
-    DEBUG_LOG("%s: %zu layers to target", __FUNCTION__, layers.size());
+    DEBUG_LOG("%s: ------%zu layers compose to target-------", __FUNCTION__, layers.size());
 
     if (!target) {
         ALOGE("%s: composer target buffer is invalid", __FUNCTION__);
@@ -838,8 +896,8 @@ bool DeviceComposer::composeLayers(std::vector<Layer*> layers, buffer_handle_t t
     }
 
     Mutex::Autolock _l(sLock);
-    lockSurface((gralloc_handle_t)target);
-    setRenderTarget((gralloc_handle_t)target);
+    lockSurface(target);
+    setRenderTarget(target);
     clearWormHole(layers);
 
     // to do composite.
@@ -849,7 +907,7 @@ bool DeviceComposer::composeLayers(std::vector<Layer*> layers, buffer_handle_t t
             // set side band parameters.
             continue;
 
-        gralloc_handle_t layerBuffer = (gralloc_handle_t)(layer->getBuffer().getBuffer());
+        auto layerBuffer = layer->getBuffer().getBuffer();
         if (layerBuffer != NULL)
             lockSurface(layerBuffer);
 
@@ -865,7 +923,7 @@ bool DeviceComposer::composeLayers(std::vector<Layer*> layers, buffer_handle_t t
         i++;
     }
 
-    unlockSurface((gralloc_handle_t)target);
+    unlockSurface(target);
     finishComposite();
 
     return 0;

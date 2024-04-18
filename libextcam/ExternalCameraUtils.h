@@ -26,9 +26,13 @@
 #include <aidl/android/hardware/camera/device/NotifyMsg.h>
 #include <aidl/android/hardware/graphics/common/BufferUsage.h>
 #include <aidl/android/hardware/graphics/common/PixelFormat.h>
+#include <android/hardware/graphics/mapper/2.0/IMapper.h>
+#include <android/hardware/graphics/mapper/3.0/IMapper.h>
+#include <android/hardware/graphics/mapper/4.0/IMapper.h>
 #include <cutils/properties.h>
 #include <linux/videodev2.h>
 #include <tinyxml2.h>
+#include <map>
 
 #include <unordered_map>
 #include <unordered_set>
@@ -45,6 +49,8 @@ using ::aidl::android::hardware::graphics::common::BufferUsage;
 using ::aidl::android::hardware::graphics::common::PixelFormat;
 using ::android::hardware::camera::common::V1_0::helper::CameraMetadata;
 using ::android::hardware::camera::common::V1_0::helper::HandleImporter;
+using ::android::hardware::graphics::mapper::V2_0::IMapper;
+using ::android::hardware::graphics::mapper::V2_0::YCbCrLayout;
 
 namespace android {
 
@@ -308,6 +314,22 @@ int encodeJpegYU12(const Size& inSz, const YCbCrLayout& inLayout, int jpegQualit
                    const void* app1Buffer, size_t app1Size, void* out, size_t maxOutSize,
                    size_t& actualCodeSize);
 
+int encodeJpegNV12(const Size& inSz, const YCbCrLayout& inLayout, int jpegQuality,
+                   const void* app1Buffer, size_t app1Size, void* out, size_t maxOutSize,
+                   size_t& actualCodeSize);
+
+int encodeJpegNV16(const Size& inSz, const YCbCrLayout& inLayout, int jpegQuality,
+                   const void* app1Buffer, size_t app1Size, void* out, size_t maxOutSize,
+                   size_t& actualCodeSize);
+
+int encodeJpegYUYV(const Size& inSz, const YCbCrLayout& inLayout, int jpegQuality,
+                   const void* app1Buffer, size_t app1Size, void* out, size_t maxOutSize,
+                   size_t& actualCodeSize);
+
+int encodeJpeg(uint32_t fourcc, const Size& inSz, const YCbCrLayout& inLayout, int jpegQuality,
+               const void* app1Buffer, size_t app1Size, void* out, size_t maxOutSize,
+               size_t& actualCodeSize);
+
 Size getMaxThumbnailResolution(const common::V1_0::helper::CameraMetadata&);
 
 void freeReleaseFences(std::vector<CaptureResult>&);
@@ -343,6 +365,8 @@ struct OutputThreadInterface {
     virtual ssize_t getJpegBufferSize(int32_t width, int32_t height) const = 0;
 
     virtual bool getHardwareDecFlag() const { return false; }
+    // virtual Size getMaxThumbSize() { Size zeroSize = {0, 0}; return zeroSize; }
+    virtual Size getMaxThumbSize() { return {0, 0}; }
 };
 
 // A CPU copy of a mapped V4L2Frame. Will map the input V4L2 frame.
