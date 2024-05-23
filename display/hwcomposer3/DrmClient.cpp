@@ -38,11 +38,21 @@ DrmClient::~DrmClient() {
     }
 }
 
+#define OPEN_DRM_COUNT_MAX  10
+
 HWC3::Error DrmClient::init(char* path, uint32_t* baseId) {
+    int open_cnt;
     DEBUG_LOG("%s", __FUNCTION__);
 
-    mFd = ::android::base::unique_fd(open(path, O_RDWR | O_CLOEXEC));
-    if (!mFd.ok()) {
+    for (open_cnt = 0; open_cnt < OPEN_DRM_COUNT_MAX; open_cnt++) {
+        mFd = ::android::base::unique_fd(open(path, O_RDWR | O_CLOEXEC));
+        if (!mFd.ok()) {
+            usleep(100000);
+        } else {
+            break;
+        }
+    }
+    if (open_cnt >= OPEN_DRM_COUNT_MAX) {
         ALOGE("%s: failed to open drm device: %s", __FUNCTION__, strerror(errno));
         return HWC3::Error::NoResources;
     }
