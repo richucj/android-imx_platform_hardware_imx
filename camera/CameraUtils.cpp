@@ -22,9 +22,6 @@
 #include <log/log.h>
 #include <sys/ioctl.h>
 
-#include "Allocator.h"
-#include "Memory.h"
-#include "MemoryDesc.h"
 #include "NV12_resize.h"
 
 namespace android {
@@ -110,86 +107,26 @@ cameraconfigparser::PhysicalMetaMapPtr ClonePhysicalDeviceMap(
     return ret;
 }
 
-int AllocPhyBuffer(ImxStreamBuffer &imxBuf) {
-    int sharedFd;
-    uint64_t phyAddr;
-    uint64_t outPtr;
-    uint32_t ionSize = imxBuf.mSize;
-
-    fsl::Allocator *allocator = fsl::Allocator::getInstance();
-    if (allocator == NULL) {
-        ALOGE("%s ion allocator invalid", __func__);
-        return -1;
+int32_t ImageBufferToStreamBuffer(ImxImageBuffer &imageBuffer, ImxStreamBuffer &streamBuffer) {
+    ImxStream *stream = streamBuffer.mStream;
+    if (stream == NULL) {
+        ALOGE("%s: stream is NULL", __func__);
+        return -EINVAL;
     }
 
-    sharedFd = allocator->allocMemory(ionSize, MEM_ALIGN, fsl::MFLAGS_CONTIGUOUS);
-    if (sharedFd < 0) {
-        ALOGE("%s: allocMemory failed.", __func__);
-        return -1;
-    }
-
-    int err = allocator->getVaddrs(sharedFd, ionSize, outPtr);
-    if (err != 0) {
-        ALOGE("%s: getVaddrs failed.", __func__);
-        close(sharedFd);
-        return -1;
-    }
-
-    err = allocator->getPhys(sharedFd, ionSize, phyAddr);
-    if (err != 0) {
-        ALOGE("%s: getPhys failed.", __func__);
-        munmap((void *)(uintptr_t)outPtr, ionSize);
-        close(sharedFd);
-        return -1;
-    }
-
-    ALOGV("%s, outPtr:%p,  phy:%p, ionSize:%d, req:%zu\n", __func__, (void *)outPtr,
-          (void *)phyAddr, ionSize, imxBuf.mFormatSize);
-
-    imxBuf.mVirtAddr = (void *)outPtr;
-    imxBuf.mPhyAddr = phyAddr;
-    imxBuf.mFd = sharedFd;
-    SetBufferHandle(imxBuf);
+    stream->mFormat = imageBuffer.mFormat;
+    stream->mWidth = imageBuffer.mWidth;
+    stream->mHeight = imageBuffer.mHeight;
+    stream->mUsage = imageBuffer.mUsage;
+    streamBuffer.mVirtAddr = imageBuffer.mVirtAddr;
+    streamBuffer.mPhyAddr = imageBuffer.mPhyAddr;
+    streamBuffer.mFd = imageBuffer.mFd;
+    streamBuffer.mSize = imageBuffer.mSize;
+    streamBuffer.mFormatSize = imageBuffer.mFormatSize;
+    streamBuffer.buffer = imageBuffer.buffer;
+    stream->mZoomRatio = imageBuffer.mZoomRatio;
 
     return 0;
-}
-
-int FreePhyBuffer(ImxStreamBuffer &imxBuf) {
-    if (imxBuf.mVirtAddr)
-        munmap(imxBuf.mVirtAddr, imxBuf.mSize);
-
-    if (imxBuf.mFd > 0)
-        close(imxBuf.mFd);
-
-    fsl::Memory *handle = (fsl::Memory *)imxBuf.buffer;
-    if (handle)
-        delete handle;
-
-    return 0;
-}
-
-void SetBufferHandle(ImxStreamBuffer &imxBuf) {
-    fsl::MemoryDesc desc;
-    fsl::Memory *handle = NULL;
-
-    desc.mFlag = 0;
-    desc.mWidth = desc.mStride = imxBuf.mSize / 4;
-    desc.mHeight = 1;
-    desc.mFormat = HAL_PIXEL_FORMAT_RGBA_8888;
-    desc.mFslFormat = fsl::FORMAT_RGBA8888;
-    desc.mSize = imxBuf.mSize;
-    desc.mProduceUsage = 0;
-
-    handle = new fsl::Memory(&desc, imxBuf.mFd, -1);
-    imxBuf.buffer = (buffer_handle_t)handle;
-}
-
-void SwitchImxBuf(ImxStreamBuffer &imxBufA, ImxStreamBuffer &imxBufB) {
-    ImxStreamBuffer tmpBuf = imxBufA;
-    imxBufA = imxBufB;
-    imxBufB = tmpBuf;
-
-    return;
 }
 
 static int32_t StreamBufferToImageBuffer(ImxStreamBuffer &streamBuffer, ImxImageBuffer &imageBuffer) {
@@ -227,6 +164,58 @@ int32_t handleFrame(ImxStreamBuffer &dstBuf, ImxStreamBuffer &srcBuf, ImxEngine 
     StreamBufferToImageBuffer(dstBuf, imageBufferDst);
 
     return imageProcess->ConvertImage(imageBufferDst, imageBufferSrc, engine);
+}
+
+ImxStreamBuffer *CreateImxStreamBufferFromBufferHandle(buffer_handle_t buffer, Stream *stream) {
+    if (buffer == NULL || stream == NULL)
+        return NULL;
+
+    ImxStreamBuffer *imxBuf = new ImxStreamBuffer();
+    if (imxBuf == NULL)
+        return NULL;
+
+    int ret = GetBufferInfoFromHandle(buffer, *imxBuf);
+    if (ret) {
+        ALOGE("%s, GetBufferInfoFromHandle failed, ret %d", __func__, ret);
+        goto error;
+    }
+
+    imxBuf->mFormatSize = getSizeByForamtRes(imxBuf->mFormat, stream->width, stream->height, false);
+    if (imxBuf->mFormatSize == 0)
+        imxBuf->mFormatSize = imxBuf->mSize;
+
+    imxBuf->mStream = new ImxStream(stream->width, stream->height, imxBuf->mFormat, stream->usage,
+                                    stream->id, false);
+
+    if (imxBuf->mStream == NULL)
+        goto error;
+
+    goto finish;
+
+error:
+    if (imxBuf && imxBuf->mVirtAddr)
+        UnlockPhyBuffer(buffer);
+    if (imxBuf)
+        delete (imxBuf);
+
+    return NULL;
+
+finish:
+    return imxBuf;
+}
+
+void ReleaseImxStreamBuffer(ImxStreamBuffer *imxBuf) {
+    if (imxBuf == NULL)
+        return;
+
+    if (imxBuf->mStream)
+        delete (imxBuf->mStream);
+
+    buffer_handle_t handle = imxBuf->buffer;
+    if (handle)
+        UnlockPhyBuffer(handle);
+
+    delete imxBuf;
 }
 
 } // namespace android

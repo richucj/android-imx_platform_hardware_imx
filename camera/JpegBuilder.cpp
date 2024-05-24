@@ -31,7 +31,6 @@
 #include "CameraConfigurationParser.h"
 #include "CameraMetadata.h"
 #include "CameraUtils.h"
-#include "ISPWrapper.h"
 #include "log/log.h"
 
 extern "C" {
@@ -219,6 +218,9 @@ void JpegBuilder::setMetadata(CameraMetadata *meta) {
 status_t JpegBuilder::encodeImage(JpegParams *mainJpeg, JpegParams *thumbNail, char *hw_jpeg_enc,
                                   CameraMetadata &meta) {
     status_t ret = NO_ERROR;
+
+    if (mainJpeg == NULL)
+        return BAD_VALUE;
 
     mMainInput = mainJpeg;
     mThumbnailInput = thumbNail;

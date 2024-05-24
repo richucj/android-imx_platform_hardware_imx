@@ -185,12 +185,6 @@ status_t CameraDeviceSessionHwlImpl::Initialize(uint32_t camera_id,
         ALOGI("%s: current_focal_length_ set: %5.2f\n", __FUNCTION__, logical_entry.data.f[0]);
     }
 
-    pMemManager = fsl::MemoryManager::getInstance();
-    if (pMemManager == NULL) {
-        ALOGE("%s, unexpected, pMemManager is null !!!", __func__);
-        return BAD_VALUE;
-    }
-
     // create jpeg builder
     mJpegBuilder = new JpegBuilder();
 
@@ -243,7 +237,6 @@ CameraDeviceSessionHwlImpl::CameraDeviceSessionHwlImpl(PhysicalMetaMapPtr physic
     memset(&m3aState, 0, sizeof(m3aState));
     memset(&caps_supports, 0, sizeof(caps_supports));
 
-    pMemManager = NULL;
     m_meta = NULL;
     mSettings = NULL;
     mDebug = false;
@@ -445,7 +438,6 @@ int CameraDeviceSessionHwlImpl::HandleRequest() {
             return OK;
         }
     }
-
 
     auto it = map_frame_request.begin();
     uint32_t frame = it->first;
@@ -928,74 +920,6 @@ int CameraDeviceSessionHwlImpl::HandleImage() {
     return 0;
 }
 
-ImxStreamBuffer *CameraDeviceSessionHwlImpl::CreateImxStreamBufferFromStreamBuffer(
-        StreamBuffer *buf, Stream *stream) {
-    void *pBuf = NULL;
-    fsl::Memory *handle = NULL;
-
-    if ((buf == NULL) || (buf->buffer == NULL) || (stream == NULL))
-        return NULL;
-
-    ImxStreamBuffer *imxBuf = new ImxStreamBuffer();
-    if (imxBuf == NULL)
-        return NULL;
-
-    handle = (fsl::Memory *)(buf->buffer);
-    pMemManager->lock(handle, handle->usage, 0, 0, handle->width, handle->height, &pBuf);
-
-    imxBuf->mVirtAddr = pBuf;
-    imxBuf->mPhyAddr = handle->phys;
-    imxBuf->mSize = handle->size;
-    imxBuf->buffer = buf->buffer;
-    imxBuf->mFormatSize = getSizeByForamtRes(handle->format, stream->width, stream->height, false);
-    if (imxBuf->mFormatSize == 0)
-        imxBuf->mFormatSize = imxBuf->mSize;
-
-    ALOGV("%s, buffer: virt %p, phy 0x%lx, size %zu, format 0x%x, acquire_fence %p, release_fence "
-          "%p, stream: res %dx%d, format 0x%x, size %d",
-          __func__, imxBuf->mVirtAddr, imxBuf->mPhyAddr, imxBuf->mSize, handle->format,
-          buf->acquire_fence, buf->release_fence, stream->width, stream->height, stream->format,
-          stream->buffer_size);
-
-    bool bPreview = false;
-    if ((stream->format == HAL_PIXEL_FORMAT_IMPLEMENTATION_DEFINED) &&
-        ((stream->usage & GRALLOC_USAGE_HW_VIDEO_ENCODER) == 0))
-        bPreview = true;
-
-    imxBuf->mStream = new ImxStream(stream->width, stream->height, handle->format, stream->usage,
-                                    stream->id, bPreview);
-
-    if (imxBuf->mStream == NULL)
-        goto error;
-
-    goto finish;
-
-error:
-    if (imxBuf)
-        free(imxBuf);
-
-    if (pBuf)
-        pMemManager->unlock(handle);
-
-    return NULL;
-
-finish:
-    return imxBuf;
-}
-
-void CameraDeviceSessionHwlImpl::ReleaseImxStreamBuffer(ImxStreamBuffer *imxBuf) {
-    if (imxBuf == NULL)
-        return;
-
-    if (imxBuf->mStream)
-        delete (imxBuf->mStream);
-
-    fsl::Memory *handle = (fsl::Memory *)(imxBuf->buffer);
-    pMemManager->unlock(handle);
-
-    delete imxBuf;
-}
-
 Stream *CameraDeviceSessionHwlImpl::GetStreamFromStreamBuffer(StreamBuffer *buf) {
     if (buf == NULL)
         return NULL;
@@ -1096,7 +1020,7 @@ status_t CameraDeviceSessionHwlImpl::ProcessCapbuf2Outbuf(ImxStreamBuffer *srcBu
         return BAD_VALUE;
     }
 
-    ImxStreamBuffer *dstBuf = CreateImxStreamBufferFromStreamBuffer(it, pStream);
+    ImxStreamBuffer *dstBuf = CreateImxStreamBufferFromBufferHandle(it->buffer, pStream);
     if (dstBuf == NULL)
         return BAD_VALUE;
 
@@ -1112,8 +1036,8 @@ status_t CameraDeviceSessionHwlImpl::ProcessCapbuf2Outbuf(ImxStreamBuffer *srcBu
     // If resize for preview stream, there will be obvious changes in the preview when taking
     // picture. And if there is a new dst addr, the process will not be skipped, otherwise it will
     // flash green.
-    if (((src->width() != dst->width()) || (src->height() != dst->height())) &&
-        dst->isPreview() && src->isPictureIntent()) {
+    if (((src->width() != dst->width()) || (src->height() != dst->height())) && dst->isPreview() &&
+        src->isPictureIntent()) {
         if (!setDstPhyAddr.empty() &&
             (setDstPhyAddr.find(dstBuf->mPhyAddr) != setDstPhyAddr.end())) {
             isSkipHandle = true;
@@ -1303,8 +1227,7 @@ int32_t CameraDeviceSessionHwlImpl::processJpegBuffer(ImxStreamBuffer *srcBuf,
     // Handle zoom in
     if (srcStream->mZoomRatio > 1.0) {
         resizeBuf.mFormatSize = srcBuf->mFormatSize;
-        resizeBuf.mSize = (resizeBuf.mFormatSize + PAGE_SIZE) & (~(PAGE_SIZE - 1));
-        ret = AllocPhyBuffer(resizeBuf);
+        ret = AllocPhyBuffer(srcBuf->mWidth, srcBuf->mHeight, srcBuf->mFormat, resizeBuf);
         if (ret) {
             ALOGE("%s:%d AllocPhyBuffer failed", __func__, __LINE__);
             return BAD_VALUE;
@@ -1367,7 +1290,7 @@ err_out:
 
     if (resizeBuf.mPhyAddr > 0) {
         SwitchImxBuf(*srcBuf, resizeBuf);
-        FreePhyBuffer(resizeBuf);
+        FreePhyBuffer(resizeBuf.buffer);
     }
 
     return ret;

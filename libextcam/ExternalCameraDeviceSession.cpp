@@ -41,10 +41,6 @@
 
 #include <deque>
 
-#include "Memory.h"
-#include "MemoryDesc.h"
-#include "MemoryManager.h"
-
 #define HAVE_JPEG // required for libyuv.h to export MJPEG decode APIs
 #include <libyuv.h>
 #include <libyuv/convert.h>
@@ -54,7 +50,6 @@ public:
     SingletonWrap() {
         ALOGI("%s", __func__);
         fsl::ImageProcess::getInstance();
-        fsl::MemoryManager::getInstance();
     }
 
     ~SingletonWrap() {
@@ -62,10 +57,6 @@ public:
         fsl::ImageProcess* imageProcess = fsl::ImageProcess::getInstance();
         if (imageProcess)
             delete imageProcess;
-
-        fsl::MemoryManager* allocator = fsl::MemoryManager::getInstance();
-        if (allocator)
-            delete allocator;
     }
 };
 
@@ -1529,20 +1520,23 @@ Status ExternalCameraDeviceSession::importRequestLockedImpl(
             Status st = importBufferLocked(streamIds[i], allBufIds[i], allBufs[i], &allBufPtrs[i]);
             if (st != Status::OK) {
                 // Detailed error logs printed in importBuffer
+                native_handle_delete((native_handle_t *)allBufs[i]);
                 return st;
             }
+            native_handle_delete((native_handle_t *)allBufs[i]);
         }
     }
 
     // All buffers are imported. Now validate output buffer acquire fences
     for (size_t i = 0; i < numOutputBufs; i++) {
-        if (!sHandleImporter.importFence(::android::makeFromAidl(
-                                                 request.outputBuffers[i].acquireFence),
-                                         allFences[i])) {
+        native_handle_t* handle = ::android::makeFromAidl(request.outputBuffers[i].acquireFence);
+        if (!sHandleImporter.importFence(handle, allFences[i])) {
             ALOGE("%s: output buffer %zu acquire fence is invalid", __FUNCTION__, i);
             cleanupInflightFences(allFences, i);
+            native_handle_delete(handle);
             return Status::INTERNAL_ERROR;
         }
+        native_handle_delete(handle);
     }
     return Status::OK;
 }
@@ -2233,9 +2227,11 @@ bool ExternalCameraDeviceSession::BufferRequestThread::threadLoop() {
                     // TODO: create a batch import API so we don't need to lock/unlock mCbsLock
                     // repeatedly?
                     lk.unlock();
+                    native_handle_t* handle = makeFromAidl(hBuf.buffer);
                     Status s =
-                            parent->importBuffer(streamId, hBuf.bufferId, makeFromAidl(hBuf.buffer),
+                            parent->importBuffer(streamId, hBuf.bufferId, handle,
                                                  /*out*/ &mBufferReqs[i].bufPtr);
+                    native_handle_delete(handle);
                     lk.lock();
 
                     if (s != Status::OK) {
@@ -2243,12 +2239,15 @@ bool ExternalCameraDeviceSession::BufferRequestThread::threadLoop() {
                         cleanupInflightFences(importedFences, i - 1);
                         return false;
                     }
-                    if (!sHandleImporter.importFence(makeFromAidl(hBuf.acquireFence),
+                    native_handle_t* fenceHandle = makeFromAidl(hBuf.acquireFence);
+                    if (!sHandleImporter.importFence(fenceHandle,
                                                      mBufferReqs[i].acquireFence)) {
                         ALOGE("%s: stream %d import fence failed!", __FUNCTION__, streamId);
                         cleanupInflightFences(importedFences, i - 1);
+                        native_handle_delete(fenceHandle);
                         return false;
                     }
+                    native_handle_delete(fenceHandle);
                     importedFences[i] = mBufferReqs[i].acquireFence;
                 } break;
                 default:
@@ -2349,11 +2348,17 @@ Status ExternalCameraDeviceSession::OutputThread::allocateIntermediateBuffers(
 
     // Allocating scaled buffers
     uint32_t scaledFormat = format;
+    char socType[128] = {0};
+    property_get("ro.boot.soc_type", socType, "");
 
-    // 8qm/8qxp decoded to yuyv, 8mq decoded to nv16, since yuv422iResize/yuv422spResize just pass
-    // start address(y), so use V4L2_PIX_FMT_YUYV is ok, just allocate w*h*2 size buffer.
-    if (mHardwareDecoder && parent->getHardwareDecFlag())
-        scaledFormat = V4L2_PIX_FMT_YUYV;
+    // 8qm/8qxp decoded to yuyv, 8mq decoded to nv16, set the correct scaledFormat, or will meet
+    // data error when get croplayout if need scale(e.g. 960x720-->640x480).
+    if (mHardwareDecoder && parent->getHardwareDecFlag()) {
+        if (strcmp(socType, "imx8mq") == 0)
+            scaledFormat = V4L2_PIX_FMT_NV16;
+        else
+            scaledFormat = V4L2_PIX_FMT_YUYV;
+    }
 
     for (const auto& stream : streams) {
         Size sz = {stream.width, stream.height};
@@ -2593,15 +2598,73 @@ void ExternalCameraDeviceSession::OutputThread::signalRequestDone() {
     mRequestDoneCond.notify_one();
 }
 
-int ExternalCameraDeviceSession::OutputThread::cropAndScaleLocked(
-        std::shared_ptr<AllocatedFrame>& in, const Size& outSz, YCbCrLayout* out, uint64_t *outPhyAddr) {
+int ExternalCameraDeviceSession::OutputThread::scaleData(std::shared_ptr<AllocatedFrame>& in,
+                                                         YCbCrLayout& inputLayout,
+                                                         const IMapper::Rect& inputCrop,
+                                                         std::shared_ptr<AllocatedFrame>& out,
+                                                         YCbCrLayout& outLayout,
+                                                         const Size& outSz) {
+    int ret;
+    ALOGV("%s: inputCrop.width %d, inputCrop.height:%d  --> outSz.width:%d, outSz.height:%d",
+          __func__, inputCrop.width, inputCrop.height, outSz.width, outSz.height);
+    if (in->mFourcc == V4L2_PIX_FMT_YUV420)
+        ret = libyuv::I420Scale(static_cast<uint8_t*>(inputLayout.y), inputLayout.yStride,
+                                static_cast<uint8_t*>(inputLayout.cb), inputLayout.cStride,
+                                static_cast<uint8_t*>(inputLayout.cr), inputLayout.cStride,
+                                inputCrop.width, inputCrop.height,
+                                static_cast<uint8_t*>(outLayout.y), outLayout.yStride,
+                                static_cast<uint8_t*>(outLayout.cb), outLayout.cStride,
+                                static_cast<uint8_t*>(outLayout.cr), outLayout.cStride, outSz.width,
+                                outSz.height,
+                                // TODO: b/72261744 see if we can use better filter without losing
+                                // too much perf
+                                libyuv::FilterMode::kFilterNone);
+    else if (in->mFourcc == V4L2_PIX_FMT_NV12)
+        ret = libyuv::NV12Scale(static_cast<uint8_t*>(inputLayout.y), inputLayout.yStride,
+                                static_cast<uint8_t*>(inputLayout.cb), inputLayout.cStride,
+                                inputCrop.width, inputCrop.height,
+                                static_cast<uint8_t*>(outLayout.y), outLayout.yStride,
+                                static_cast<uint8_t*>(outLayout.cb), outLayout.cStride, outSz.width,
+                                outSz.height,
+                                // TODO: b/72261744 see if we can use better filter without losing
+                                // too much perf
+                                libyuv::FilterMode::kFilterNone);
+    else if ((in->mFourcc == V4L2_PIX_FMT_NV16) || (in->mFourcc == V4L2_PIX_FMT_YUYV)) {
+        uint64_t outPhy = 0;
+        uint8_t* outVirt = NULL;
+        size_t outSize = 0;
+        uint64_t inPhy = 0;
+        uint8_t* inVirt = NULL;
+        size_t inSize = 0;
+        out->getPhyAddr(outPhy);
+        out->getData(&outVirt, &outSize);
+        in->getPhyAddr(inPhy);
+        in->getData(&inVirt, &inSize);
 
-    auto parent = mParent.lock();
-    if (parent == nullptr) {
-        ALOGE("%s: session has been disconnected!", __FUNCTION__);
+        ALOGI("%s: fmt 0x%x, outPhy 0x%llx, outVirt %p, outSize %d, inPhy 0x%llx, inVirt %p, inSize %d",
+              __func__, in->mFourcc, (unsigned long long)outPhy, outVirt, (int)outSize,
+              (unsigned long long)inPhy, inVirt, (int)inSize);
+
+        ret = handleFrame(outSz.width, outSz.height, in->mFourcc, in->mFourcc, outPhy, inPhy,
+                          in->mWidth, in->mHeight, in->mWidth, outSz.width, (void*)inVirt,
+                          (void*)outVirt);
+    } else {
+        ALOGW("%s: unsupported v4l2 format 0x%x", __func__, in->mFourcc);
         return -1;
     }
 
+    if (ret != 0) {
+        ALOGE("%s: failed to scale buffer from %dx%d to %dx%d. Ret %d", __FUNCTION__,
+              inputCrop.width, inputCrop.height, outSz.width, outSz.height, ret);
+        return ret;
+    }
+
+    return 0;
+}
+
+int ExternalCameraDeviceSession::OutputThread::cropAndScaleLocked(
+        std::shared_ptr<AllocatedFrame>& in, const Size& outSz, YCbCrLayout* out,
+        uint64_t* outPhyAddr) {
     Size inSz = {in->mWidth, in->mHeight};
 
     int ret;
@@ -2614,12 +2677,6 @@ int ExternalCameraDeviceSession::OutputThread::cropAndScaleLocked(
         return ret;
     }
 
-    YCbCrLayout croppedLayout;
-    if (mHardwareDecoder && parent->getHardwareDecFlag()) {
-        in->getLayout(&croppedLayout);
-        goto scale;
-    }
-
     // Cropping to output aspect ratio
     IMapper::Rect inputCrop;
     ret = getCropRect(mCroppingType, inSz, outSz, &inputCrop);
@@ -2629,6 +2686,7 @@ int ExternalCameraDeviceSession::OutputThread::cropAndScaleLocked(
         return ret;
     }
 
+    YCbCrLayout croppedLayout;
     ret = in->getCroppedLayout(inputCrop, &croppedLayout);
     if (ret != 0) {
         ALOGE("%s: failed to crop input image %dx%d to output size %dx%d", __FUNCTION__, inSz.width,
@@ -2643,7 +2701,6 @@ int ExternalCameraDeviceSession::OutputThread::cropAndScaleLocked(
         return 0;
     }
 
-scale:
     auto it = mScaledYu12Frames.find(outSz);
     std::shared_ptr<AllocatedFrame> scaledYu12Buf;
     if (it != mScaledYu12Frames.end()) {
@@ -2657,6 +2714,7 @@ scale:
         }
         scaledYu12Buf = it->second;
     }
+
     // Scale
     YCbCrLayout outLayout;
     ret = scaledYu12Buf->getLayout(&outLayout);
@@ -2664,47 +2722,9 @@ scale:
         ALOGE("%s: failed to get output buffer layout", __FUNCTION__);
         return ret;
     }
-
-    if (mHardwareDecoder && parent->getHardwareDecFlag()) {
-        uint64_t srcPhyAddr = 0;
-        uint64_t dstPhyAddr = 0;
-        in->getPhyAddr(srcPhyAddr);
-        scaledYu12Buf->getPhyAddr(dstPhyAddr);
-
-        ret = handleFrame(outSz.width, outSz.height, in->mFourcc, in->mFourcc, dstPhyAddr, srcPhyAddr,
-            in->mWidth, in->mHeight, croppedLayout.yStride, outLayout.yStride, croppedLayout.y, outLayout.y);
-
-        if (outPhyAddr) {
-            *outPhyAddr = dstPhyAddr;
-        }
-    } else {
-        if (mInterBufFormat == V4L2_PIX_FMT_YUV420)
-            ret = libyuv::I420Scale(static_cast<uint8_t*>(croppedLayout.y), croppedLayout.yStride,
-                                    static_cast<uint8_t*>(croppedLayout.cb), croppedLayout.cStride,
-                                    static_cast<uint8_t*>(croppedLayout.cr), croppedLayout.cStride,
-                                    inputCrop.width, inputCrop.height,
-                                    static_cast<uint8_t*>(outLayout.y), outLayout.yStride,
-                                    static_cast<uint8_t*>(outLayout.cb), outLayout.cStride,
-                                    static_cast<uint8_t*>(outLayout.cr), outLayout.cStride, outSz.width,
-                                    outSz.height,
-                                    // TODO: b/72261744 see if we can use better filter without losing
-                                    // too much perf
-                                    libyuv::FilterMode::kFilterNone);
-        else
-            ret = libyuv::NV12Scale(static_cast<uint8_t*>(croppedLayout.y), croppedLayout.yStride,
-                                    static_cast<uint8_t*>(croppedLayout.cb), croppedLayout.cStride,
-                                    inputCrop.width, inputCrop.height,
-                                    static_cast<uint8_t*>(outLayout.y), outLayout.yStride,
-                                    static_cast<uint8_t*>(outLayout.cb), outLayout.cStride, outSz.width,
-                                    outSz.height,
-                                    // TODO: b/72261744 see if we can use better filter without losing
-                                    // too much perf
-                                    libyuv::FilterMode::kFilterNone);
-    }
-
+    ret = scaleData(in, croppedLayout, inputCrop, scaledYu12Buf, outLayout, outSz);
     if (ret != 0) {
-        ALOGE("%s: failed to scale buffer from %dx%d to %dx%d. Ret %d", __FUNCTION__,
-              inputCrop.width, inputCrop.height, outSz.width, outSz.height, ret);
+        ALOGE("%s: failed to scaleData", __FUNCTION__);
         return ret;
     }
 
@@ -2816,51 +2836,9 @@ int ExternalCameraDeviceSession::OutputThread::cropAndScaleThumbLocked(
         ALOGE("%s: failed to get output buffer layout", __FUNCTION__);
         return ret;
     }
-
-    if (in->mFourcc == V4L2_PIX_FMT_YUV420)
-        ret = libyuv::I420Scale(static_cast<uint8_t*>(inputLayout.y), inputLayout.yStride,
-                                static_cast<uint8_t*>(inputLayout.cb), inputLayout.cStride,
-                                static_cast<uint8_t*>(inputLayout.cr), inputLayout.cStride,
-                                inputCrop.width, inputCrop.height,
-                                static_cast<uint8_t*>(outFullLayout.y), outFullLayout.yStride,
-                                static_cast<uint8_t*>(outFullLayout.cb), outFullLayout.cStride,
-                                static_cast<uint8_t*>(outFullLayout.cr), outFullLayout.cStride,
-                                outSz.width, outSz.height, libyuv::FilterMode::kFilterNone);
-    else if (in->mFourcc == V4L2_PIX_FMT_NV12)
-        ret = libyuv::NV12Scale(static_cast<uint8_t*>(inputLayout.y), inputLayout.yStride,
-                                static_cast<uint8_t*>(inputLayout.cb), inputLayout.cStride,
-                                inputCrop.width, inputCrop.height,
-                                static_cast<uint8_t*>(outFullLayout.y), outFullLayout.yStride,
-                                static_cast<uint8_t*>(outFullLayout.cb), outFullLayout.cStride,
-                                outSz.width, outSz.height, libyuv::FilterMode::kFilterNone);
-    else if ((in->mFourcc == V4L2_PIX_FMT_NV16) || (in->mFourcc == V4L2_PIX_FMT_YUYV)) {
-        uint64_t outPhy = 0;
-        uint8_t* outVirt = NULL;
-        size_t outSize = 0;
-        uint64_t inPhy = 0;
-        uint8_t* inVirt = NULL;
-        size_t inSize = 0;
-
-        mYu12ThumbFrame->getPhyAddr(outPhy);
-        mYu12ThumbFrame->getData(&outVirt, &outSize);
-        in->getPhyAddr(inPhy);
-        in->getData(&inVirt, &inSize);
-
-        ALOGI("%s: fmt 0x%x, outPhy 0x%llx, outVirt %p, outSize %d, inPhy 0x%llx, inVirt %p, inSize %d",
-              __func__, in->mFourcc, (unsigned long long)outPhy, outVirt, (int)outSize,
-              (unsigned long long)inPhy, inVirt, (int)inSize);
-
-        ret = handleFrame(outSz.width, outSz.height, in->mFourcc, mYu12ThumbFrame->mFourcc, outPhy,
-                          inPhy, in->mWidth, in->mHeight, in->mWidth, outSz.width, (void*)inVirt,
-                          (void*)outVirt);
-    } else {
-        ALOGW("%s: unsupported v4l2 format 0x%x", __func__, in->mFourcc);
-        return -1;
-    }
-
+    ret = scaleData(in, inputLayout, inputCrop, mYu12ThumbFrame, outFullLayout, outSz);
     if (ret != 0) {
-        ALOGE("%s: failed to scale buffer from %dx%d to %dx%d. Ret %d", __FUNCTION__,
-              inputCrop.width, inputCrop.height, outSz.width, outSz.height, ret);
+        ALOGE("%s: failed to scaleData", __FUNCTION__);
         return ret;
     }
 
@@ -3168,8 +3146,7 @@ int ExternalCameraDeviceSession::OutputThread::VpuDecGetBuffer(uint8_t* inData, 
 
     int fd = mDecodedData.fd;
     void* vaddr = mmap(0, size, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
-    uint64_t phyAddr = 0;
-    IMXGetBufferAddr(fd, size, phyAddr, false);
+    uint64_t phyAddr = GetPhyAddrFromBuffer(fd);
 
     // assign decoded data to mYu12Frame
     mYu12Frame = std::make_shared<AllocatedFramePhyMem>(mDecodedData.width, mDecodedData.height, fourcc);
@@ -3253,8 +3230,13 @@ int ExternalCameraDeviceSession::OutputThread::CopyFromPrcdBuf(HalStreamBuffer &
 
         formatConvert(prcdOutLayout, outLayout, sz, outputFourcc, outputFourcc);
 
-        sHandleImporter.unlock(*(prcdBuf->bufPtr));
-        int relFence = sHandleImporter.unlock(*(halBuf.bufPtr));
+        // Actually no need to set acquireFence again, which has been set in previous cycles as "halBuf"
+        // Here to fix the coverity issue: 34567666 Unchecked return value.
+        int relFence = sHandleImporter.unlock(*(prcdBuf->bufPtr));
+        if (relFence >= 0) {
+            prcdBuf->acquireFence = relFence;
+        }
+        relFence = sHandleImporter.unlock(*(halBuf.bufPtr));
         if (relFence >= 0) {
             halBuf.acquireFence = relFence;
         }
@@ -3279,6 +3261,9 @@ int ExternalCameraDeviceSession::OutputThread::handleFrame(uint32_t dstWidth, ui
     uint32_t srcValidWidth = srcWidth;
     uint32_t srcValidHeight = srcHeight;
 
+    ALOGV("%s: srcWidth %d, srcHeight %d, srcStride:%d src_fourcc:0x%x, srcVirtAddr:%p  --->  dstWidth:%d, dstHeight:%d, dstStride:%d, dst_fourcc:0x%x, dstVirtAddr:%p",
+          __func__, srcWidth, srcHeight, srcStride, src_fourcc, srcVirtAddr, dstWidth, dstHeight,
+          dstStride, dst_fourcc, dstVirtAddr);
     // mjpg hareware decoder is 16 aligned.
     // srcValidHeight is used to process pixels.
     // srcHeight is used to jump planes.
@@ -3694,11 +3679,7 @@ bool ExternalCameraDeviceSession::OutputThread::threadLoop() {
                 if (mDebug)
                     t1 = systemTime();
                 if (mHardwareDecoder && parent->getHardwareDecFlag()) {
-                    uint64_t dstPhyAddr = 0;
-                    fsl::Memory *fslMem = (fsl::Memory *)(*halBuf.bufPtr);
-                    IMXGetBufferAddr(fslMem->fd, fslMem->size, dstPhyAddr, false);
-                    ALOGV("%s: fslMem, fd %d, size %d, width %d, height %d, format 0x%x", __func__, fslMem->fd, fslMem->size, fslMem->width, fslMem->height, fslMem->format);
-
+                    uint64_t dstPhyAddr = GetPhyAddrFromBuffer((*halBuf.bufPtr)->data[0]);
                     uint8_t* outData;
                     size_t dataSize;
                     mYu12Frame->getData(&outData, &dataSize);

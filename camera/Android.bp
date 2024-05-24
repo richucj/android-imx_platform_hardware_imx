@@ -30,22 +30,13 @@ imx_camera_defaults {
     //},
 
     srcs: [
-        "CameraProviderHWLImpl.cpp",
-        "CameraDeviceHWLImpl.cpp",
-        "CameraDeviceSessionHWLImpl.cpp",
         "CameraMetadata.cpp",
-        "VideoStream.cpp",
-        "MMAPStream.cpp",
-        "DMAStream.cpp",
-        "UvcStream.cpp",
         "CameraUtils.cpp",
         "JpegBuilder.cpp",
         "HwJpegEncoder.cpp",
         "YuvToJpegEncoder.cpp",
         "ExifUtils.cpp",
         "CameraConfigurationParser.cpp",
-        "ISPCameraDeviceHWLImpl.cpp",
-        "ISPWrapper.cpp"
     ],
     cflags: [
         "-Wextra",
@@ -64,7 +55,6 @@ imx_camera_defaults {
         "liblog",
         "libutils",
         "libbinder",
-        "libfsldisplay",
         "libui",
         "libsync",
         "libimageprocess",
@@ -80,7 +70,6 @@ imx_camera_defaults {
         "frameworks/native/libs/arect/include",
         "vendor/nxp-opensource/imx/include",
         "vendor/nxp-opensource/imx/opencl-2d",
-        "vendor/nxp-opensource/imx/display/display",
         "vendor/nxp-opensource/imx/image_process",
         "vendor/nxp/fsl-proprietary/include",
         "device/nxp/common/kernel-headers",
@@ -90,6 +79,9 @@ imx_camera_defaults {
     header_libs: [
         "libgooglecamerahal_headers",
     ],
+    lto: {
+        thin: true,
+    },
 }
 
 bootstrap_go_package {

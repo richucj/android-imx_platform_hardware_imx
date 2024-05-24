@@ -86,7 +86,7 @@ public:
     // Caller must use this method to check if CameraDeviceSession ctor failed
     bool isInitFailed();
     bool isClosed();
-    bool mSessionNeedHardwareDec;
+    bool mSessionNeedHardwareDec = false;
     uint32_t mInterBufFormat = V4L2_PIX_FMT_NV12;
 
     ScopedAStatus close() override;
@@ -267,9 +267,9 @@ public:
         std::string mExifMake;
         std::string mExifModel;
 
-        bool mHardwareDecoder;
-        bool mMjpgCopy;
-        bool mDebug;
+        bool mHardwareDecoder = false;
+        bool mMjpgCopy = true;
+        bool mDebug = false;
         uint32_t mInterBufFormat = V4L2_PIX_FMT_NV12;
 
         const std::shared_ptr<BufferRequestThread> mBufferRequestThread;
@@ -283,6 +283,9 @@ public:
                         uint32_t srcWidth = 0, uint32_t srcHeight = 0,
                         uint32_t srcStride = 0, uint32_t dstStride = 0,
                         void *srcVirtAddr = NULL, void *dstVirtAddr = NULL);
+        int scaleData(std::shared_ptr<AllocatedFrame>& in, YCbCrLayout& inputLayout,
+                      const IMapper::Rect& inputCrop, std::shared_ptr<AllocatedFrame>& out,
+                      YCbCrLayout& outLayout, const Size& outSz);
 
         bool mUseHalBufManager = false;
         ImxEngine mEngine = ENG_NOTCARE;
@@ -440,8 +443,8 @@ private:
 
     std::string mExifMake;
     std::string mExifModel;
-    bool mHardwareDecoder;
-    bool mMjpgCopy;
+    bool mHardwareDecoder = false;
+    bool mMjpgCopy = true;
     bool mUseHalBufManager = false;
 
     /* End of members not changed after initialize() */

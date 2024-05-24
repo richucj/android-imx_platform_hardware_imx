@@ -30,6 +30,7 @@ cc_library_shared {
         "libhidlbase",
         "libbase",
         "libutils",
+        "libdrm_android",
         "libdisplayutils",
         "libfsldisplay",
     ],
@@ -39,12 +40,12 @@ cc_library_shared {
         "libimapper_providerutils",
     ],
     static_libs: [
-        "libdrm",
         "libnxp_gralloc_driver",
         "libnxp_gralloc_utils",
     ],
     srcs: [
         "Mapper.cpp",
+        "registered_handle_pool.cpp",
     ],
     cpp_std: "c++20",
     cflags: [

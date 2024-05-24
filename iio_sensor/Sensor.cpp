@@ -26,7 +26,6 @@
 #include "LightSensor.h"
 #include "PressureSensor.h"
 #include "StepCounterSensor.h"
-#include "StepCounterSensor.h"
 
 namespace nxp_sensors_subhal {
 

@@ -21,7 +21,7 @@
 #include <hardware/gralloc1.h>
 #include <utils/Condition.h>
 #include <utils/Mutex.h>
-#include <utils/Thread.h>
+// #include <utils/Thread.h>
 
 #include <list>
 #include <map>
@@ -31,8 +31,6 @@
 #include "CameraDeviceHWLImpl.h"
 #include "CameraMetadata.h"
 #include "JpegBuilder.h"
-#include "MemoryManager.h"
-#include "UvcStream.h"
 
 using namespace fsl;
 
@@ -83,9 +81,11 @@ typedef struct tag_fence_fd_info {
 } FenceFdInfo;
 
 typedef struct tag_request {
+    uint32_t frame_number;
     HwlPipelineRequest hwlReq;
     std::vector<FenceFdInfo> outBufferFences;
     std::vector<uint32_t> camera_ids;
+    std::unique_ptr<libcamera::Request> request;
 
     // In SubmitRequests(), FrameRequest is a vector, although till now the vector size is 1.
     // In imgProc::HandleImage(), FrameRequest is proced one by one.
@@ -209,9 +209,6 @@ private:
     int32_t processFrameBuffer(ImxStreamBuffer *srcBuf, ImxStreamBuffer *dstBuf,
                                CameraMetadata *meta);
 
-    ImxStreamBuffer *CreateImxStreamBufferFromStreamBuffer(StreamBuffer *buf, Stream *stream);
-    void ReleaseImxStreamBuffer(ImxStreamBuffer *imxBuf);
-
     Stream *GetStreamFromStreamBuffer(StreamBuffer *buf);
 
     int CleanRequestsLocked();
@@ -223,80 +220,14 @@ private:
     void DumpRequest();
     void ReleaseFrameRequest(FrameRequest &frameRequest);
 
-    VideoStream *GetVideoStreamByPhysicalId(uint32_t physical_id);
     PipelineInfo *GetPipelineInfo(uint32_t id);
+    void requestComplete(libcamera::Request *request);
+    std::unique_ptr<libcamera::FrameBuffer> CreateFrameBuffer(
+            const buffer_handle_t hnd, const libcamera::StreamConfiguration &streamConfig);
 
-private:
-    class WorkThread : public Thread {
-    public:
-        WorkThread(CameraDeviceSessionHwlImpl *pSession) : Thread(false), mSession(pSession) {}
-
-        virtual void onFirstRef() { run("WorkThread", PRIORITY_URGENT_DISPLAY); }
-
-        virtual status_t readyToRun() {
-            ALOGI("WorkThread, readyToRun");
-            return 0;
-        }
-
-        virtual bool threadLoop() {
-            int ret = mSession->HandleRequest();
-            if (ret != OK) {
-                ALOGI("%s exit...", __func__);
-                return false;
-            }
-            return true;
-        }
-
-    private:
-        CameraDeviceSessionHwlImpl *mSession;
-    };
-
-    typedef struct tag_ImageFeed {
-        uint32_t frame;
-        uint64_t timestamp_ns;
-        uint64_t readout_timestamp_ns;
-        ImxStreamBuffer *v4l2Buffer;
-        FrameRequest *frameRequest;
-        std::vector<ImxStreamBuffer *> v4l2BufferList; // for logical camera
-    } ImageFeed;
-
-    class ImgProcThread : public Thread {
-    public:
-        ImgProcThread(CameraDeviceSessionHwlImpl *pSession) : Thread(false), mSession(pSession) {}
-
-        virtual void onFirstRef() { run("ImgProcThread", PRIORITY_URGENT_DISPLAY); }
-
-        virtual status_t readyToRun() {
-            ALOGI("ImgProcThread, readyToRun");
-            return 0;
-        }
-
-        virtual bool threadLoop() {
-            int ret = mSession->HandleImage();
-            if (ret != OK) {
-                ALOGI("%s exit...", __func__);
-                return false;
-            }
-            return true;
-        }
-
-        int feed(ImageFeed *imgFeed);
-        void releaseImgFeed(ImageFeed *imgFeed);
-        void drainImages(uint32_t waitItvlUs);
-        void DumpImage();
-
-    public:
-        CameraDeviceSessionHwlImpl *mSession;
-
-    public:
-        Mutex mImageListLock;
-        Condition mImageListCond;
-        std::list<ImageFeed *> mImageList;
-        uint64_t mLatestImageIdx = 0;
-        uint64_t mProcdImageIdx = 0;
-        uint32_t mLatestFrame = 0;
-        uint32_t mProcdFrame = 0;
-    };
+    Stream *GetStreamById(int32_t stream_id, PipelineInfo *pInfo);
+    int32_t GetStreamIdFromLibcameraStream(const libcamera::Stream *libCameraStream);
+    void DumpStreamWrapper(libcamera::Request *request);
 
 public:
     CameraSensorMetadata *getSensorData() { return &mSensorData; }
@@ -304,7 +235,6 @@ public:
     int getCapsMode(uint8_t sceneMode);
     int32_t getRawV4l2Format() { return m_raw_v4l2_format; }
     uint32_t cameraId() { return camera_id_; }
-    sp<ImgProcThread> &getImgProcThread() { return mImgProcThread; }
 
 public:
     bool mDebug;
@@ -326,11 +256,7 @@ private:
     std::vector<uint32_t> camera_ids;
 
     autoState m3aState;
-    fsl::MemoryManager *pMemManager;
-    std::vector<VideoStream *> pVideoStreams;
 
-    sp<WorkThread> mWorkThread;
-    sp<ImgProcThread> mImgProcThread;
     sp<JpegBuilder> mJpegBuilder;
 
     PhysicalMetaMapPtr physical_meta_map_;
@@ -338,7 +264,6 @@ private:
     std::unique_ptr<HalCameraMetadata> static_metadata_;
 
     std::vector<std::shared_ptr<char *>> mDevPath;
-    std::vector<uint32_t> mPhysicalIds;
 
     bool is_logical_device_ = false;
     bool is_logical_request_ = false;
@@ -367,7 +292,6 @@ private:
 
     int mMaxWidth = 0;
     int mMaxHeight = 0;
-    struct viv_caps_supports caps_supports;
 
     uint64_t mPreHandleImageTime;
     uint64_t mPreCapAndFeedTime;
@@ -375,6 +299,19 @@ private:
 
     uint64_t mInQueRequestIdx = 0;
     uint64_t mDeQueRequestIdx = 0;
+
+    enum CameraState {
+        Stopped,
+        Flushing,
+        Running,
+    };
+    CameraState state_;
+    std::shared_ptr<libcamera::Camera> camera_;
+    // std::unique_ptr<libcamera::CameraConfiguration> config_;
+    std::map<int32_t, libcamera::Stream *> mLibCameraStreamMap;
+    std::list<std::unique_ptr<libcamera::FrameBuffer>> mFrameBuffers;
+
+    std::map<int32_t, buffer_handle_t> mStreamMidBufMap; // used for jpeg stream
 
 public:
     int32_t m_raw_v4l2_format = -1;

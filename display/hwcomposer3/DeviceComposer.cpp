@@ -120,6 +120,7 @@ DeviceComposer::DeviceComposer() {
         mDisableFunction = NULL;
         mFinishEngine = NULL;
         mQueryFeature = NULL;
+        mBuffInfoFromFd = NULL;
     } else {
         ALOGI("load %s library successfully!", g2dlibName);
         mSetClipping = (hwc_func5)dlsym(mG2dHandle, "g2d_set_clipping");
@@ -136,6 +137,8 @@ DeviceComposer::DeviceComposer() {
         mQueryFeature = (hwc_func3)dlsym(mG2dHandle, "g2d_query_feature");
         mBuffInfoFromFd = (hwc_buf_func)dlsym(mG2dHandle, "g2d_buf_from_fd");
     }
+
+    memset(&mSolidColorBuffInfo, 0, sizeof(mSolidColorBuffInfo));
 }
 
 DeviceComposer::~DeviceComposer() {
@@ -244,7 +247,10 @@ int DeviceComposer::prepareSolidColorBuffer() {
     }
 
     mSolidColorBuffer = bufferHandle;
-    getInfoFromHandle(mSolidColorBuffer, &mSolidColorBuffInfo);
+    if (getInfoFromHandle(mSolidColorBuffer, &mSolidColorBuffInfo) != 0) {
+        ALOGE("%s: failed to get buffer info of solidcolor buffer", __FUNCTION__);
+        return -1;
+    }
 
     common::Rect rect;
     rect.left = rect.top = 0;
@@ -517,17 +523,14 @@ int DeviceComposer::setG2dSurface(struct g2d_surfaceEx& surfaceX, buffer_handle_
         case G2D_NV16:
         case G2D_NV12:
         case G2D_NV21:
-            surface.planes[1] = surface.planes[0] + surface.stride * alignHeight;
+            surface.planes[1] = surface.planes[0] + info.offsets[1];
             break;
 
         case G2D_I420:
         case G2D_YV12: {
-            int c_stride = (alignWidth / 2 + 15) / 16 * 16;
-            int stride = alignWidth;
-
-            surface.stride = alignWidth;
-            surface.planes[1] = surface.planes[0] + stride * alignHeight;
-            surface.planes[2] = surface.planes[1] + c_stride * alignHeight / 2;
+            surface.stride = info.strides[0];
+            surface.planes[1] = surface.planes[0] + info.offsets[1];
+            surface.planes[2] = surface.planes[0] + info.offsets[2];
         } break;
 
         default:
@@ -575,6 +578,7 @@ enum g2d_format DeviceComposer::convertFormat(int format, buffer_handle_t handle
             halFormat = G2D_I420;
             break;
         case DRM_FORMAT_YVU420_ANDROID:
+        case DRM_FORMAT_YVU420:
             halFormat = G2D_YV12;
             break;
         case DRM_FORMAT_NV16:
@@ -883,6 +887,13 @@ bool DeviceComposer::checkDeviceComposition(Layer* layer) {
         return false;
     }
 #endif
+
+    if (!(info.usage &
+          (GRALLOC_USAGE_PROTECTED | GRALLOC_USAGE_PRIVATE_3 | GRALLOC_USAGE_HW_COMPOSER |
+           GRALLOC_USAGE_HW_FB))) {
+        ALOGI("%s: g2d can't support the buffer from system/system-uncached heap", __FUNCTION__);
+        return false;
+    }
 
     return true;
 }

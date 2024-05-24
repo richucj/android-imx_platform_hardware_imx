@@ -199,6 +199,9 @@ int32_t MMAPStream::onDeviceStartLocked() {
         mBuffers[i]->mFd = expbuf.fd;
         mBuffers[i]->index = i;
         mBuffers[i]->mStream = this;
+        mBuffers[i]->mWidth = mWidth;
+        mBuffers[i]->mHeight = mHeight;
+        mBuffers[i]->mFormat = mFormat;
 
         if (mPlane) {
             mBuffers[i]->mPhyAddr = (size_t)buf.m.planes->m.mem_offset;
@@ -233,7 +236,8 @@ int32_t MMAPStream::onDeviceStartLocked() {
         }
 
         memset(mBuffers[i]->mVirtAddr, 0xFF, mBuffers[i]->mSize);
-        SetBufferHandle(*mBuffers[i]);
+        fsl::ImageProcess *imageProcess = fsl::ImageProcess::getInstance();
+        mBuffers[i]->buffer = imageProcess->createBufferHandle(*mBuffers[i]);
 
         ALOGI("%s, register buffer, phy 0x%lx, virt %p, size %d", __func__, mBuffers[i]->mPhyAddr,
               mBuffers[i]->mVirtAddr, (int)mBuffers[i]->mSize);
@@ -292,9 +296,8 @@ err:
             if (mBuffers[i]->mFd > 0)
                 close(mBuffers[i]->mFd);
 
-            fsl::Memory *handle = (fsl::Memory *)mBuffers[i]->buffer;
-            if (handle)
-                delete handle;
+            fsl::ImageProcess *imageProcess = fsl::ImageProcess::getInstance();
+            imageProcess->destroyBufferHandle(mBuffers[i]->buffer);
 
             delete mBuffers[i];
             mBuffers[i] = NULL;
@@ -330,9 +333,8 @@ int32_t MMAPStream::onDeviceStopLocked() {
             if (mBuffers[i]->mFd > 0)
                 close(mBuffers[i]->mFd);
 
-            fsl::Memory *handle = (fsl::Memory *)mBuffers[i]->buffer;
-            if (handle)
-                delete handle;
+            fsl::ImageProcess *imageProcess = fsl::ImageProcess::getInstance();
+            imageProcess->destroyBufferHandle(mBuffers[i]->buffer);
 
             delete mBuffers[i];
             mBuffers[i] = NULL;

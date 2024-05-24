@@ -18,14 +18,16 @@
 #include "ImageProcess.h"
 
 #include <cutils/log.h>
+#include <cutils/properties.h>
 #include <dlfcn.h>
 #include <g2d.h>
+#include <hardware/gralloc.h>
 #include <linux/ipu.h>
 #include <stdio.h>
 #include <system/graphics.h>
-#include <cutils/properties.h>
+#include <vndksupport/linker.h>
 
-#include "Composer.h"
+#include "Memory.h"
 
 extern "C" {
 #include <linux/pxp_device.h>
@@ -39,6 +41,7 @@ extern "C" {
 #define LIB_PATH2 "/vendor/lib"
 #endif
 
+#define GPUHELPER "libgpuhelper.so"
 #define CLENGINE "libg2d-opencl.so"
 #define G2DENGINE "libg2d"
 
@@ -162,6 +165,16 @@ ImageProcess::ImageProcess()
         if (ret != 0) {
             mG2dHandle = NULL;
         }
+    }
+
+    mHelperHandle = android_load_sphal_library(GPUHELPER, RTLD_LOCAL | RTLD_NOW);
+    if (mHelperHandle == NULL) {
+        ALOGE("fail to open libgpuhelper.so");
+        mLockSurface = NULL;
+        mUnlockSurface = NULL;
+    } else {
+        mLockSurface = (hwc_func1)dlsym(mHelperHandle, "hwc_lockSurface");
+        mUnlockSurface = (hwc_func1)dlsym(mHelperHandle, "hwc_unlockSurface");
     }
 
     memset(path, 0, sizeof(path));
@@ -498,20 +511,13 @@ int ImageProcess::ConvertImageByG2DCopy(ImxImageBuffer &dstBuf, ImxImageBuffer &
 
 static int AllocPhyBufferByFmtRes(ImxImageBuffer &imgBuf, uint32_t format, uint32_t width,
                                   uint32_t height, uint32_t stride) {
-    imgBuf.mFormatSize = getSizeByForamtRes(format, stride, height, false);
-    imgBuf.mSize = (imgBuf.mFormatSize + PAGE_SIZE) & (~(PAGE_SIZE - 1));
-
-    int ret = AllocPhyBuffer(imgBuf);
+    int ret = AllocPhyBuffer(stride, height, format, imgBuf);
     if (ret) {
         ALOGE("%s: AllocPhyBuffer failed, formatSize %d, allocSize %d", __func__,
               imgBuf.mFormatSize, imgBuf.mSize);
         return ret;
     }
 
-    imgBuf.mFormat = format;
-    imgBuf.mWidth = width;
-    imgBuf.mHeight = height;
-    imgBuf.mStride = stride;
     imgBuf.mHeightSpan = height;
 
     return 0;
@@ -521,9 +527,6 @@ int ImageProcess::ConvertImageByG2DBlit(ImxImageBuffer &dstBuf, ImxImageBuffer &
     if (mBlitEngine == NULL) {
         return -EINVAL;
     }
-
-    ImxImageBuffer resizeBuf;
-    memset(&resizeBuf, 0, sizeof(resizeBuf));
 
     // can't do csc for some formats.
     if (!(((dstBuf.mFormat == HAL_PIXEL_FORMAT_YCbCr_420_888) ||
@@ -592,10 +595,12 @@ int ImageProcess::ConvertImageByG2DBlit(ImxImageBuffer &dstBuf, ImxImageBuffer &
         Mutex::Autolock _l(mG2dLock);
         ret = mBlitEngine(g2dHandle, (void *)&s_surface, (void *)&d_surface);
         if (ret)
-            goto finish_blit;
+            return ret;
 
         mFinishEngine(g2dHandle);
     } else {
+        ImxImageBuffer resizeBuf;
+        memset(&resizeBuf, 0, sizeof(resizeBuf));
         struct g2d_surface tmp_surface;
 
         ret = AllocPhyBufferByFmtRes(resizeBuf, srcBuf.mFormat, dstBuf.mWidth, dstBuf.mHeight,
@@ -622,8 +627,10 @@ int ImageProcess::ConvertImageByG2DBlit(ImxImageBuffer &dstBuf, ImxImageBuffer &
 
         Mutex::Autolock _l(mG2dLock);
         ret = mBlitEngine(g2dHandle, (void *)&s_surface, (void *)&tmp_surface);
-        if (ret)
-            goto finish_blit;
+        if (ret) {
+            FreePhyBuffer(resizeBuf.buffer);
+            return ret;
+        }
 
         mFinishEngine(g2dHandle);
 
@@ -641,41 +648,66 @@ int ImageProcess::ConvertImageByG2DBlit(ImxImageBuffer &dstBuf, ImxImageBuffer &
         d_surface.rot = G2D_ROTATION_0;
 
         ret = mBlitEngine(g2dHandle, (void *)&tmp_surface, (void *)&d_surface);
-        if (ret)
-            goto finish_blit;
+        if (ret) {
+            FreePhyBuffer(resizeBuf.buffer);
+            return ret;
+        }
 
+        FreePhyBuffer(resizeBuf.buffer);
         mFinishEngine(g2dHandle);
     }
 
-finish_blit:
-    FreePhyBuffer(resizeBuf);
     return ret;
 }
 
-static void LockG2dAddr(ImxImageBuffer &imxBuf) {
-    fsl::MemoryDesc desc;
-    fsl::Memory *handle = NULL;
-    fsl::Composer *mComposer = fsl::Composer::getInstance();
-
+void ImageProcess::LockG2dAddr(ImxImageBuffer &imxBuf) {
     if (imxBuf.buffer == NULL) {
-        ALOGE("%s: mFd %d, buffer %p", __func__, imxBuf.mFd, imxBuf.buffer);
+        ALOGE("%s: mFd %d, buffer handle is invalid", __func__, imxBuf.mFd);
         return;
     }
 
-    handle = (fsl::Memory *)imxBuf.buffer;
-    mComposer->lockSurface(handle);
+    fsl::Memory *handle = (fsl::Memory *)imxBuf.buffer;
+    if (mLockSurface)
+        (*mLockSurface)(handle);
+
     imxBuf.mPhyAddr = handle->phys;
 
     return;
 }
 
-static void UnLockG2dAddr(ImxImageBuffer &imxBuf) {
-    fsl::Composer *mComposer = fsl::Composer::getInstance();
-    fsl::Memory *handle = (fsl::Memory *)imxBuf.buffer;
-    if (handle)
-        mComposer->unlockSurface(handle);
+void ImageProcess::UnLockG2dAddr(ImxImageBuffer &imxBuf) {
+    if (mUnlockSurface)
+        (*mUnlockSurface)((void *)imxBuf.buffer);
 
     return;
+}
+
+buffer_handle_t ImageProcess::createBufferHandle(ImxImageBuffer &imxBuf) {
+    fsl::Memory *handle = (fsl::Memory *)malloc(sizeof(fsl::Memory));
+
+    handle->version = sizeof(native_handle);
+    handle->magic = fsl::Memory::sMagic;
+    handle->numInts = fsl::Memory::sNumInts();
+    handle->numFds = 1;
+    handle->fd = imxBuf.mFd;
+    handle->fd_meta = -1;
+    handle->fd_region = -1;
+    handle->size = imxBuf.mSize;
+    handle->flags = 0;
+    handle->width = imxBuf.mSize / 4;
+    handle->height = 1;
+    handle->stride = handle->width;
+    handle->format = HAL_PIXEL_FORMAT_RGBA_8888;
+    handle->usage = 0;
+    handle->phys = imxBuf.mPhyAddr;
+    handle->base = (uint64_t)imxBuf.mVirtAddr;
+
+    return handle;
+}
+
+void ImageProcess::destroyBufferHandle(buffer_handle_t buffer) {
+    if (buffer)
+        free((void *)buffer);
 }
 
 int ImageProcess::ConvertImageByG2D(ImxImageBuffer &dstBuf, ImxImageBuffer &srcBuf,
@@ -803,7 +835,8 @@ int ImageProcess::ConvertImageByGPU_3D(ImxImageBuffer &dstBuf, ImxImageBuffer &s
     // 2) For MMAP buffer type, the v4l2 buffer is allocated by driver and should be cacheable.
     //    The v4l2 buffer will only be read by ENG_CPU.
     //    GPU3D uses physical address, no need to flush the input buffer.
-    bool bOutputCached = dstBuf.mUsage & (USAGE_SW_READ_OFTEN | USAGE_SW_WRITE_OFTEN);
+    bool bOutputCached =
+            dstBuf.mUsage & (GRALLOC_USAGE_SW_READ_OFTEN | GRALLOC_USAGE_SW_WRITE_OFTEN);
 
     ALOGV("ConvertImageByGPU_3D, bOutputCached %d, usage 0x%lx, res src %ux%u, dst %ux%u, format "
           "src 0x%x, dst 0x%x, size %d",
@@ -817,7 +850,7 @@ int ImageProcess::ConvertImageByGPU_3D(ImxImageBuffer &dstBuf, ImxImageBuffer &s
 
     // case 1: same format, same resolution, copy
     if ((srcBuf.mFormat == dstBuf.mFormat) && (srcBuf.mWidth == dstBuf.mWidth) &&
-        (srcBuf.mHeight == dstBuf.mHeight)) {
+        (srcBuf.mHeightSpan == dstBuf.mHeightSpan)) {
         if (HAL_PIXEL_FORMAT_RAW16 == srcBuf.mFormat)
             Revert16BitEndian((uint8_t *)srcBuf.mVirtAddr, (uint8_t *)dstBuf.mVirtAddr,
                               srcBuf.mWidth * srcBuf.mHeight);
@@ -876,7 +909,7 @@ int ImageProcess::ConvertImageByGPU_3D(ImxImageBuffer &dstBuf, ImxImageBuffer &s
 
     if (bResize) {
         SwitchImxBuf(srcBuf, resizeBuf);
-        FreePhyBuffer(resizeBuf);
+        FreePhyBuffer(resizeBuf.buffer);
     }
 
     return 0;
@@ -949,7 +982,7 @@ int ImageProcess::ConvertImageByCPU(ImxImageBuffer &dstBuf, ImxImageBuffer &srcB
 
     if (bResize) {
         SwitchImxBuf(srcBuf, resizeBuf);
-        FreePhyBuffer(resizeBuf);
+        FreePhyBuffer(resizeBuf.buffer);
     }
 
     return 0;
@@ -1070,7 +1103,7 @@ int ImageProcess::resizeWrapper(ImxImageBuffer &srcBuf, ImxImageBuffer &dstBuf, 
         return BAD_VALUE;
     }
 
-    if ((srcBuf.mWidth == dstBuf.mWidth) && (srcBuf.mHeight == dstBuf.mHeight)) {
+    if ((srcBuf.mWidth == dstBuf.mWidth) && (srcBuf.mHeightSpan == dstBuf.mHeightSpan)) {
         ALOGE("%s: resolution are same, %dx%d", __func__, srcBuf.mWidth, srcBuf.mHeight);
         return BAD_VALUE;
     }

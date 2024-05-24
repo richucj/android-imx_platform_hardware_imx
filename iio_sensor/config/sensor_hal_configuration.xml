@@ -32,20 +32,6 @@
                         </location>
                     </configuration>
                 </sensor>
-                <sensor name="fxos8700" type="2">
-                    <configuration>
-                        <orientation rotate="true">
-                            <x map="0" negate="false"/>
-                            <y map="1" negate="true"/>
-                            <z map="2" negate="true"/>
-                        </orientation>
-                        <location>
-                            <x>0</x>
-                            <y>0</y>
-                            <z>0</z>
-                        </location>
-                    </configuration>
-                </sensor>
                 <sensor name="rpmsg-iio-pedometer" type="19">
                 </sensor>
                 <sensor name="fxas21002c" type="4">

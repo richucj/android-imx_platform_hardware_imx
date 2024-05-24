@@ -28,21 +28,32 @@ public:
     ndk::ScopedAStatus allocate(const std::vector<uint8_t>& descriptor, int32_t count,
                                 allocator::AllocationResult* outResult) override;
 
+    ndk::ScopedAStatus allocate2(const BufferDescriptorInfo& descriptor, int32_t count,
+                                 allocator::AllocationResult* outResult) override;
+
+    ndk::ScopedAStatus isSupported(const BufferDescriptorInfo& descriptor,
+                                   bool* outResult) override;
+
+    ndk::ScopedAStatus getIMapperLibrarySuffix(std::string* outResult) override;
+
 protected:
     ndk::SpAIBinder createBinder() override;
 
 private:
+    using Dataspace = aidl::android::hardware::graphics::common::Dataspace;
     ndk::ScopedAStatus allocate(
             const ::android::hardware::graphics::mapper::V4_0::IMapper::BufferDescriptorInfo&
                     descriptor,
-            int32_t* outStride, native_handle_t** outHandle);
+            int32_t* outStride, native_handle_t** outHandle,
+            Dataspace initialDataspace = Dataspace::UNKNOWN);
 
     ndk::ScopedAStatus initializeMetadata(gralloc_handle_t memHandle,
-                                          const struct gralloc_buffer_descriptor& memDescriptor);
+                                          const struct gralloc_buffer_descriptor& memDescriptor,
+                                          Dataspace initialDataspace);
 
     void releaseBufferAndHandle(native_handle_t* handle);
 
-    gralloc_driver* mDriver = nullptr;
+    std::shared_ptr<gralloc_driver> mDriver;
 };
 
 } // namespace aidl::android::hardware::graphics::allocator::impl
