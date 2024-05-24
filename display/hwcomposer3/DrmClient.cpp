@@ -1,6 +1,6 @@
 /*
  * Copyright 2022 The Android Open Source Project
- * Copyright 2023 NXP
+ * Copyright 2023-2024 NXP
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -17,18 +17,15 @@
 
 #include "DrmClient.h"
 
-#include <RWLock.h>
 #include <cutils/properties.h>
 #include <drm_fourcc.h>
-#include <gralloc_handle.h>
 #include <hwsecure_client.h>
 #include <xf86drm.h>
 #include <xf86drmMode.h>
 
+#include "BufferInfo.h"
 #include "Common.h"
 #include "Drm.h"
-
-using android::RWLock;
 
 namespace aidl::android::hardware::graphics::composer3::impl {
 
@@ -89,7 +86,7 @@ HWC3::Error DrmClient::init(char* path, uint32_t* baseId) {
     }
 
     {
-        ::android::RWLock::AutoWLock lock(mDisplaysMutex);
+        std::lock_guard<std::recursive_mutex> lock(mDisplaysMutex);
         bool success = loadDrmDisplays(displayBaseId);
         if (success) {
             DEBUG_LOG("%s: Successfully initialized DRM backend", __FUNCTION__);
@@ -103,11 +100,14 @@ HWC3::Error DrmClient::init(char* path, uint32_t* baseId) {
     for (auto& [_, display] : mDisplays) {
         overlayTotalNum += display->getPlaneNum() - 1; // At least one primary plane for each
     }
-    constexpr const std::size_t kCachedFrameBuffersPerDisplay = MAX_COMPOSER_TARGETS_PER_DISPLAY;
-    std::size_t bufferCacheSize = kCachedFrameBuffersPerDisplay * mDisplays.size();
-    bufferCacheSize += IsOverlayUserDisabled() ? 0 : (overlayTotalNum * 8);
-    DEBUG_LOG("%s: initializing DRM buffer cache to size %zu", __FUNCTION__, bufferCacheSize);
-    mBufferCache = std::make_unique<DrmBufferCache>(bufferCacheSize);
+    std::size_t framebufferCacheSize = mMaxComposerTargetsPerDisplay * mDisplays.size();
+    mPlaneBufferCacheSize = IsOverlayUserDisabled() ? 0 : (overlayTotalNum * 18);
+
+    DEBUG_LOG("%s: initializing DRM Buffer cache size for framebuffer=%zu, for plane buffer=%zu",
+              __FUNCTION__, framebufferCacheSize, mPlaneBufferCacheSize);
+    mFramebufferCache = std::make_unique<DrmBufferCache>(framebufferCacheSize);
+    if (mPlaneBufferCacheSize > 0)
+        mPlaneBufferCache = std::make_unique<DrmBufferCache>(mPlaneBufferCacheSize);
 
     mDrmEventListener = DrmEventListener::create(mFd, [this]() { handleHotplug(); });
     if (!mDrmEventListener) {
@@ -129,7 +129,7 @@ HWC3::Error DrmClient::init(char* path, uint32_t* baseId) {
 HWC3::Error DrmClient::getDisplayConfigs(std::vector<HalMultiConfigs>* configs) {
     DEBUG_LOG("%s", __FUNCTION__);
 
-    ::android::RWLock::AutoRLock lock(mDisplaysMutex);
+    std::lock_guard<std::recursive_mutex> lock(mDisplaysMutex);
 
     configs->clear();
 
@@ -221,6 +221,7 @@ bool DrmClient::loadDrmDisplays(uint32_t displayBaseId) {
         return false;
     }
 
+    uint32_t numPlaneInCrtc = (planes.size() + connectors.size() - 1) / connectors.size();
     std::unordered_map<uint32_t, std::unique_ptr<DrmPlane>> crtc_planes;
     for (uint32_t i = 0; i < connectors.size(); i++) {
         std::unique_ptr<DrmConnector> connector = std::move(connectors[i]);
@@ -236,12 +237,14 @@ bool DrmClient::loadDrmDisplays(uint32_t displayBaseId) {
         std::unique_ptr<DrmCrtc> crtc = std::move(*crtcIt);
         crtcs.erase(crtcIt);
 
+        uint32_t cnt = 0;
         auto check_fun = [&](std::unique_ptr<DrmPlane>& plane) -> bool {
             if (!plane->isOverlay() && !plane->isPrimary()) {
                 return false;
             }
-            if (plane->isCompatibleWith(*crtc)) {
+            if (plane->isCompatibleWith(*crtc) && cnt < numPlaneInCrtc) {
                 crtc_planes.insert({plane->getId(), std::move(plane)});
+                cnt++;
                 return true;
             } else {
                 return false;
@@ -274,21 +277,28 @@ bool DrmClient::loadDrmDisplays(uint32_t displayBaseId) {
 
 std::tuple<HWC3::Error, std::shared_ptr<DrmBuffer>> DrmClient::create(const native_handle_t* handle,
                                                                       common::Rect displayFrame,
-                                                                      common::Rect sourceCrop) {
-    gralloc_handle_t memHandle = (gralloc_handle_t)handle;
-    if (memHandle == nullptr) {
-        ALOGE("%s: invalid gralloc_handle", __FUNCTION__);
-        return std::make_tuple(HWC3::Error::NoResources, nullptr);
+                                                                      common::Rect sourceCrop,
+                                                                      BufferType type) {
+    HandleInfo info;
+    if (handle == nullptr || (getInfoFromHandle(handle, &info) != 0)) {
+        ALOGE("%s: invalid native handle", __FUNCTION__);
+        return std::make_tuple(HWC3::Error::BadParameter, nullptr);
     }
 
     DrmPrimeBufferHandle primeHandle = 0;
-    int ret = drmPrimeFDToHandle(mFd.get(), memHandle->fd, &primeHandle);
+    int ret = drmPrimeFDToHandle(mFd.get(), info.fd, &primeHandle);
     if (ret) {
         ALOGE("%s: drmPrimeFDToHandle failed: %s (errno %d)", __FUNCTION__, strerror(errno), errno);
         return std::make_tuple(HWC3::Error::NoResources, nullptr);
     }
 
-    auto drmBufferPtr = mBufferCache->get(primeHandle);
+    std::shared_ptr<DrmBuffer>* drmBufferPtr = nullptr;
+    if (type == DRM_BUFFER_FB)
+        drmBufferPtr = mFramebufferCache->get(primeHandle);
+    else if ((type == DRM_BUFFER_PLANE) && (mPlaneBufferCacheSize > 0)) {
+        drmBufferPtr = mPlaneBufferCache->get(primeHandle);
+    }
+
     if (drmBufferPtr != nullptr) {
         (*drmBufferPtr)->mDisplayFrame = displayFrame;
         (*drmBufferPtr)->mSourceCrop = sourceCrop;
@@ -297,62 +307,49 @@ std::tuple<HWC3::Error, std::shared_ptr<DrmBuffer>> DrmClient::create(const nati
         return std::make_tuple(HWC3::Error::None, std::shared_ptr<DrmBuffer>(*drmBufferPtr));
     }
 
-    uint64_t modifier;
     auto buffer = std::shared_ptr<DrmBuffer>(new DrmBuffer(*this));
-    buffer->mWidth = memHandle->width;
-    buffer->mHeight = memHandle->height;
+    buffer->mWidth = info.width;
+    buffer->mHeight = info.height;
     buffer->mDisplayFrame = displayFrame;
     buffer->mSourceCrop = sourceCrop;
-    buffer->mDrmFormat = ConvertNxpFormatToDrmFormat(memHandle->fslFormat, &modifier);
-    buffer->mPlaneFds[0] = memHandle->fd;
-    for (uint32_t i = 0; i < memHandle->num_planes; i++) {
+    buffer->mDrmFormat = info.drm_format;
+    buffer->mPlaneFds[0] = info.fd;
+    for (uint32_t i = 0; i < info.num_planes; i++) {
         buffer->mPlaneHandles[i] = primeHandle;
-        buffer->mPlanePitches[i] = memHandle->strides[i];
-        buffer->mPlaneOffsets[i] = memHandle->offsets[i];
-        if (memHandle->format_modifier > 0)
-            buffer->mPlaneModifiers[i] =
-                    memHandle->format_modifier; // modifier of framebuffer is setted when allocate.
-        else if (modifier > 0)
-            buffer->mPlaneModifiers[i] = modifier;
+        buffer->mPlanePitches[i] = info.strides[i];
+        buffer->mPlaneOffsets[i] = info.offsets[i];
+        buffer->mPlaneModifiers[i] = info.modifier;
     }
-
-    // buffer->mMeta =
-    // MemoryManager::getInstance()->getMetaData(const_cast<gralloc_handle_t>(memHandle));
 
     uint32_t framebuffer = 0;
-    uint32_t format = buffer->mDrmFormat;
-    uint32_t width = buffer->mWidth;
-    if (memHandle->format_modifier > 0) { // TODO: some workaround for framebuffer
-        /* workaround GPU SUPER_TILED R/B swap issue, for no-resolve and tiled output
-           GPU not distinguish A8B8G8R8 and A8R8G8B8, all regard as A8R8G8B8, need do
-           R/B swap here for no-resolve and tiled buffer */
-        if (format == DRM_FORMAT_XBGR8888)
-            format = DRM_FORMAT_XRGB8888;
-        if (format == DRM_FORMAT_ABGR8888)
-            format = DRM_FORMAT_ARGB8888;
-    }
-
     if (buffer->mPlaneModifiers[0] > 0) {
-        ret = drmModeAddFB2WithModifiers(mFd.get(), buffer->mWidth, buffer->mHeight, format,
-                                         buffer->mPlaneHandles, buffer->mPlanePitches,
-                                         buffer->mPlaneOffsets, buffer->mPlaneModifiers,
-                                         &framebuffer, DRM_MODE_FB_MODIFIERS);
+        ret = drmModeAddFB2WithModifiers(mFd.get(), buffer->mWidth, buffer->mHeight,
+                                         buffer->mDrmFormat, buffer->mPlaneHandles,
+                                         buffer->mPlanePitches, buffer->mPlaneOffsets,
+                                         buffer->mPlaneModifiers, &framebuffer,
+                                         DRM_MODE_FB_MODIFIERS);
     } else {
-        ret = drmModeAddFB2(mFd.get(), width, buffer->mHeight, buffer->mDrmFormat,
+        ret = drmModeAddFB2(mFd.get(), buffer->mWidth, buffer->mHeight, buffer->mDrmFormat,
                             buffer->mPlaneHandles, buffer->mPlanePitches, buffer->mPlaneOffsets,
                             &framebuffer, 0);
     }
     if (ret) {
-        ALOGE("%s: drmModeAddFB2 failed(buffer:size=%d, %d x %d, stride=%d, format=0x%x, modifier=0x%" PRIx64
-              "): %s (errno %d)",
-              __FUNCTION__, memHandle->size, memHandle->width, memHandle->height, memHandle->stride,
-              memHandle->fslFormat, buffer->mPlaneModifiers[0], strerror(errno), errno);
+        ALOGE("%s: drmModeAddFB2 failed(buffer:size=%d, %d x %d, stride=%d, format=0x%x,"
+              "drm_format=0x%x, modifier=0x%" PRIx64 "): %s (errno %d)",
+              __FUNCTION__, info.size, info.width, info.height, info.stride, info.format,
+              info.drm_format, buffer->mPlaneModifiers[0], strerror(errno), errno);
         return std::make_tuple(HWC3::Error::NoResources, nullptr);
     }
     DEBUG_LOG("%s: created framebuffer:%" PRIu32, __FUNCTION__, framebuffer);
     buffer->mDrmFramebuffer = framebuffer;
 
-    mBufferCache->set(primeHandle, std::shared_ptr<DrmBuffer>(buffer));
+    if (type == DRM_BUFFER_FB)
+        mFramebufferCache->set(primeHandle, std::shared_ptr<DrmBuffer>(buffer));
+    else if ((type == DRM_BUFFER_PLANE) && (mPlaneBufferCacheSize > 0))
+        mPlaneBufferCache->set(primeHandle, std::shared_ptr<DrmBuffer>(buffer));
+    else
+        ALOGW("%s: Drm Buffer(type=%d, fbId=%" PRIu32 ") is not cached", __FUNCTION__, type,
+              framebuffer);
 
     return std::make_tuple(HWC3::Error::None, std::move(buffer));
 }
@@ -375,8 +372,6 @@ HWC3::Error DrmClient::destroyDrmFramebuffer(DrmBuffer* buffer) {
                   errno);
             return HWC3::Error::NoResources;
         }
-
-        mBufferCache->remove(buffer->mPlaneHandles[0]);
     }
 
     return HWC3::Error::None;
@@ -393,7 +388,7 @@ bool DrmClient::handleHotplug() {
     std::vector<HotplugToReport> hotplugs;
 
     {
-        ::android::RWLock::AutoWLock lock(mDisplaysMutex);
+        std::lock_guard<std::recursive_mutex> lock(mDisplaysMutex);
 
         for (auto& pair : mDisplays) {
             DrmDisplay* display = pair.second.get();
@@ -406,7 +401,7 @@ bool DrmClient::handleHotplug() {
                 uint32_t id = display->getId();
                 if (mComposerTargets.find(id) != mComposerTargets.end()) {
                     // free device composer target buffers when disconnected
-                    mG2dComposer->freeDeviceFrameBuffer(mComposerTargets[id]);
+                    mG2dComposer->freeDeviceFrameBuffer(mComposerTargets[id].handles);
                     mComposerTargets.erase(id);
                 }
             }
@@ -450,12 +445,20 @@ std::tuple<HWC3::Error, ::android::base::unique_fd> DrmClient::flushToDisplay(
         DEBUG_LOG("%s: invalid display:%" PRIu32, __FUNCTION__, displayId);
         return std::make_tuple(HWC3::Error::BadDisplay, ::android::base::unique_fd());
     }
+    if (mPlaneBufferCache && mPlaneBufferCache->getSize() > 0) {
+        TimePoint now = std::chrono::steady_clock::now();
+        if (buffer.planeDrmBuffer.size() > 0) {
+            mLastPlaneBufferPresentTime = now;
+        } else if (now > mLastPlaneBufferPresentTime + Nanoseconds(2000000000)) {
+            mPlaneBufferCache->clear();
+            ALOGI("%s: DrmBuffer cache for plane is cleared!", __FUNCTION__);
+        }
+    }
     if (!mDisplays[displayId]->isConnected()) {
         ALOGI("%s: %d display is disconnected, avoid DRM committing", __FUNCTION__, displayId);
         return std::make_tuple(HWC3::Error::None, ::android::base::unique_fd());
     }
 
-    ::android::RWLock::AutoRLock lock(mDisplaysMutex);
     std::unique_ptr<DrmAtomicRequest> request;
     for (auto& pair : buffer.planeDrmBuffer) {
         auto [err, req] =
@@ -478,12 +481,16 @@ std::tuple<HWC3::Error, ::android::base::unique_fd> DrmClient::flushToDisplay(
         request = std::move(req);
     }
 
-    return mDisplays[displayId]->commit(std::move(request), mFd);
+    auto [error, outFence] = mDisplays[displayId]->commit(std::move(request), mFd);
+    if (mExpiredTargets.find(displayId) != mExpiredTargets.end()) {
+        mG2dComposer->freeDeviceFrameBuffer(mExpiredTargets[displayId]);
+        mExpiredTargets.erase(displayId);
+    }
+
+    return std::make_tuple(error, std::move(outFence));
 }
 
 std::optional<std::vector<uint8_t>> DrmClient::getEdid(uint32_t displayId) {
-    ::android::RWLock::AutoRLock lock(mDisplaysMutex);
-
     if (mDisplays.find(displayId) == mDisplays.end()) {
         DEBUG_LOG("%s: invalid display:%" PRIu32, __FUNCTION__, displayId);
         return std::nullopt;
@@ -523,15 +530,26 @@ HWC3::Error DrmClient::checkOverlayLimitation(int displayId, Layer* layer) {
     }
 
     // rotation limitation
-    if (layer->getTransform() != common::Transform::NONE)
+    if (layer->getTransform() != common::Transform::NONE) {
+        DEBUG_LOG("%s: layer %" PRId64 " transform(%d) check failed", __FUNCTION__, layer->getId(),
+                  layer->getTransform());
         return HWC3::Error::Unsupported;
+    }
+
+    HandleInfo info;
+    auto buff = layer->getBuffer().getBuffer();
+    if (!buff || (getInfoFromHandle(buff, &info) != 0)) {
+        return HWC3::Error::BadParameter;
+    }
 
     // format limitation
-    gralloc_handle_t buff = (gralloc_handle_t)layer->getBuffer().getBuffer();
-    if (!buff || ((buff->fslFormat >= FORMAT_RGBA8888) && (buff->fslFormat <= FORMAT_BGRA8888)))
+    if ((info.format >= static_cast<uint32_t>(common::PixelFormat::RGBA_8888)) &&
+        (info.format <= static_cast<uint32_t>(common::PixelFormat::BGRA_8888))) {
+        DEBUG_LOG("%s: layer %" PRId64 " buffer format(0x%x) check failed", __FUNCTION__,
+                  layer->getId(), info.format);
         return HWC3::Error::Unsupported;
+    }
 
-    // scaling limitation
     common::Rect rect = layer->getDisplayFrame();
     auto& config = mDisplays[displayId]->getActiveConfig();
     int w = (rect.right - rect.left) * config.modeWidth / config.width;
@@ -539,24 +557,50 @@ HWC3::Error DrmClient::checkOverlayLimitation(int displayId, Layer* layer) {
     common::Rect srect = layer->getSourceCropInt();
     int srcW = srect.right - srect.left;
     int srcH = srect.bottom - srect.top;
+
+#ifdef OVERLAY_LIMITATION_DCSS
+    // scaling limitation
     if (w > srcW * 7 || h > srcH * 7) {
-        // fall back to GPU.
+        DEBUG_LOG(
+                "%s: layer %ld scaling(src: %d x %d, dst: %d x %d, upscale more than 7 times) check failed",
+                __FUNCTION__, layer->getId(), srcW, srcH, w, h);
         return HWC3::Error::Unsupported;
     }
 
-    uint64_t modifier;
-    uint32_t format = ConvertNxpFormatToDrmFormat(buff->fslFormat, &modifier);
     if (srcW < 64 &&
-        ((format == DRM_FORMAT_NV12) || (format == DRM_FORMAT_NV21) ||
-         (format == DRM_FORMAT_P010))) {
+        ((info.drm_format == DRM_FORMAT_NV12) || (info.drm_format == DRM_FORMAT_NV21) ||
+         (info.drm_format == DRM_FORMAT_P010))) {
+        DEBUG_LOG("%s: layer %" PRId64 " small resolution(src width=%d, format=0x%x) check failed",
+                  __FUNCTION__, layer->getId(), srcW, info.drm_format);
         return HWC3::Error::Unsupported;
     } else if (srcW < 32 &&
-               ((format == DRM_FORMAT_UYVY) || (format == DRM_FORMAT_VYUY) ||
-                (format == DRM_FORMAT_YUYV) || (format == DRM_FORMAT_YVYU))) {
+               ((info.drm_format == DRM_FORMAT_UYVY) || (info.drm_format == DRM_FORMAT_VYUY) ||
+                (info.drm_format == DRM_FORMAT_YUYV) || (info.drm_format == DRM_FORMAT_YVYU))) {
+        DEBUG_LOG("%s: layer %" PRId64 " small resolution(src width=%d, format=0x%x) check failed",
+                  __FUNCTION__, layer->getId(), srcW, info.drm_format);
         return HWC3::Error::Unsupported;
     } else if (srcW < 16 || srcH < 8) {
+        DEBUG_LOG("%s: layer %" PRId64 " small resolution(src width=%d, height=%d) check failed",
+                  __FUNCTION__, layer->getId(), srcW, srcH);
         return HWC3::Error::Unsupported;
     }
+#endif
+#ifdef OVERLAY_LIMITATION_DPU
+    if ((srcW != w) || (srcH != h)) {
+        // DPU of imx95 don't support scaling(TODO: support down-scaling in later B0 chip)
+        DEBUG_LOG("%s: layer %" PRId64 " scaling(src: %d x %d, dst: %d x %d) check failed",
+                  __FUNCTION__, layer->getId(), srcW, srcH, w, h);
+        return HWC3::Error::Unsupported;
+    }
+
+    // check buffer resolution
+    if (info.width > 8192 || info.height > 8192 || info.width < 60 || info.height < 60) {
+        DEBUG_LOG("%s: layer %" PRId64 " no-scaling resolution(src: %d x %d) check failed",
+                  __FUNCTION__, layer->getId(), srcW, srcH);
+        return HWC3::Error::Unsupported;
+    }
+#endif
+    DEBUG_LOG("%s: Overlay check pass for layer=%" PRId64, __FUNCTION__, layer->getId());
 
     return HWC3::Error::None;
 }
@@ -578,7 +622,7 @@ HWC3::Error DrmClient::prepareDrmPlanesForValidate(int displayId, uint32_t* uiPl
 }
 
 std::tuple<HWC3::Error, uint32_t> DrmClient::getPlaneForLayerBuffer(int displayId,
-                                                                    const native_handle_t* handle) {
+                                                                    buffer_handle_t handle) {
     if (mDisplays.find(displayId) == mDisplays.end()) {
         DEBUG_LOG("%s: invalid display:%" PRIu32, __FUNCTION__, displayId);
         return std::make_tuple(HWC3::Error::BadDisplay, 0);
@@ -588,14 +632,18 @@ std::tuple<HWC3::Error, uint32_t> DrmClient::getPlaneForLayerBuffer(int displayI
         return std::make_tuple(HWC3::Error::BadParameter, 0);
     }
 
+#ifdef DEBUG_NXP_HWC
+    char* name = nullptr;
+    HandleInfo info;
+    if (handle && (getInfoFromHandle(handle, &info) == 0))
+        name = info.name;
+#endif
     uint32_t planeId = mDisplays[displayId]->findDrmPlane(handle);
     if (planeId > 0) {
         DEBUG_LOG("%s: display:%" PRIu32 " Found plane=%d for buffer:%s", __FUNCTION__, displayId,
-                  planeId, gralloc_handle_t(handle)->name);
+                  planeId, name);
         return std::make_tuple(HWC3::Error::None, planeId);
     } else {
-        DEBUG_LOG("%s: display:%" PRIu32 " NOT find plane for buffer:%s", __FUNCTION__, displayId,
-                  gralloc_handle_t(handle)->name);
         return std::make_tuple(HWC3::Error::NoResources, 0);
     }
 }
@@ -621,10 +669,20 @@ HWC3::Error DrmClient::setActiveConfigId(int displayId, int32_t configId) {
         return HWC3::Error::BadDisplay;
     }
 
-    if (mDisplays[displayId]->setActiveConfigId(configId))
-        return HWC3::Error::None;
-    else
+    uint32_t width, height, pre_width, pre_height, format;
+    mDisplays[displayId]->getFramebufferInfo(&pre_width, &pre_height, &format);
+
+    if (!mDisplays[displayId]->setActiveConfigId(configId))
         return HWC3::Error::BadParameter;
+
+    mDisplays[displayId]->getFramebufferInfo(&width, &height, &format);
+    if (((pre_width != width) || (pre_height != height)) &&
+        mComposerTargets.find(displayId) != mComposerTargets.end()) {
+        // need to free device composer target buffers when resolution changed
+        mComposerTargets[displayId].valid = false;
+    }
+
+    return HWC3::Error::None;
 }
 
 HWC3::Error DrmClient::resetDisplayConfig(int displayId) {
@@ -644,48 +702,52 @@ std::tuple<HWC3::Error, buffer_handle_t> DrmClient::getComposerTarget(
         return std::make_tuple(HWC3::Error::BadDisplay, nullptr);
     }
 
+    std::lock_guard<std::recursive_mutex> lock(mDisplaysMutex);
+
     if (mComposerTargets.find(displayId) != mComposerTargets.end() &&
-        mTargetSecurity[displayId] == secure) {
-        int32_t index = mTargetIndex[displayId];
-        if (++index >= MAX_COMPOSER_TARGETS_PER_DISPLAY) {
+        mComposerTargets[displayId].valid &&
+        mComposerTargets[displayId].security == secure) {
+        int32_t index = mComposerTargets[displayId].index;
+        if (++index >= mMaxComposerTargetsPerDisplay) {
             index = 0;
         }
-        mTargetIndex[displayId] = index;
+        mComposerTargets[displayId].index = index;
         DEBUG_LOG("%s: get pre-allocated %s buffer:%d", __FUNCTION__,
                   secure ? "secure" : "nonsecure", index);
-        return std::make_tuple(HWC3::Error::None, mComposerTargets[displayId][index]);
+        return std::make_tuple(HWC3::Error::None, mComposerTargets[displayId].handles[index]);
     }
-    // security change, free pervious buffers
+    // security change or display config change, move pervious buffers to mExpiredTargets
+    // they will be freed after next framebuffer commited
     if (mComposerTargets.find(displayId) != mComposerTargets.end()) {
-        composer->freeDeviceFrameBuffer(mComposerTargets[displayId]);
+        auto& origin = mComposerTargets[displayId].handles;
+        std::vector<buffer_handle_t> expired;
+        expired.insert(expired.end(), origin.begin(), origin.end());
+        mExpiredTargets.emplace(displayId, std::move(expired));
         mComposerTargets.erase(displayId);
     }
 
+    G2dComposerTargets targets;
     uint32_t width, height, format;
-    gralloc_handle_t bufferHandles[MAX_COMPOSER_TARGETS_PER_DISPLAY];
+    targets.handles.reserve(mMaxComposerTargetsPerDisplay);
     mDisplays[displayId]->getFramebufferInfo(&width, &height, &format);
-    auto ret = composer->prepareDeviceFrameBuffer(width, height, format, bufferHandles,
-                                                  MAX_COMPOSER_TARGETS_PER_DISPLAY, secure);
+    auto ret = composer->prepareDeviceFrameBuffer(width, height, format, targets.handles,
+                                                  mMaxComposerTargetsPerDisplay, secure);
     if (ret) {
         ALOGE("%s: create framebuffer failed", __FUNCTION__);
         return std::make_tuple(HWC3::Error::NoResources, nullptr);
     }
 
-    std::vector<gralloc_handle_t> buffers;
-    for (int i = 0; i < MAX_COMPOSER_TARGETS_PER_DISPLAY; i++) {
-        buffers.push_back(bufferHandles[i]);
-    }
-
-    mComposerTargets.emplace(displayId, buffers);
-    mTargetIndex.emplace(displayId, 0);
-    mTargetSecurity[displayId] = secure;
+    targets.index = 0;
+    targets.security = secure;
+    targets.valid = true;
+    mComposerTargets.emplace(displayId, std::move(targets));
 
     set_g2d_secure_pipe(secure);
     composer->freeSolidColorBuffer();
     // hotplug callback function need device composer to free buffers
     mG2dComposer = std::move(composer);
 
-    return std::make_tuple(HWC3::Error::None, mComposerTargets[displayId][0]);
+    return std::make_tuple(HWC3::Error::None, mComposerTargets[displayId].handles[0]);
 }
 
 HWC3::Error DrmClient::setSecureMode(int displayId, uint32_t planeId, bool secure) {
@@ -770,6 +832,11 @@ HWC3::Error DrmClient::setBacklightBrightness(int displayId, float brightness) {
     }
 
     int value = (int)(mBacklight.maxBrightness * brightness);
+    if ((value == 0) && mDisplays[displayId]->isLowPowerDisplay()) {
+        ALOGI("%s: Avoid turning off backlight of low power display in APD side", __FUNCTION__);
+        return HWC3::Error::None;
+    }
+
     std::string bl = mBacklight.path + "/brightness";
     FILE* file = fopen(bl.c_str(), "w");
     if (!file) {
@@ -804,11 +871,11 @@ HWC3::Error DrmClient::setHdrMetadata(int displayId, hdr_output_metadata* metada
         return HWC3::Error::BadDisplay;
     }
 
-    if (mPreviousMetadata.find(displayId) != mPreviousMetadata.end()) {
+    if (mHdrMetadatas.find(displayId) != mHdrMetadatas.end()) {
         if (metadata == NULL) {
-            mPreviousMetadata.erase(displayId);
-            drmModeDestroyPropertyBlob(mFd.get(), mPreviousMetadataBlobId[displayId]);
-        } else if (!memcmp(&mPreviousMetadata[displayId], metadata, sizeof(hdr_output_metadata))) {
+            mHdrMetadatas.erase(displayId);
+            drmModeDestroyPropertyBlob(mFd.get(), mHdrMetadatas[displayId].blobId);
+        } else if (!memcmp(&mHdrMetadatas[displayId].prev, metadata, sizeof(hdr_output_metadata))) {
             DEBUG_LOG("%s: HDR metadata already set, don't need to set again", __FUNCTION__);
             return HWC3::Error::None;
         }
@@ -825,8 +892,8 @@ HWC3::Error DrmClient::setHdrMetadata(int displayId, hdr_output_metadata* metada
             ALOGE("%s: Failed to create Metadata blob: %s.", __FUNCTION__, strerror(errno));
             return HWC3::Error::NoResources;
         }
-        mPreviousMetadata[displayId] = *metadata;
-        mPreviousMetadataBlobId[displayId] = blobId;
+        mHdrMetadatas[displayId].prev = *metadata;
+        mHdrMetadatas[displayId].blobId = blobId;
     }
 
     mDisplays[displayId]->setHdrMetadataBlobId(blobId);

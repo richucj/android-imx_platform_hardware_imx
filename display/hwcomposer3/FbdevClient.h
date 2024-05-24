@@ -1,6 +1,6 @@
 /*
  * Copyright 2022 The Android Open Source Project
- * Copyright 2023 NXP
+ * Copyright 2023-2024 NXP
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -17,7 +17,6 @@
 
 #pragma once
 
-#include <RWLock.h>
 #include <android-base/unique_fd.h>
 #include <cutils/native_handle.h>
 
@@ -33,8 +32,6 @@
 #include "DrmConnector.h"
 #include "DrmDisplay.h"
 #include "FbdevDisplay.h"
-
-using android::RWLock;
 
 namespace aidl::android::hardware::graphics::composer3::impl {
 
@@ -58,7 +55,8 @@ public:
 
     std::tuple<HWC3::Error, std::shared_ptr<DrmBuffer>> create(const native_handle_t* handle,
                                                                common::Rect displayFrame,
-                                                               common::Rect sourceCrop) override;
+                                                               common::Rect sourceCrop,
+                                                               BufferType type) override;
     HWC3::Error destroyDrmFramebuffer(DrmBuffer* buffer) override;
 
     std::tuple<HWC3::Error, ::android::base::unique_fd> flushToDisplay(
@@ -83,10 +81,10 @@ private:
     // Drm device.
     ::android::base::unique_fd mFd;
 
-    mutable RWLock mDisplaysMutex;
+    mutable std::recursive_mutex mDisplaysMutex;
     std::unordered_map<uint32_t, std::unique_ptr<FbdevDisplay>> mDisplays; //<displayId, ptr>
     uint32_t mDisplayBaseId = 0;
-    std::unordered_map<uint32_t, std::vector<gralloc_handle_t>> mComposerTargets;
+    std::unordered_map<uint32_t, std::vector<buffer_handle_t>> mComposerTargets;
     std::unordered_map<uint32_t, int32_t> mTargetIndex; //<displayId, index>
 
     std::shared_ptr<DeviceComposer> mG2dComposer = nullptr;

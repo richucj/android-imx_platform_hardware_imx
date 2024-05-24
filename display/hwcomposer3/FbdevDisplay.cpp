@@ -1,6 +1,6 @@
 /*
  * Copyright 2022 The Android Open Source Project
- * Copyright 2023 NXP
+ * Copyright 2023-2024 NXP
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -18,13 +18,13 @@
 #include "FbdevDisplay.h"
 
 #include <fcntl.h>
-#include <gralloc_handle.h>
 #include <linux/fb.h>
 #include <linux/mxcfb.h>
 #include <linux/videodev2.h>
 #include <stdlib.h>
 #include <sys/ioctl.h>
 
+#include "BufferInfo.h"
 #include "Common.h"
 #include "Drm.h" // some pixel format support
 
@@ -187,11 +187,15 @@ bool FbdevDisplay::updateDisplayConfigs() {
     mActiveConfig = (*mConfigs)[mActiveConfigId];
 
     if (info.grayscale == 0) {
-        mBufferFormat = (info.bits_per_pixel == 32)
-                ? ((info.red.offset == 0) ? FORMAT_RGBA8888 : FORMAT_BGRA8888)
-                : FORMAT_RGB565;
+        mBufferFormat = static_cast<uint32_t>((info.bits_per_pixel == 32)
+                                                      ? ((info.red.offset == 0)
+                                                                 ? common::PixelFormat::RGBA_8888
+                                                                 : common::PixelFormat::BGRA_8888)
+                                                      : common::PixelFormat::RGB_565);
     } else {
-        mBufferFormat = (info.grayscale == V4L2_PIX_FMT_ARGB32) ? FORMAT_RGBA8888 : FORMAT_BGRA8888;
+        mBufferFormat = static_cast<uint32_t>((info.grayscale == V4L2_PIX_FMT_ARGB32)
+                                                      ? common::PixelFormat::RGBA_8888
+                                                      : common::PixelFormat::BGRA_8888);
     }
     mBytesPerPixel = info.bits_per_pixel >> 3;
     mStrideInBytes = finfo.line_length;

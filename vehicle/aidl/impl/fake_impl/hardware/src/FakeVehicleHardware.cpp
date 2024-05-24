@@ -510,9 +510,7 @@ VhalResult<void> FakeVehicleHardware::setHvacTemperatureValueSuggestion(
 }
 
 bool FakeVehicleHardware::isHvacPropAndHvacNotAvailable(int32_t propId, int32_t areaId) const {
-    std::unordered_set<int32_t> powerProps(std::begin(HVAC_POWER_PROPERTIES),
-                                           std::end(HVAC_POWER_PROPERTIES));
-    if (powerProps.count(propId)) {
+    if (hvacPowerDependentProps.count(propId)) {
         auto hvacPowerOnResults =
                 mServerSidePropStore->readValuesForProperty(toInt(VehicleProperty::HVAC_POWER_ON));
         if (!hvacPowerOnResults.ok()) {
@@ -701,8 +699,7 @@ FakeVehicleHardware::ValueResultType FakeVehicleHardware::getEchoReverseBytes(
 }
 
 void FakeVehicleHardware::sendHvacPropertiesCurrentValues(int32_t areaId) {
-    for (size_t i = 0; i < sizeof(HVAC_POWER_PROPERTIES) / sizeof(int32_t); i++) {
-        int powerPropId = HVAC_POWER_PROPERTIES[i];
+for (auto& powerPropId : hvacPowerDependentProps) {
         auto powerPropResults = mServerSidePropStore->readValuesForProperty(powerPropId);
         if (!powerPropResults.ok()) {
             ALOGW("failed to get power prop 0x%x, error: %s", powerPropId,

@@ -1,6 +1,6 @@
 /*
  * Copyright (C) 2022 The Android Open Source Project
- * Copyright 2023 NXP
+ * Copyright 2023-2024 NXP
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -34,8 +34,6 @@ namespace {
     }
 
 } // namespace
-
-using ::aidl::android::hardware::graphics::common::PixelFormat;
 
 class ComposerClient::CommandResultWriter {
 public:
@@ -195,7 +193,7 @@ ndk::ScopedAStatus ComposerClient::createLayer(int64_t displayId, int32_t buffer
 }
 
 ndk::ScopedAStatus ComposerClient::createVirtualDisplay(int32_t /*width*/, int32_t /*height*/,
-                                                        PixelFormat /*formatHint*/,
+                                                        common::PixelFormat /*formatHint*/,
                                                         int32_t /*outputBufferSlotCount*/,
                                                         VirtualDisplay* /*display*/) {
     DEBUG_LOG("%s", __FUNCTION__);
@@ -612,7 +610,8 @@ ndk::ScopedAStatus ComposerClient::setHdrConversionStrategy(
     using HdrConversionStrategyTag =
             aidl::android::hardware::graphics::common::HdrConversionStrategy::Tag;
     if (conversionStrategy.getTag() == HdrConversionStrategyTag::autoAllowedHdrTypes) {
-        auto autoHdrTypes = conversionStrategy.get<HdrConversionStrategyTag::autoAllowedHdrTypes>();
+        auto& autoHdrTypes =
+                conversionStrategy.get<HdrConversionStrategyTag::autoAllowedHdrTypes>();
         if (autoHdrTypes.size() != 0) {
             return ToBinderStatus(HWC3::Error::Unsupported);
         }
@@ -1389,7 +1388,7 @@ HWC3::Error ComposerClient::handleHotplug(bool connected,
             createDisplayLocked(displayId, configId, configs);
         }
 
-        auto cfg = (*(halConfigs->configs))[configId];
+        auto& cfg = (*(halConfigs->configs))[configId];
         ALOGI("Connecting display:%ld w:%d, h:%d, dpiX:%d, dpiY:%d, fps:%d", displayId, cfg.width,
               cfg.height, cfg.dpiX, cfg.dpiY, cfg.refreshRateHz);
         mCallbacks->onHotplug(displayId, /*connected=*/true);

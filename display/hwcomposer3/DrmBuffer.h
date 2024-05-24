@@ -1,6 +1,6 @@
 /*
  * Copyright 2022 The Android Open Source Project
- * Copyright 2023 NXP
+ * Copyright 2023-2024 NXP
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -49,6 +49,7 @@ private:
     friend class FbdevClient;
     friend class DummyClient;
     friend class DrmDisplay;
+    friend class ClientFrameComposer;
     DrmBuffer(DeviceClient& client);
 
     DeviceClient& mDeviceClient;
@@ -63,6 +64,7 @@ private:
     uint64_t mPlaneModifiers[4] = {0, 0, 0, 0};
     common::Rect mDisplayFrame;
     common::Rect mSourceCrop;
+    int32_t mZpos = 0;
     // fsl::MetaData *mMeta = NULL;
     std::optional<uint32_t> mDrmFramebuffer;
     std::optional<unsigned long> mBufferAddress;

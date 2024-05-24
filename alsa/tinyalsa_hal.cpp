@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 /* Copyright (C) 2012-2016 Freescale Semiconductor, Inc. */
-/* Copyright 2017-2022 NXP */
+/* Copyright 2017-2024 NXP */
 
 #define LOG_TAG "audio_hw_primary"
 // #define LOG_NDEBUG 0
@@ -1081,6 +1081,7 @@ static int out_dump(const struct audio_stream *stream, int fd) {
 
     struct imx_stream_out *out = (struct imx_stream_out *)stream;
 
+    pthread_mutex_lock(&out->lock);
     dprintf(fd, "audio write to HAL: rate %d, chns %d, audio format 0x%x\n", out->sample_rate,
             popcount(out->channel_mask), out->format);
     dprintf(fd, "audio write to ALSA: rate %d, chns %d, alsa format 0x%x\n", out->config.rate,
@@ -1093,6 +1094,7 @@ static int out_dump(const struct audio_stream *stream, int fd) {
 
     if (out->pcm)
         dprintf(fd, "pcm fd %d\n", pcm_get_poll_fd(out->pcm));
+    pthread_mutex_unlock(&out->lock);
 
     return 0;
 }
@@ -4422,7 +4424,7 @@ static void adjust_card_sequence(struct imx_audio_device *adev) {
         return;
 
     for (cardIdx = 0; cardIdx < adev->audio_card_num; cardIdx++) {
-        if (strstr(adev->card_list[cardIdx]->driver_name, "wm8960")) {
+        if (strstr(adev->card_list[cardIdx]->driver_name, "wm896")) {
             pcard_wm8960 = adev->card_list[cardIdx];
             pmixer_wm8960 = adev->mixer[cardIdx];
             idx_wm8960 = cardIdx;

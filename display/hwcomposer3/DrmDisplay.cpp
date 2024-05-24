@@ -1,6 +1,6 @@
 /*
  * Copyright 2022 The Android Open Source Project
- * Copyright 2023 NXP
+ * Copyright 2023-2024 NXP
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -18,10 +18,10 @@
 #include "DrmDisplay.h"
 
 #include <drm_fourcc.h>
-#include <gralloc_handle.h>
 #include <stdlib.h>
 #include <xf86drm.h>
 
+#include "BufferInfo.h"
 #include "Common.h"
 #include "Drm.h"
 #include "DrmAtomicRequest.h"
@@ -116,6 +116,10 @@ std::tuple<HWC3::Error, std::unique_ptr<DrmAtomicRequest>> DrmDisplay::flushOver
     okay &= request->Set(planeId, plane->getSrcWProperty(), wS << 16);
     okay &= request->Set(planeId, plane->getSrcHProperty(), hS << 16);
 
+    auto& prop = plane->getZposProperty();
+    if ((prop.getId() != (uint32_t)-1) && !(prop.getFlags() & DRM_MODE_PROP_IMMUTABLE))
+        okay &= request->Set(planeId, prop, buffer->mZpos);
+
     //    auto prop = mPlanes[planeId]->getDtrcTableOffestProperty();
     //    auto meta = buffer->mMeta;
     //    if ((prop.getValue() != -1) && (meta != NULL) && (meta->mFlags & FLAGS_COMPRESSED_OFFSET))
@@ -134,6 +138,9 @@ std::tuple<HWC3::Error, std::unique_ptr<DrmAtomicRequest>> DrmDisplay::flushOver
     mTempBuffers.planeDrmBuffer[planeId] = buffer;
 
     plane->setState(PLANE_STATE_ACTIVE);
+    if (buffer->mZpos > mOverlayMaxZpos)
+        mOverlayMaxZpos = buffer->mZpos;
+
     DEBUG_LOG("%s: flush overlay plane:%d, fbId=%d", __FUNCTION__, planeId,
               *buffer->mDrmFramebuffer);
     return std::make_tuple(HWC3::Error::None, std::move(request));
@@ -210,6 +217,10 @@ std::tuple<HWC3::Error, std::unique_ptr<DrmAtomicRequest>> DrmDisplay::flushPrim
     okay &= request->Set(planeId, plane->getSrcYProperty(), sourceY);
     okay &= request->Set(planeId, plane->getSrcWProperty(), sw << 16);
     okay &= request->Set(planeId, plane->getSrcHProperty(), sh << 16);
+
+    auto& prop = plane->getZposProperty();
+    if ((prop.getId() != (uint32_t)-1) && !(prop.getFlags() & DRM_MODE_PROP_IMMUTABLE))
+        okay &= request->Set(planeId, prop, mOverlayMaxZpos + 1);
 
     if (!okay) {
         ALOGE("%s: failed to flush Primary plane:%d.", __FUNCTION__, planeId);
@@ -312,6 +323,8 @@ std::tuple<HWC3::Error, ::android::base::unique_fd> DrmDisplay::commit(
             plane->setState(PLANE_STATE_DISABLED);
         }
     }
+    mOverlayMaxZpos = 0;
+
     mPreviousBuffers.clientTargetDrmBuffer = mTempBuffers.clientTargetDrmBuffer;
     mPreviousBuffers.planeDrmBuffer = mTempBuffers.planeDrmBuffer;
 
@@ -419,30 +432,20 @@ uint32_t DrmDisplay::findDrmPlane(const native_handle_t* handle) {
         return 0;
     }
 
-    gralloc_handle_t memHandle = (gralloc_handle_t)handle;
-    if (memHandle == nullptr) {
-        ALOGE("%s: display:%" PRIu32 " invalid gralloc_handle", __FUNCTION__, mId);
+    HandleInfo info;
+    if (!handle || (getInfoFromHandle(handle, &info) != 0)) {
+        ALOGE("%s: display:%" PRIu32 " invalid native_handle", __FUNCTION__, mId);
         return 0;
     }
 
-    uint64_t modifier;
-    uint32_t format = ConvertNxpFormatToDrmFormat(memHandle->fslFormat, &modifier);
-    if (format == 0) {
-        ALOGE("%s: display:%" PRIu32 " unknown format:0x%x", __FUNCTION__, mId,
-              memHandle->fslFormat);
-        return 0;
-    }
-
-    if (memHandle->format_modifier > 0)
-        modifier = memHandle->format_modifier;
-
+    uint32_t format = info.drm_format;
+    uint64_t modifier = info.modifier;
 #ifdef DEBUG_NXP_HWC
     {
         char fmt[6];
         char* name = drmGetFormatName(format, fmt); // defined in HWC, no malloc memory
         char* modifier_name = drmGetFormatModifierName(modifier);
-        DEBUG_LOG("%s: Checking buffer:%s :%s %s", __FUNCTION__, memHandle->name, name,
-                  modifier_name);
+        DEBUG_LOG("%s: Checking buffer:%s :%s %s", __FUNCTION__, info.name, name, modifier_name);
         free(modifier_name);
     }
 #endif
@@ -549,7 +552,8 @@ void DrmDisplay::updateActiveConfig(std::shared_ptr<HalConfig> configs) {
     }
     mActiveConfig = (*configs)[mActiveConfigId];
 
-    uint32_t format = FORMAT_RGBA8888;
+    uint32_t format;
+    getFramebufferInfo(&width, &height, &format);
     ALOGI("Display Id   = %d \n"
           "configId     = %d \n"
           "xres         = %d px\n"
@@ -645,12 +649,12 @@ int DrmDisplay::getFramebufferInfo(uint32_t* width, uint32_t* height, uint32_t* 
     uint32_t id = getPrimaryPlaneId();
     DrmPlane* plane = mPlanes[id].get();
     if (plane->checkFormatSupported(DRM_FORMAT_ABGR8888)) {
-        *format = static_cast<int>(common::PixelFormat::RGBA_8888);
+        *format = static_cast<uint32_t>(common::PixelFormat::RGBA_8888);
     } else if (plane->checkFormatSupported(DRM_FORMAT_XRGB8888)) {
         // primary plane of imx8ulp use such format
-        *format = static_cast<int>(common::PixelFormat::BGRA_8888);
+        *format = static_cast<uint32_t>(common::PixelFormat::BGRA_8888);
     } else if (plane->checkFormatSupported(DRM_FORMAT_RGB565)) {
-        *format = static_cast<int>(common::PixelFormat::RGB_565);
+        *format = static_cast<uint32_t>(common::PixelFormat::RGB_565);
     }
 
     return 0;
