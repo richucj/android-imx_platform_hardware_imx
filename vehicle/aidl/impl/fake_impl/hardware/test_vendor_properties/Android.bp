@@ -24,6 +24,7 @@ filegroup {
         "**/*.aidl",
     ],
     visibility: [
+    	"//vendor/nxp-opensource/imx/vehicle/aidl/impl/default_config/JsonConfigLoader",
     	"//vendor/nxp-opensource/imx/vehicle/aidl/impl/fake_impl/hardware",
         "//hardware/interfaces/automotive/vehicle/aidl:__subpackages__",
         "//packages/services/Car:__subpackages__",
