@@ -21,7 +21,10 @@ package {
 cc_library {
     name: "FakeVehicleHardwareImx",
     vendor: true,
-    srcs: ["src/*.cpp"],
+    srcs: [
+        "src/*.cpp",
+        ":VhalTestVendorPropertiesImx",
+    ],
     local_include_dirs: ["include"],
     export_include_dirs: ["include"],
     defaults: [
@@ -35,6 +38,7 @@ cc_defaults {
     header_libs: [
         "IVehicleHardware",
         "VehicleHalTestUtilHeaders",
+	"libbinder_headers",
     ],
     export_header_lib_headers: ["IVehicleHardware"],
     static_libs: [
