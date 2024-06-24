@@ -289,16 +289,33 @@ int ImageProcess::ConvertImage(ImxImageBuffer &dstBuf, ImxImageBuffer &srcBuf, I
         dstBuf.mFormat = HAL_PIXEL_FORMAT_YCBCR_420_888;
     }
 
+    // for 8mp, g2d not support nv12 scale, use software to scale, or will cause
+    // testAllOutputYUVResolutions failed.
+    if (((srcBuf.mFormat == dstBuf.mFormat) && (dstBuf.mFormat == HAL_PIXEL_FORMAT_YCBCR_420_888) &&
+         (srcBuf.mZoomRatio <= 1.0)) &&
+        ((srcBuf.mWidth != dstBuf.mWidth) || (srcBuf.mHeight != dstBuf.mHeight))) {
+        char socType[128] = {0};
+        property_get("ro.boot.soc_type", socType, "");
+        if (strstr(socType, "imx8mp")) {
+            engine = ENG_CPU;
+        }
+    }
+
     if (engine != ENG_NOTCARE) {
         ret = (this->*g_EngFuncList[engine])(dstBuf, srcBuf);
+        if (ret != 0) {
+            ALOGE("%s:  ConvertImage failed, engine %d, ret:%d", __func__, engine, ret);
+        }
         return ret;
     }
 
     // If ENG_NOTCARE, go through all engines until convert ok.
     for (int i = ENG_MIN; i < ENG_NUM; i++) {
         ret = (this->*g_EngFuncList[i])(dstBuf, srcBuf);
-        if (ret == 0) {
-            ALOGV("%s:  engine %d, ret:%d", __func__, i, ret);
+        if (ret != 0) {
+            ALOGE("%s:  ConvertImage failed, engine %d, ret:%d", __func__, i, ret);
+        } else {
+            ALOGV("%s:  ConvertImage success, engine %d, ret:%d", __func__, i, ret);
             return 0;
         }
     }

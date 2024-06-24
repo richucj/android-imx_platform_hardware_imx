@@ -287,10 +287,13 @@ status_t JpegBuilder::encodeJpeg(JpegParams *input, char *hw_jpeg_enc, const voi
     PixelFormat format = input->format;
 
     YuvToJpegEncoder *encoder;
-    if (strstr(hw_jpeg_enc, IMX_JPEG_ENC))
+    if (strstr(hw_jpeg_enc, IMX_JPEG_ENC)) {
         encoder = new HwJpegEncoder(format);
-    else
+        ALOGI("%s YuvToJpegEncoder create HwJpegEncoder, format 0x%x", __func__, format);
+    } else {
         encoder = YuvToJpegEncoder::create(format);
+        ALOGI("%s YuvToJpegEncoder create SoftJpegEncoder, format 0x%x", __func__, format);
+    }
 
     if (encoder == NULL) {
         ALOGE("%s failed to create jpeg encoder", __func__);
