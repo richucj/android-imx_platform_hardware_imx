@@ -280,7 +280,7 @@ std::tuple<HWC3::Error, ::android::base::unique_fd> DrmDisplay::commit(
         okay &= request->Set(mCrtc->getId(), mCrtc->getActiveProperty(), 1);
         okay &= request->Set(mCrtc->getId(), mCrtc->getModeProperty(), modeBlobId);
         request->setAllowModesetFlag(true);
-        ALOGI("%s: Do mode set for display:%d", __FUNCTION__, mId);
+        ALOGI("%s: *** Do modeset for display:%d ***", __FUNCTION__, mId);
     }
     okay &= request->Set(mCrtc->getId(), mCrtc->getOutFenceProperty(),
                          addressAsUint(&flushFenceFd));
@@ -290,33 +290,36 @@ std::tuple<HWC3::Error, ::android::base::unique_fd> DrmDisplay::commit(
         return std::make_tuple(HWC3::Error::NoResources, ::android::base::unique_fd());
     }
 
+
+    int vsyncPeriod = 1000000000UL / mActiveConfig.refreshRateHz; // convert to nanosecond
+    uint32_t interval = vsyncPeriod * 2 / mCommitRetryCnt / 1000; // try 2 Vsync period
 #ifdef DEBUG_DUMP_REFRESH_RATE
     nsecs_t now = dumpRefreshRateStart();
 #endif
     int ret;
-    uint32_t i;
-    for (i = 0; i < MAX_COMMIT_RETRY_COUNT; i++) {
+    uint32_t i = 0;
+    ret = request->Commit(drmFd);
+    while ((ret == -EBUSY) && (i < mCommitRetryCnt)) {
+        usleep(interval);
         ret = request->Commit(drmFd);
-        if (ret == -EBUSY) {
-            usleep(1000);
-            continue;
-        } else if (ret != 0) {
-            ALOGE("%s: Failed to commit request to display %d, ret=%d", __FUNCTION__, mId, ret);
-            break;
-        }
-        break;
+        i++;
     }
-    if (i >= MAX_COMMIT_RETRY_COUNT) {
-        ALOGE("%s: atomic commit failed after retry", __FUNCTION__);
+    if (ret != 0) {
+        ALOGE("%s: atomic commit for display:%d failed ret=%d after retry %d times", __FUNCTION__,
+              mId, ret, i);
         return std::make_tuple(HWC3::Error::NoResources, ::android::base::unique_fd());
     }
 #ifdef DEBUG_DUMP_REFRESH_RATE
-    int vsyncPeriod = 1000000000UL / mActiveConfig.refreshRateHz; // convert to nanosecond
     dumpRefreshRateEnd(mDumpActualFps, vsyncPeriod, now);
 #endif
 
-    if (mModeSet && ret == 0)
+    if (mModeSet && ret == 0) {
         mModeSet = false;
+        // The first frame after modeset may cost more time to commit sucessfully
+        mCommitRetryCnt = MAX_COMMIT_RETRY_COUNT * 4;
+    } else {
+        mCommitRetryCnt = MAX_COMMIT_RETRY_COUNT;
+    }
 
     for (auto& [_, plane] : mPlanes) {
         if (plane->getState() == PLANE_STATE_ACTIVE) {
@@ -328,8 +331,8 @@ std::tuple<HWC3::Error, ::android::base::unique_fd> DrmDisplay::commit(
     mPreviousBuffers.clientTargetDrmBuffer = mTempBuffers.clientTargetDrmBuffer;
     mPreviousBuffers.planeDrmBuffer = mTempBuffers.planeDrmBuffer;
 
-    DEBUG_LOG("%s: atomic commit display:%d, plane:active=%s,disabled=%s; present fence:%d\n",
-              __FUNCTION__, mId, activeStr, disableStr, flushFenceFd);
+    DEBUG_LOG("%s: atomic commit display:%d, plane:active=%s,disabled=%s; present fence:%d, retry"
+              "%d times", __FUNCTION__, mId, activeStr, disableStr, flushFenceFd, i);
     return std::make_tuple(HWC3::Error::None, ::android::base::unique_fd(flushFenceFd));
 }
 
@@ -542,10 +545,15 @@ void DrmDisplay::updateActiveConfig(std::shared_ptr<HalConfig> configs) {
         newConfig.modeWidth = activeConfig.width;
         newConfig.modeHeight = activeConfig.height;
 
-        // previous maximum config Id = mStartConfigId + configs->size() - 1
-        mActiveConfigId = mStartConfigId + configs->size();
+        uint32_t id_max = 0;
+        for (auto& [id, cfg] : *configs) {
+            if (id > id_max)
+                id_max = id;
+        }
+
+        mActiveConfigId = mStartConfigId + id_max + 1;
         mInitActiveConfigId = mActiveConfigId;
-        configs->emplace(mStartConfigId + configs->size(), newConfig);
+        configs->emplace(mActiveConfigId, newConfig);
         DEBUG_LOG("%s: Add new config:%d x %d, fps=%d, mode=%d x %d", __FUNCTION__, newConfig.width,
                   newConfig.height, newConfig.refreshRateHz, newConfig.modeWidth,
                   newConfig.modeHeight);

@@ -121,6 +121,7 @@ DeviceComposer::DeviceComposer() {
         mFinishEngine = NULL;
         mQueryFeature = NULL;
         mBuffInfoFromFd = NULL;
+        mCreateFenceFd = NULL;
     } else {
         ALOGI("load %s library successfully!", g2dlibName);
         mSetClipping = (hwc_func5)dlsym(mG2dHandle, "g2d_set_clipping");
@@ -136,6 +137,7 @@ DeviceComposer::DeviceComposer() {
         mFinishEngine = (hwc_func1)dlsym(mG2dHandle, "g2d_finish");
         mQueryFeature = (hwc_func3)dlsym(mG2dHandle, "g2d_query_feature");
         mBuffInfoFromFd = (hwc_buf_func)dlsym(mG2dHandle, "g2d_buf_from_fd");
+        mCreateFenceFd = (hwc_func1)dlsym(mG2dHandle, "g2d_create_fence_fd");
     }
 
     memset(&mSolidColorBuffInfo, 0, sizeof(mSolidColorBuffInfo));
@@ -418,7 +420,8 @@ int DeviceComposer::composeLayerLocked(Layer* layer, bool bypass) {
             DEBUG_LOG_G2D("zorder:0x%x, phys:0x%" PRIx64, layer->getZOrder(), layerInfo.phys);
         }
 
-        DEBUG_LOG_G2D("transform:0x%x, blend:0x%x, alpha:0x%x", transform, mode, alpha);
+        DEBUG_LOG_G2D("transform:0x%x, blend:0x%x, alpha:0x%x",
+                      static_cast<unsigned int>(transform), static_cast<unsigned int>(mode), alpha);
 
         setG2dSurface(dSurfaceX, mTarget, drect);
 
@@ -471,7 +474,6 @@ int DeviceComposer::composeLayerLocked(Layer* layer, bool bypass) {
 
 int DeviceComposer::setG2dSurface(struct g2d_surfaceEx& surfaceX, buffer_handle_t handle,
                                   common::Rect& rect) {
-    int alignWidth = 0, alignHeight = 0;
     struct g2d_surface& surface = surfaceX.base;
     HandleInfo info;
     if (handle == NULL || (getInfoFromHandle(handle, &info) != 0)) {
@@ -479,14 +481,7 @@ int DeviceComposer::setG2dSurface(struct g2d_surfaceEx& surfaceX, buffer_handle_
         return -1;
     }
 
-    int ret = getAlignedSize(handle, NULL, &alignHeight);
-    if (ret != 0) {
-        alignHeight = info.height;
-    }
-
-    alignWidth = info.stride;
     surface.format = convertFormat(info.drm_format, handle);
-    surface.stride = alignWidth;
     enum g2d_tiling tile = G2D_LINEAR;
     getTiling(handle, &tile);
     if (info.modifier == DRM_FORMAT_MOD_AMPHION_TILED) {
@@ -514,15 +509,20 @@ int DeviceComposer::setG2dSurface(struct g2d_surfaceEx& surfaceX, buffer_handle_
     switch (surface.format) {
         case G2D_RGB565:
         case G2D_YUYV:
+            surface.stride = info.strides[0] / 2; // convert to pixel stride
+            break;
         case G2D_RGBA8888:
         case G2D_BGRA8888:
         case G2D_RGBX8888:
         case G2D_BGRX8888:
+        case G2D_RGBA1010102:
+            surface.stride = info.strides[0] / 4; // convert to pixel stride
             break;
 
         case G2D_NV16:
         case G2D_NV12:
         case G2D_NV21:
+            surface.stride = info.strides[0];
             surface.planes[1] = surface.planes[0] + info.offsets[1];
             break;
 
@@ -556,6 +556,9 @@ int DeviceComposer::setG2dSurface(struct g2d_surfaceEx& surfaceX, buffer_handle_
 enum g2d_format DeviceComposer::convertFormat(int format, buffer_handle_t handle) {
     enum g2d_format halFormat;
     switch (format) {
+        case DRM_FORMAT_ABGR2101010:
+            halFormat = G2D_RGBA1010102;
+            break;
         case DRM_FORMAT_ABGR8888:
             halFormat = G2D_RGBA8888;
             break;
@@ -805,6 +808,14 @@ int DeviceComposer::getBuffPhys(buffer_handle_t handle, int *phys) {
     return 0;
 }
 
+int DeviceComposer::createFenceFd(void* handle) {
+    if (mCreateFenceFd == NULL) {
+        return -1;
+    }
+
+    return (*mCreateFenceFd)((void*)handle);
+}
+
 int DeviceComposer::alignTile(int* width, int* height, int format, int usage) {
     if (mAlignTile == NULL) {
         return -EINVAL;
@@ -856,10 +867,14 @@ bool DeviceComposer::checkDeviceComposition(Layer* layer) {
 
     auto layerBuffer = layer->getBuffer().getBuffer();
     HandleInfo info;
-    if (layerBuffer == NULL || (getInfoFromHandle(layerBuffer, &info) != 0)) {
+    if (layerBuffer == NULL) { // support device composition for SOLID_COLOR layer
+        return true;
+    } else if (getInfoFromHandle(layerBuffer, &info) != 0) {
+        ALOGE("%s: fail to get buffer infomation", __FUNCTION__);
         return false;
     }
 
+#ifndef G2D_LIMITATION_PXP
     if (layer->getCompositionType() == Composition::CLIENT) {
         DEBUG_LOG("%s: Not process type=CLIENT layer", __FUNCTION__);
         return false;
@@ -876,13 +891,14 @@ bool DeviceComposer::checkDeviceComposition(Layer* layer) {
         DEBUG_LOG("%s: g2d can't support rotation", __FUNCTION__);
         return false;
     }
+#endif
 
+#ifdef G2D_LIMITATION_VIV
     if (info.drm_format == DRM_FORMAT_ABGR2101010) {
         DEBUG_LOG("%s: g2d can't support ABGR2101010 format", __FUNCTION__);
         return false;
     }
 
-#ifdef G2D_LIMITATION_VIV
     common::Dataspace dataspace = layer->getDataspace();
     // video nv12 full range should be handled by client
     if (layerBuffer != nullptr && info.drm_format == DRM_FORMAT_NV12 &&
@@ -903,12 +919,14 @@ bool DeviceComposer::checkDeviceComposition(Layer* layer) {
     return true;
 }
 
-bool DeviceComposer::composeLayers(std::vector<Layer*> layers, buffer_handle_t target) {
+std::tuple<bool, ::android::base::unique_fd> DeviceComposer::composeLayers(
+        std::vector<Layer*> layers, buffer_handle_t target) {
     DEBUG_LOG("%s: ------%zu layers compose to target-------", __FUNCTION__, layers.size());
+    ATRACE_CALL();
 
     if (!target) {
         ALOGE("%s: composer target buffer is invalid", __FUNCTION__);
-        return false;
+        return std::make_tuple(false, ::android::base::unique_fd());
     }
 
     Mutex::Autolock _l(sLock);
@@ -938,11 +956,14 @@ bool DeviceComposer::composeLayers(std::vector<Layer*> layers, buffer_handle_t t
         }
         i++;
     }
+    ::android::base::unique_fd composeFence(createFenceFd(getHandle()));
 
     unlockSurface(target);
-    finishComposite();
 
-    return 0;
+    if (!composeFence.ok())
+        finishComposite();
+
+    return std::make_tuple(true, std::move(composeFence));
 }
 
 } // namespace aidl::android::hardware::graphics::composer3::impl

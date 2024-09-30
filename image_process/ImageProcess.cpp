@@ -1,5 +1,5 @@
 /*
- * Copyright 2023 NXP.
+ * Copyright 2023-2024 NXP.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -50,8 +50,6 @@ namespace fsl {
 ImageProcess *ImageProcess::sInstance(0);
 Mutex ImageProcess::sLock(Mutex::PRIVATE);
 
-static void Revert16BitEndian(uint8_t *pSrc, uint8_t *pDst, uint32_t pixels);
-
 static bool IsCscSupportByCPU(int srcFormat, int dstFormat) {
     // yuyv -> nv12
     if (((dstFormat == HAL_PIXEL_FORMAT_YCbCr_420_888) ||
@@ -65,8 +63,8 @@ static bool IsCscSupportByCPU(int srcFormat, int dstFormat) {
         return true;
 
     // nv12 -> yv12
-    if ((srcFormat == HAL_PIXEL_FORMAT_YCbCr_420_SP) ||
-        (srcFormat == HAL_PIXEL_FORMAT_YCbCr_420_888) && (dstFormat == HAL_PIXEL_FORMAT_YV12))
+    if (((srcFormat == HAL_PIXEL_FORMAT_YCbCr_420_SP) ||
+        (srcFormat == HAL_PIXEL_FORMAT_YCbCr_420_888)) && (dstFormat == HAL_PIXEL_FORMAT_YV12))
         return true;
 
     return false;
@@ -268,6 +266,9 @@ void ImageProcess::getModule(char *path, const char *name) {
 
 int ImageProcess::ConvertImage(ImxImageBuffer &dstBuf, ImxImageBuffer &srcBuf, ImxEngine engine) {
     int ret = 0;
+
+    if (engine == ENG_BYPASS)
+        return 0;
 
     if (!((engine == ENG_NOTCARE) || (engine >= ENG_MIN && engine < ENG_NUM))) {
         ALOGE("%s: invalid engine %d", __func__, engine);
@@ -531,7 +532,7 @@ static int AllocPhyBufferByFmtRes(ImxImageBuffer &imgBuf, uint32_t format, uint3
     int ret = AllocPhyBuffer(stride, height, format, imgBuf);
     if (ret) {
         ALOGE("%s: AllocPhyBuffer failed, formatSize %d, allocSize %d", __func__,
-              imgBuf.mFormatSize, imgBuf.mSize);
+              (int)imgBuf.mFormatSize, (int)imgBuf.mSize);
         return ret;
     }
 
@@ -670,8 +671,8 @@ int ImageProcess::ConvertImageByG2DBlit(ImxImageBuffer &dstBuf, ImxImageBuffer &
             return ret;
         }
 
-        FreePhyBuffer(resizeBuf.buffer);
         mFinishEngine(g2dHandle);
+        FreePhyBuffer(resizeBuf.buffer);
     }
 
     return ret;
@@ -791,10 +792,7 @@ int ImageProcess::convertNV12toNV21(ImxImageBuffer &dstBuf, ImxImageBuffer &srcB
         memcpy(dstOut, srcIn, size);
     }
 
-    for (int k = 0; k < UVsize / 2; k++) {
-        __asm volatile("rev16 %0, %0" : "+r"(*UVout));
-        UVout += 1;
-    }
+    Revert16BitEndian((uint8_t *)UVout, (uint8_t *)UVout, UVsize / 2);
 
     return 0;
 }
@@ -821,18 +819,6 @@ void ImageProcess::convertNV12toYV12(uint8_t *inputBuffer, uint8_t *outputBuffer
         ptrU2 = ptrU2 + 2;
         n++;
     }
-}
-
-static void Revert16BitEndian(uint8_t *pSrc, uint8_t *pDst, uint32_t pixels) {
-    ALOGI("enter Revert16BitEndian, src %p, dst %p, pixels %d", pSrc, pDst, pixels);
-
-    for (uint32_t i = 0; i < pixels; i++) {
-        uint32_t offset = i * 2;
-        pDst[offset] = pSrc[offset + 1];
-        pDst[offset + 1] = pSrc[offset];
-    }
-
-    return;
 }
 
 int ImageProcess::ConvertImageByGPU_3D(ImxImageBuffer &dstBuf, ImxImageBuffer &srcBuf) {
@@ -1111,7 +1097,7 @@ void ImageProcess::convertYUYVtoNV12SP(uint8_t *inputBuffer, uint8_t *outputBuff
 }
 
 int ImageProcess::resizeWrapper(ImxImageBuffer &srcBuf, ImxImageBuffer &dstBuf, ImxEngine engine) {
-    int ret;
+    int ret = 0;
     ALOGV("enter resizeWrapper");
 
     if (srcBuf.mFormat != dstBuf.mFormat) {

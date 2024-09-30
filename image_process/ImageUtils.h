@@ -1,5 +1,5 @@
 /*
- *  Copyright 2023 NXP.
+ *  Copyright 2023-2024 NXP.
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -48,7 +48,7 @@ typedef struct tag_imx_image_buffer {
                         // and resolution.
     buffer_handle_t buffer; // G2D need in lockSurface()
     float mZoomRatio; // just g2d/dpu support, set in source ImxImageBuffer
-    uint32_t mUsage;  // currently used to decide cache/un-cache.
+    uint64_t mUsage;  // currently used to decide cache/un-cache.
     void *mPrivate; // user context
 } ImxImageBuffer;
 
@@ -68,6 +68,9 @@ int UnlockPhyBuffer(buffer_handle_t buffer);
 int GetBufferInfoFromHandle(buffer_handle_t buffer, ImxImageBuffer &outBufInfo);
 void SwitchImxBuf(ImxImageBuffer &imxBufA, ImxImageBuffer &imxBufB);
 
+void Revert16BitEndian(uint8_t *pSrc, uint8_t *pDst, uint32_t pixels);
+void SbggrToRgb888(const uint16_t *src, uint8_t *rgb, int width, int height);
+void Rgb888ToYuv422i(const uint8_t *rgb, uint8_t *yuv422i, int width, int height);
 } // namespace android
 
 #endif // IMAGE_UTILS_H

@@ -279,6 +279,8 @@ std::tuple<HWC3::Error, std::shared_ptr<DrmBuffer>> DrmClient::create(const nati
                                                                       common::Rect displayFrame,
                                                                       common::Rect sourceCrop,
                                                                       BufferType type) {
+    ATRACE_CALL();
+
     HandleInfo info;
     if (handle == nullptr || (getInfoFromHandle(handle, &info) != 0)) {
         ALOGE("%s: invalid native handle", __FUNCTION__);
@@ -535,7 +537,7 @@ HWC3::Error DrmClient::checkOverlayLimitation(int displayId, Layer* layer) {
     // rotation limitation
     if (layer->getTransform() != common::Transform::NONE) {
         DEBUG_LOG("%s: layer %" PRId64 " transform(%d) check failed", __FUNCTION__, layer->getId(),
-                  layer->getTransform());
+                  static_cast<int>(layer->getTransform()));
         return HWC3::Error::Unsupported;
     }
 
@@ -694,7 +696,18 @@ HWC3::Error DrmClient::resetDisplayConfig(int displayId) {
         return HWC3::Error::BadDisplay;
     }
 
+    uint32_t width, height, pre_width, pre_height, format;
+    mDisplays[displayId]->getFramebufferInfo(&pre_width, &pre_height, &format);
+
     mDisplays[displayId]->resetDisplayConfig();
+
+    mDisplays[displayId]->getFramebufferInfo(&width, &height, &format);
+    if (((pre_width != width) || (pre_height != height)) &&
+        mComposerTargets.find(displayId) != mComposerTargets.end()) {
+        // need to free device composer target buffers when resolution changed
+        mComposerTargets[displayId].valid = false;
+    }
+
     return HWC3::Error::None;
 }
 
@@ -779,37 +792,41 @@ HWC3::Error DrmClient::setSecureMode(int displayId, uint32_t planeId, bool secur
 }
 
 int DrmClient::loadBacklightDevices() {
-    char dev[PROPERTY_VALUE_MAX];
-    std::string filePath;
+    struct dirent** dirEntry;
     std::string path("/sys/class/backlight/");
-
-    property_get("vendor.hw.backlight.dev", dev, "pwm-backlight");
-    filePath = path + dev + "/max_brightness";
+    int count = -1;
     mBacklight.path = "";
+    mBacklight.maxBrightness = -1;
 
-    FILE* file = fopen(filePath.c_str(), "r");
-    if (!file) {
-        property_get("vendor.hw.backlight_backup.dev", dev, "pwm-backlight");
-        filePath = path + dev + "/max_brightness";
-        file = fopen(filePath.c_str(), "r");
+    count = scandir(path.c_str(), &dirEntry, 0, alphasort);
+    if (count < 0) {
+        ALOGE("%s: Cannot find any backlight device in '%s'", __FUNCTION__, path.c_str());
     }
-    if (!file) {
-        mBacklight.maxBrightness = -1;
-        ALOGE("%s: Cannot get backlight device or incorrect setting", __FUNCTION__);
-    } else {
+    for (int i = 0; i < count; i++) {
+        std::string filePath = path + dirEntry[i]->d_name + "/max_brightness";
+        FILE* file = fopen(filePath.c_str(), "r");
+        if (!file) {
+            free(dirEntry[i]);
+            continue;
+        }
+
         char value[5];
         size_t bytesRead = fread(value, 1, 4, file);
         if (bytesRead == 0) {
             ALOGE("%s: Error reading max brightness from %s", __FUNCTION__, filePath.c_str());
-            mBacklight.maxBrightness = -1;
+            fclose(file);
+            free(dirEntry[i]);
+            continue;
         } else {
             value[4] = '\0';
             mBacklight.maxBrightness = atoi(value);
             ALOGI("%s: get max brightness=%d from %s", __FUNCTION__, mBacklight.maxBrightness,
                   filePath.c_str());
         }
-        mBacklight.path = path + dev;
+        mBacklight.path = path + dirEntry[i]->d_name;
         fclose(file);
+        for (; i < count; i++) free(dirEntry[i]); // free other dirEntrys
+        break;
     }
 
     if (mBacklight.maxBrightness > 0) {
@@ -839,7 +856,11 @@ HWC3::Error DrmClient::setBacklightBrightness(int displayId, float brightness) {
         ALOGI("%s: Avoid turning off backlight of low power display in APD side", __FUNCTION__);
         return HWC3::Error::None;
     }
+    if (brightness > 1e-5 && value == 0)
+        value = 1; // minimum value but not turn off
 
+    DEBUG_LOG("%s: display:%" PRIu32 " adjust brightness=%d(%f)", __FUNCTION__, displayId, value,
+              brightness);
     std::string bl = mBacklight.path + "/brightness";
     FILE* file = fopen(bl.c_str(), "w");
     if (!file) {
