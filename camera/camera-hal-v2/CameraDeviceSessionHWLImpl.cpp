@@ -174,6 +174,9 @@ status_t CameraDeviceSessionHwlImpl::Initialize(uint32_t camera_id,
     if (strstr(mSensorData.camera_name, "os08a20")) {
         m_libcamera_stream_width = OS08A20_SENSOR_WIDTH;
         m_libcamera_stream_height = OS08A20_SENSOR_HEIGHT;
+    } else if (strstr(mSensorData.camera_name, "ox03c10")) {
+        m_libcamera_stream_width = OX03C10_SENSOR_WIDTH;
+        m_libcamera_stream_height = OX03C10_SENSOR_HEIGHT;
     } else {
         m_libcamera_stream_width = AP1302_SENSOR_WIDTH;
         m_libcamera_stream_height = AP1302_SENSOR_HEIGHT;

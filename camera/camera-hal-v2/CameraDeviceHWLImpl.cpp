@@ -169,6 +169,9 @@ status_t CameraDeviceHwlImpl::initSensorStaticData() {
     int resCandidatePreview_os08a20[] = {320, 240, 640, 480, 1280, 720, 1920, 1080};
     int resCandidatePicture_os08a20[] = {320, 240, 640, 480, 1280, 720, 1920, 1080, 3840, 2160};
 
+    int resCandidatePreview_ox03c10[] = {320, 240, 640, 480, 1920, 1080};
+    int resCandidatePicture_ox03c10[] = {320, 240, 640, 480, 1920, 1080, 1920, 1280};
+
     int resCandidatePreview_ap1302[] = {320, 240, 640, 480, 1280, 720, 1280, 800};
     int resCandidatePicture_ap1302[] = {320, 240, 640, 480, 1280, 720, 1280, 800};
 
@@ -183,6 +186,18 @@ status_t CameraDeviceHwlImpl::initSensorStaticData() {
                 ? ARRAY_SIZE(resCandidatePicture_os08a20)
                 : MAX_RESOLUTION_SIZE;
         memcpy(mPictureResolutions, resCandidatePicture_os08a20,
+               mPictureResolutionCount * sizeof(int));
+    } else if (strstr(mSensorData.camera_name, "ox03c10")) {
+        mPreviewResolutionCount = ARRAY_SIZE(resCandidatePreview_ox03c10) < MAX_RESOLUTION_SIZE
+                ? ARRAY_SIZE(resCandidatePreview_ox03c10)
+                : MAX_RESOLUTION_SIZE;
+        memcpy(mPreviewResolutions, resCandidatePreview_ox03c10,
+               mPreviewResolutionCount * sizeof(int));
+
+        mPictureResolutionCount = ARRAY_SIZE(resCandidatePicture_ox03c10) < MAX_RESOLUTION_SIZE
+                ? ARRAY_SIZE(resCandidatePicture_ox03c10)
+                : MAX_RESOLUTION_SIZE;
+        memcpy(mPictureResolutions, resCandidatePicture_ox03c10,
                mPictureResolutionCount * sizeof(int));
     } else {
         mPreviewResolutionCount = ARRAY_SIZE(resCandidatePreview_ap1302) < MAX_RESOLUTION_SIZE
@@ -209,12 +224,17 @@ status_t CameraDeviceHwlImpl::initSensorStaticData() {
     }
 
     int fpsRange_os08a20[] = {10, 30, 15, 30, 30, 30};
+    int fpsRange_ox03c10[] = {10, 30, 15, 30, 30, 30};
     int fpsRange_ap1302[] = {10, 30, 15, 30, 30, 30, 15, 60, 60, 60};
 
     if (strstr(mSensorData.camera_name, "os08a20")) {
         int rangeCount = ARRAY_SIZE(fpsRange_os08a20);
         mFpsRangeCount = rangeCount <= MAX_FPS_RANGE ? rangeCount : MAX_FPS_RANGE;
         memcpy(mTargetFpsRange, fpsRange_os08a20, mFpsRangeCount * sizeof(int));
+    } else if (strstr(mSensorData.camera_name, "ox03c10")) {
+        int rangeCount = ARRAY_SIZE(fpsRange_ox03c10);
+        mFpsRangeCount = rangeCount <= MAX_FPS_RANGE ? rangeCount : MAX_FPS_RANGE;
+        memcpy(mTargetFpsRange, fpsRange_ox03c10, mFpsRangeCount * sizeof(int));
     } else {
         int rangeCount = ARRAY_SIZE(fpsRange_ap1302);
         mFpsRangeCount = rangeCount <= MAX_FPS_RANGE ? rangeCount : MAX_FPS_RANGE;
