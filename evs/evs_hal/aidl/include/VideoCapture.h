@@ -37,7 +37,7 @@ public:
     bool open(const char* deviceName, const int32_t width = 0, const int32_t height = 0, int pixel_format = 0);
     void close();
 
-    bool startStream(std::function<void(VideoCapture*, imageBuffer*, void*)> callback = nullptr);
+    bool startStream(std::function<void(VideoCapture*, imageBuffer&, void*)> callback = nullptr);
     void stopStream();
 
     // Valid only after open()
@@ -46,47 +46,27 @@ public:
     __u32 getStride() { return mStride; };
     __u32 getV4LFormat() { return mFormat; };
 
-    // NULL until stream is started
-    void* getLatestData() {
-        if (mFrames.empty()) {
-            // No frame is available
-            return nullptr;
-        }
-
-        // Return a pointer to the buffer captured most recently
-        const int latestBufferId = *mFrames.end();
-        return mPixelBuffers[latestBufferId].start;
-    }
-
-    bool isFrameReady() { return !mFrames.empty(); }
-    void markFrameConsumed(int id) { returnFrame(id); }
-
     bool isOpen() { return mDeviceFd >= 0; }
 
     int setParameter(struct v4l2_control& control);
     int getParameter(struct v4l2_control& control);
     std::set<uint32_t> enumerateCameraControls();
+    bool queueFB(int index, int fd, int size); // Queue buffer to camera driver. API for EvsV4lCamera managing buffer states.
 
 private:
     void collectFrames();
-    bool returnFrame(int id);
 
     int mDeviceFd = -1;
-
-    int mNumBuffers = 0;
-    std::unique_ptr<v4l2_buffer[]> mBufferInfos;
-    std::unique_ptr<PixelBuffers[]> mPixelBuffers = nullptr;
 
     __u32 mFormat = 0;
     __u32 mWidth = 0;
     __u32 mHeight = 0;
     __u32 mStride = 0;
 
-    std::function<void(VideoCapture*, imageBuffer*, void*)> mCallback;
+    std::function<void(VideoCapture*, imageBuffer&, void*)> mCallback;
 
     std::thread mCaptureThread;  // The thread we'll use to dispatch frames
     std::atomic<int> mRunMode;   // Used to signal the frame loop (see RunModes below)
-    std::set<int> mFrames;       // Set of available frame buffers
 
     // Careful changing these -- we're using bit-wise ops to manipulate these
     enum RunModes {

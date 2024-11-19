@@ -149,10 +149,20 @@ bool VideoCapture::open(const char* deviceName, const int32_t width, const int32
         PLOG(ERROR) << "VIDIOC_G_FMT failed";
         return false;
     }
+    // Tell the L4V2 driver to prepare our streaming buffers
+    v4l2_requestbuffers bufrequest;
+    memset(&bufrequest, 0, sizeof(bufrequest));
+    bufrequest.type = V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE;
+    bufrequest.memory = V4L2_MEMORY_DMABUF;
+    // bufrequest.memory = V4L2_MEMORY_MMAP;
+    bufrequest.count = V4L2_BUFFER_NUM;
+    if (ioctl(mDeviceFd, VIDIOC_REQBUFS, &bufrequest) < 0) {
+        PLOG(ERROR) << "VIDIOC_REQBUFS failed";
+        return false;
+    }
 
     // Make sure we're initialized to the STOPPED state
     mRunMode = STOPPED;
-    mFrames.clear();
 
     // Ready to go!
     return true;
@@ -170,69 +180,13 @@ void VideoCapture::close() {
     }
 }
 
-bool VideoCapture::startStream(std::function<void(VideoCapture*, imageBuffer*, void*)> callback) {
+bool VideoCapture::startStream(std::function<void(VideoCapture*, imageBuffer&, void*)> callback) {
     // Set the state of our background thread
     int prevRunMode = mRunMode.fetch_or(RUN);
     if (prevRunMode & RUN) {
         // The background thread is already running, so we can't start a new stream
         LOG(ERROR) << "Already in RUN state, so we can't start a new streaming thread";
         return false;
-    }
-
-    // Tell the L4V2 driver to prepare our streaming buffers
-    v4l2_requestbuffers bufrequest;
-    memset(&bufrequest, 0, sizeof(bufrequest));
-    bufrequest.type = V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE;
-    bufrequest.memory = V4L2_MEMORY_MMAP;
-    bufrequest.count = V4L2_BUFFER_NUM;
-    if (ioctl(mDeviceFd, VIDIOC_REQBUFS, &bufrequest) < 0) {
-        PLOG(ERROR) << "VIDIOC_REQBUFS failed";
-        return false;
-    }
-
-    mNumBuffers = bufrequest.count;
-    mBufferInfos = std::make_unique<v4l2_buffer[]>(mNumBuffers);
-    mPixelBuffers = std::make_unique<PixelBuffers[]>(mNumBuffers);
-
-     struct v4l2_plane planes;
-     memset(&planes, 0, sizeof(struct v4l2_plane));
-
-    for (int i = 0; i < mNumBuffers; ++i) {
-        // Get the information on the buffer that was created for us
-        memset(&mBufferInfos[i], 0, sizeof(v4l2_buffer));
-        mBufferInfos[i].type = V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE;
-        mBufferInfos[i].m.planes = &planes;
-        mBufferInfos[i].length = 1; /* plane num */
-        mBufferInfos[i].index = i,
-        mBufferInfos[i].memory = V4L2_MEMORY_MMAP;
-
-        if (ioctl(mDeviceFd, VIDIOC_QUERYBUF, &mBufferInfos[i]) < 0) {
-            PLOG(ERROR) << "VIDIOC_QUERYBUF failed";
-            return false;
-        }
-
-        LOG(DEBUG) << "Buffer description:";
-        LOG(DEBUG) << "  offset: " << mBufferInfos[i].m.offset;
-        LOG(DEBUG) << "  length: " << mBufferInfos[i].length;
-        LOG(DEBUG) << "  flags : " << std::hex << mBufferInfos[i].flags;
-
-        // Get a pointer to the buffer contents by mapping into our address space
-        mPixelBuffers[i].start = mmap(NULL, mBufferInfos[i].m.planes->length, PROT_READ | PROT_WRITE, MAP_SHARED,
-                                mDeviceFd,mBufferInfos[i].m.planes->m.mem_offset);
-        mPixelBuffers[i].length = mBufferInfos[i].m.planes->length;
-        if (mPixelBuffers[i].start == MAP_FAILED) {
-            PLOG(ERROR) << "mmap() failed";
-            return false;
-        }
-
-        memset(mPixelBuffers[i].start, 0, mPixelBuffers[i].length);
-        LOG(INFO) << "Buffer mapped at " << mPixelBuffers[i].start;
-
-        // Queue the first capture buffer
-        if (ioctl(mDeviceFd, VIDIOC_QBUF, &mBufferInfos[i]) < 0) {
-            PLOG(ERROR) << "VIDIOC_QBUF failed";
-            return false;
-        }
     }
 
     // Start the video stream
@@ -264,9 +218,6 @@ void VideoCapture::stopStream() {
         return;
     } else {
         // Block until the background thread is stopped
-        if (mCaptureThread.joinable()) {
-            mCaptureThread.join();
-        }
 
         // Stop the underlying video stream (automatically empties the buffer queue)
         const int type = V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE;
@@ -274,16 +225,14 @@ void VideoCapture::stopStream() {
             PLOG(ERROR) << "VIDIOC_STREAMOFF failed";
         }
 
-        LOG(DEBUG) << "Capture thread stopped.";
-    }
-
-    for (int i = 0; i < mNumBuffers; ++i) {
-        // Unmap the buffers we allocated
-        munmap(mPixelBuffers[i].start, mPixelBuffers[i].length);
+        if (mCaptureThread.joinable()) {
+            mCaptureThread.join();
+        }
     }
 
     // Tell the L4V2 driver to release our streaming buffers
     v4l2_requestbuffers bufrequest;
+
     bufrequest.type = V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE;
     bufrequest.memory = V4L2_MEMORY_DMABUF;
     bufrequest.count = 0;
@@ -291,27 +240,28 @@ void VideoCapture::stopStream() {
 
     // Drop our reference to the frame delivery callback interface
     mCallback = nullptr;
-
-    // Release capture buffers
-    mNumBuffers = 0;
-    mBufferInfos = nullptr;
-    mPixelBuffers = nullptr;
 }
 
-bool VideoCapture::returnFrame(int id) {
-    if (mFrames.find(id) == mFrames.end()) {
-        LOG(WARNING) << "Invalid request to return a buffer " << id << " is ignored.";
-        return false;
-    }
+bool VideoCapture::queueFB(int index, int fd, int size) {
+    struct v4l2_buffer buf;
+    struct v4l2_plane planes;
+    memset(&buf, 0, sizeof(buf));
+    memset(&planes, 0, sizeof(struct v4l2_plane));
+
+    buf.type = V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE;
+    buf.memory = V4L2_MEMORY_DMABUF;
+    buf.m.planes = &planes;
+    buf.index = index;
+    buf.length = 1;
+    buf.m.planes->length = size;
+    buf.m.planes->m.fd = fd;
+
 
     // Requeue the buffer to capture the next available frame
-    if (ioctl(mDeviceFd, VIDIOC_QBUF, &mBufferInfos[id]) < 0) {
+    if (ioctl(mDeviceFd, VIDIOC_QBUF, &buf) < 0) {
         PLOG(ERROR) << "VIDIOC_QBUF failed";
         return false;
     }
-
-    // Remove ID of returned buffer from the set
-    mFrames.erase(id);
 
     return true;
 }
@@ -336,14 +286,9 @@ void VideoCapture::collectFrames() {
           break;
         }
 
-        mFrames.insert(buf.index);
-
-        // Update a frame metadata
-        mBufferInfos[buf.index] = buf;
-
         // If a callback was requested per frame, do that now
         if (mCallback) {
-            mCallback(this, &mBufferInfos[buf.index], mPixelBuffers[buf.index].start);
+            mCallback(this, buf, NULL);
         }
     }
 

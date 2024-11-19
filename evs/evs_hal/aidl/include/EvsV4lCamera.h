@@ -99,7 +99,7 @@ private:
     unsigned increaseAvailableFrames_Locked(unsigned numToAdd);
     unsigned decreaseAvailableFrames_Locked(unsigned numToRemove);
 
-    void forwardFrame(imageBuffer* tgt, void* data);
+    void forwardFrame(imageBuffer &tgt, void *pData);
     inline bool convertToV4l2CID(aidlevs::CameraParam id, uint32_t& v4l2cid);
 
     // The callback used to deliver each frame
@@ -122,8 +122,8 @@ private:
         explicit BufferRecord(buffer_handle_t h) : handle(h), inUse(false){};
     };
 
-    // Graphics buffers to transfer images
-    std::vector<BufferRecord> mBuffers;
+    // Graphics buffers to transfer images and their V4L buffer id's.
+    std::unordered_map<int, BufferRecord> mBuffers;
     // How many buffers are we currently using
     unsigned mFramesAllowed;
     // How many buffers are currently outstanding
@@ -136,8 +136,6 @@ private:
                                  unsigned imgStride);
 
     aidlevs::EvsResult doneWithFrame_impl(const aidlevs::BufferDesc& bufferDesc);
-    aidlevs::EvsResult doneWithFrame_impl(uint32_t id, buffer_handle_t handle);
-
     // Synchronization necessary to deconflict the capture thread from the main service thread
     // Note that the service interface remains single threaded (ie: not reentrant)
     mutable std::mutex mAccessLock;

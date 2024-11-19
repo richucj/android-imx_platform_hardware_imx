@@ -61,6 +61,7 @@ cc_binary {
     ],
     include_dirs: [
         "frameworks/native/include/",
+        "vendor/nxp-opensource/imx/display/display",
     ],
     cflags: [
         "-DLOG_TAG=\"EvsDriver\"",
