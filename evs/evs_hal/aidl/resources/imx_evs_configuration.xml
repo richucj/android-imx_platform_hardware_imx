@@ -54,7 +54,7 @@
                     name='LOGICAL_MULTI_CAMERA_PHYSICAL_IDS'
                     type='byte[]'
                     size='2'
-                    value='mxc_isi.3.capture,mxc_isi.2.capture,mxc_isi.1.capture,mxc_isi.0.capture'
+                    value='mxc_isi.5.capture,mxc_isi.3.capture,mxc_isi.2.capture,mxc_isi.1.capture'
                 />
                 <parameter
                     name='LENS_DISTORTION'
@@ -84,7 +84,7 @@
         </group>
 
         <!-- camera device starts, Front -->
-        <device id='mxc_isi.3.capture' position='front'>
+        <device id='mxc_isi.2.capture' position='front'>
             <caps>
 
                 <!-- list of supported stream configurations -->
@@ -124,7 +124,7 @@
             </characteristics>
         </device>
         <!-- camera device starts, Right -->
-        <device id='mxc_isi.2.capture' position='right'>
+        <device id='mxc_isi.3.capture' position='right'>
             <caps>
 
                 <!-- list of supported stream configurations -->
@@ -204,7 +204,7 @@
             </characteristics>
         </device>
         <!-- camera device starts Left -->
-        <device id='mxc_isi.0.capture' position='left'>
+        <device id='mxc_isi.5.capture' position='left'>
             <caps>
 
                 <!-- list of supported stream configurations -->

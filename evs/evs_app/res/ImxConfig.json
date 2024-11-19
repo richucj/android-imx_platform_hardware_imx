@@ -19,7 +19,7 @@
   },
   "cameras" : [
     {
-      "cameraId" : "mxc_isi.0.capture",
+      "cameraId" : "mxc_isi.1.capture",
       "function" : "reverse,park",
       "x" : 0.0,
       "y" : -40.0,
@@ -33,7 +33,7 @@
       "vflip" : false
     },
     {
-      "cameraId" : "mxc_isi.1.capture",
+      "cameraId" : "mxc_isi.2.capture",
       "function" : "front,park",
       "x" : 0.0,
       "y" : 100.0,
@@ -47,7 +47,7 @@
       "vflip" : false
     },
     {
-      "cameraId" : "mxc_isi.2.capture",
+      "cameraId" : "mxc_isi.3.capture",
       "function" : "right,park",
       "x" : 36.0,
       "y" : 60.0,
@@ -61,7 +61,7 @@
       "vflip" : false
     },
     {
-      "cameraId" : "mxc_isi.3.capture",
+      "cameraId" : "mxc_isi.5.capture",
       "function" : "left,park",
       "x" : -36.0,
       "y" : 60.0,
