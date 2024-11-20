@@ -69,8 +69,9 @@ hwc_config_cc_defaults {
 cc_binary {
     name: "android.hardware.graphics.composer3-service.imx",
     defaults: [
+        "android.hardware.graphics.composer3-ndk_shared",
         "arm_gralloc_uses_libformat_defaults",
-        "libnxp_gralloc_v5_default",
+        "libnxp_gralloc_v5_defaults",
         "hwc_config_defaults",
     ],
     relative_install_path: "hw",
@@ -89,9 +90,6 @@ cc_binary {
     shared_libs: [
         "android.hardware.graphics.composer@2.1-resources",
         "android.hardware.graphics.composer@2.2-resources",
-        "android.hardware.graphics.composer3-V2-ndk",
-        "android.hardware.graphics.mapper@2.0",
-        "android.hardware.graphics.mapper@4.0",
         "libbase",
         "libbinder_ndk",
         "libgralloctypes",
@@ -111,7 +109,6 @@ cc_binary {
         "libyuv_static",
         "libmath",
         "libnxp_gralloc_driver",
-        "libnxp_gralloc_utils",
         "libhwsecureclient",
         "libtrusty",
         "libgralloc_internal_format",
@@ -150,7 +147,7 @@ cc_binary {
         "VsyncThread.cpp",
     ],
     cflags: [
-        "-DLOG_TAG=\"NxpHWC3\"",
+        "-DLOG_TAG=\"NxpHWC\"",
     ],
 }
 

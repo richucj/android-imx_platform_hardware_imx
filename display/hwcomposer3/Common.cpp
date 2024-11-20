@@ -326,8 +326,8 @@ void debug_dump_frame(buffer_handle_t handle) {
 
     if (info.base == 0) {
         void *vaddr = NULL;
-        int usage = info.usage | USAGE_SW_READ_OFTEN;
-        const ::android::Rect rect{0, 0, info.width, info.height};
+        int usage = info.usage | GRALLOC_USAGE_SW_READ_OFTEN;
+        const ::android::Rect rect{0, 0, static_cast<int32_t>(info.width), static_cast<int32_t>(info.height)};
         ::android::status_t err =
                 ::android::GraphicBufferMapper::get().lock(const_cast<native_handle_t *>(handle),
                                                            usage, rect, &vaddr);
@@ -338,7 +338,7 @@ void debug_dump_frame(buffer_handle_t handle) {
 
         dump_frame((char *)vaddr, info.width, info.height, info.size);
 
-        err = ::android::GraphicBufferMapper::get().unlock(buffer);
+        err = ::android::GraphicBufferMapper::get().unlock(handle);
         if (err) {
             ALOGE("%s: GraphicBufferMapper unlock failed!", __FUNCTION__);
             return;
@@ -348,5 +348,27 @@ void debug_dump_frame(buffer_handle_t handle) {
     }
 }
 #endif
+
+bool getDisplayPortFromProperty(const std::string &connector_name, uint32_t *outPort) {
+    const std::string ports = ::android::base::GetProperty("ro.boot.display_port", "");
+    DEBUG_LOG("%s: sysprop ro.boot.display_port is %s", __FUNCTION__, ports.c_str());
+
+    uint32_t port;
+    if (ports.size() > 0) {
+        std::string conn = connector_name + ":";
+        auto pos = ports.find(conn);
+        if (pos != std::string::npos) {
+            auto colon = ports.find(':', pos);
+            auto comma = ports.find(',', pos);
+            auto count = (comma == std::string::npos) ? comma : (comma - colon);
+            auto port_str = ports.substr(colon + 1, count);
+            port = std::stoi(port_str);
+
+            *outPort = port;
+            return true;
+        }
+    }
+    return false;
+}
 
 } // namespace aidl::android::hardware::graphics::composer3::impl

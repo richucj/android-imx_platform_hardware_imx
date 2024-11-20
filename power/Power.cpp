@@ -46,7 +46,7 @@ static int s_previous_duration;
 #define USINSEC 1000000L
 #define NSINUS 1000L
 
-Power::Power(std::shared_ptr<HintManager> hm)
+Power::Power(HintManager *hm)
       : mHintManager(hm), mInteractionHandler(nullptr), mSustainedPerfModeOn(false) {
     mInteractionHandler = std::make_unique<InteractionHandler>(mHintManager);
     mInteractionHandler->Init();
@@ -258,6 +258,34 @@ ndk::ScopedAStatus Power::createHintSession(int32_t, int32_t, const std::vector<
             ndk::SharedRefBase::make<PowerHintSession>();
     mPowerHintSessions.push_back(powerHintSession);
     *_aidl_return = powerHintSession;
+    return ndk::ScopedAStatus::ok();
+}
+
+ndk::ScopedAStatus Power::createHintSessionWithConfig(
+        int32_t tgid, int32_t uid, const std::vector<int32_t>& threadIds, int64_t durationNanos,
+        SessionTag, SessionConfig* config, std::shared_ptr<IPowerHintSession>* _aidl_return) {
+    auto out = createHintSession(tgid, uid, threadIds, durationNanos, _aidl_return);
+    static_cast<PowerHintSession*>(_aidl_return->get())->getSessionConfig(config);
+    return out;
+}
+
+ndk::ScopedAStatus Power::getSessionChannel(int32_t, int32_t, ChannelConfig* _aidl_return) {
+    static AidlMessageQueue<ChannelMessage, SynchronizedReadWrite> stubQueue{20, true};
+    static std::thread stubThread([&] {
+        ChannelMessage data;
+        // This loop will only run while there is data waiting
+        // to be processed, and blocks on a futex all other times
+        while (stubQueue.readBlocking(&data, 1, 0)) {
+        }
+    });
+    _aidl_return->channelDescriptor = stubQueue.dupeDesc();
+    _aidl_return->readFlagBitmask = 0x01;
+    _aidl_return->writeFlagBitmask = 0x02;
+    _aidl_return->eventFlagDescriptor = std::nullopt;
+    return ndk::ScopedAStatus::ok();
+}
+
+ndk::ScopedAStatus Power::closeSessionChannel(int32_t, int32_t) {
     return ndk::ScopedAStatus::ok();
 }
 

@@ -60,6 +60,7 @@ public:
             ::android::base::borrowed_fd drmFd);
 
     uint32_t getId() const { return mId; }
+    uint32_t getHwcId() const { return mHwcId; }
     uint32_t getCrtcIndex() const { return mCrtc->getIndex(); }
 
     uint32_t getWidth() const { return mConnector->getWidth(); }
@@ -106,7 +107,16 @@ public:
 
     int getFramebufferInfo(uint32_t* width, uint32_t* height, uint32_t* format);
 
-    void setAsPrimary(bool enable) { mIsPrimary = enable; }
+    void setDisplayAsPrimary(bool enable) {
+        if (enable) {
+            mOriginalHwcId = mHwcId;
+            mIsPrimary = true;
+            mHwcId = DEFAULT_HWC_PRIMARY_DISPLAY_ID;
+        } else {
+            mHwcId = mOriginalHwcId;
+            mIsPrimary = false;
+        }
+    }
     bool isPrimary() { return mIsPrimary; }
 
     bool isSecureDisplay() const { return mConnector->getHDCPSupported(); }
@@ -118,10 +128,14 @@ public:
     bool isDisplayActive() { return !mModeSet; }
     bool isLowPowerDisplay() { return mCrtc->getDisplayXferProperty().getId() != (uint32_t)-1; }
 
+    void clearTempBuffer(uint32_t overlaynum);
+
 private:
     DrmDisplay(uint32_t id, std::unique_ptr<DrmConnector> connector, std::unique_ptr<DrmCrtc> crtc,
                std::unordered_map<uint32_t, std::unique_ptr<DrmPlane>> planes)
-          : mId(id),
+          : mHwcId(id),
+            mOriginalHwcId(mHwcId),
+            mId(id),
             mConnector(std::move(connector)),
             mCrtc(std::move(crtc)),
             mPlanes(std::move(planes)) {}
@@ -133,7 +147,9 @@ private:
     void updateActiveConfig(std::shared_ptr<HalConfig> configs);
 
     bool mIsPrimary = false;
-    const uint32_t mId;
+    uint32_t mHwcId; // logic display Id, may be changed when needed
+    uint32_t mOriginalHwcId;
+    const uint32_t mId; // const value when display enumerated
     std::unique_ptr<DrmConnector> mConnector;
     std::unique_ptr<DrmCrtc> mCrtc;
     std::unordered_map<uint32_t, std::unique_ptr<DrmPlane>> mPlanes;
@@ -147,7 +163,7 @@ private:
     // The display config when boot up or hotplug in, not be changed by SurfaceFlinger
     int32_t mInitActiveConfigId = -1;
     int32_t mStartConfigId = 0;
-    HalDisplayConfig mActiveConfig;
+    HalDisplayConfig mActiveConfig{};
     std::shared_ptr<HalConfig> mConfigs = std::make_shared<HalConfig>();
     uint32_t mUiScaleType = UI_SCALE_NONE;
     std::vector<uint32_t> mPlaneIdPool;
@@ -157,7 +173,7 @@ private:
 
     uint32_t mHdrMetadataBlobId = 0;
 #ifdef DEBUG_DUMP_REFRESH_RATE
-    DumpRefreshRate mDumpActualFps;
+    DumpRefreshRate mDumpActualFps{};
 #endif
 };
 

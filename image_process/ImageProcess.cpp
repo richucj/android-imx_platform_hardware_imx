@@ -22,12 +22,14 @@
 #include <dlfcn.h>
 #include <g2d.h>
 #include <hardware/gralloc.h>
+#include <libyuv.h>
+#include <libyuv/convert.h>
 #include <linux/ipu.h>
 #include <stdio.h>
 #include <system/graphics.h>
 #include <vndksupport/linker.h>
 
-#include "Memory.h"
+#include "gralloc_handle.h"
 
 extern "C" {
 #include <linux/pxp_device.h>
@@ -292,13 +294,15 @@ int ImageProcess::ConvertImage(ImxImageBuffer &dstBuf, ImxImageBuffer &srcBuf, I
 
     // for 8mp, g2d not support nv12 scale, use software to scale, or will cause
     // testAllOutputYUVResolutions failed.
-    if (((srcBuf.mFormat == dstBuf.mFormat) && (dstBuf.mFormat == HAL_PIXEL_FORMAT_YCBCR_420_888) &&
-         (srcBuf.mZoomRatio <= 1.0)) &&
-        ((srcBuf.mWidth != dstBuf.mWidth) || (srcBuf.mHeight != dstBuf.mHeight))) {
-        char socType[128] = {0};
-        property_get("ro.boot.soc_type", socType, "");
-        if (strstr(socType, "imx8mp")) {
-            engine = ENG_CPU;
+    // zoom in also need handled by cpu
+    if (srcBuf.mFormat == dstBuf.mFormat && dstBuf.mFormat == HAL_PIXEL_FORMAT_YCBCR_420_888) {
+        if ((srcBuf.mZoomRatio <= 1.0 && (srcBuf.mWidth != dstBuf.mWidth || srcBuf.mHeight != dstBuf.mHeight)) ||
+            (srcBuf.mZoomRatio > 1.0 && srcBuf.mWidth == dstBuf.mWidth && srcBuf.mHeight == dstBuf.mHeight)) {
+            char socType[128] = {0};
+            property_get("ro.boot.soc_type", socType, "");
+            if (strstr(socType, "imx8mp")) {
+                engine = ENG_CPU;
+            }
         }
     }
 
@@ -684,11 +688,11 @@ void ImageProcess::LockG2dAddr(ImxImageBuffer &imxBuf) {
         return;
     }
 
-    fsl::Memory *handle = (fsl::Memory *)imxBuf.buffer;
+    auto handle = imxBuf.buffer;
     if (mLockSurface)
-        (*mLockSurface)(handle);
+        (*mLockSurface)(const_cast<native_handle_t *>(handle));
 
-    imxBuf.mPhyAddr = handle->phys;
+    imxBuf.mPhyAddr = gralloc_handle_phys(handle);
 
     return;
 }
@@ -701,24 +705,17 @@ void ImageProcess::UnLockG2dAddr(ImxImageBuffer &imxBuf) {
 }
 
 buffer_handle_t ImageProcess::createBufferHandle(ImxImageBuffer &imxBuf) {
-    fsl::Memory *handle = (fsl::Memory *)malloc(sizeof(fsl::Memory));
+    void *mem = native_handle_create(GRALLOC_HANDLE_NUM_FDS, GRALLOC_HANDLE_NUM_INTS);
+    if (mem == nullptr) {
+        ALOGE("%s: gralloc_handle allocation failed", __func__);
+        return nullptr;
+    }
 
-    handle->version = sizeof(native_handle);
-    handle->magic = fsl::Memory::sMagic;
-    handle->numInts = fsl::Memory::sNumInts();
-    handle->numFds = 1;
-    handle->fd = imxBuf.mFd;
-    handle->fd_meta = -1;
-    handle->fd_region = -1;
-    handle->size = imxBuf.mSize;
-    handle->flags = 0;
-    handle->width = imxBuf.mSize / 4;
-    handle->height = 1;
-    handle->stride = handle->width;
-    handle->format = HAL_PIXEL_FORMAT_RGBA_8888;
-    handle->usage = 0;
-    handle->phys = imxBuf.mPhyAddr;
-    handle->base = (uint64_t)imxBuf.mVirtAddr;
+    buffer_handle_t handle =
+            new (mem) gralloc_handle(imxBuf.mFd, imxBuf.mSize, 0, HAL_PIXEL_FORMAT_RGBA_8888,
+                                     imxBuf.mSize / 4, 1, 1, imxBuf.mSize / 4);
+    gralloc_handle_set_phys(handle, imxBuf.mPhyAddr);
+    gralloc_handle_set_base(handle, (uint64_t)imxBuf.mVirtAddr);
 
     return handle;
 }
@@ -731,13 +728,6 @@ void ImageProcess::destroyBufferHandle(buffer_handle_t buffer) {
 int ImageProcess::ConvertImageByG2D(ImxImageBuffer &dstBuf, ImxImageBuffer &srcBuf,
                                    ImxEngine engine) {
     int ret = 0;
-
-    if ((srcBuf.mFormat == dstBuf.mFormat) && (srcBuf.mWidth == dstBuf.mWidth) &&
-        (srcBuf.mHeight == dstBuf.mHeight) && (HAL_PIXEL_FORMAT_RAW16 == srcBuf.mFormat)) {
-        Revert16BitEndian((uint8_t *)srcBuf.mVirtAddr, (uint8_t *)dstBuf.mVirtAddr,
-                          srcBuf.mWidth * srcBuf.mHeight);
-        return ret;
-    }
 
     if (mBlitEngine && (engine == ENG_G2D) && mbVIVG2D) {
         LockG2dAddr(srcBuf);
@@ -854,18 +844,13 @@ int ImageProcess::ConvertImageByGPU_3D(ImxImageBuffer &dstBuf, ImxImageBuffer &s
     // case 1: same format, same resolution, copy
     if ((srcBuf.mFormat == dstBuf.mFormat) && (srcBuf.mWidth == dstBuf.mWidth) &&
         (srcBuf.mHeightSpan == dstBuf.mHeightSpan)) {
-        if (HAL_PIXEL_FORMAT_RAW16 == srcBuf.mFormat)
-            Revert16BitEndian((uint8_t *)srcBuf.mVirtAddr, (uint8_t *)dstBuf.mVirtAddr,
-                              srcBuf.mWidth * srcBuf.mHeight);
-        else {
-            Mutex::Autolock _l(mCLLock);
+        Mutex::Autolock _l(mCLLock);
 
-            cl_Copy(mCLHandle, (uint8_t *)dstBuf.mPhyAddr, (uint8_t *)srcBuf.mPhyAddr,
-                    srcBuf.mFormatSize, false, bOutputCached);
+        cl_Copy(mCLHandle, (uint8_t *)dstBuf.mPhyAddr, (uint8_t *)srcBuf.mPhyAddr,
+                srcBuf.mFormatSize, false, bOutputCached);
 
-            (*mCLFlush)(mCLHandle);
-            (*mCLFinish)(mCLHandle);
-        }
+        (*mCLFlush)(mCLHandle);
+        (*mCLFinish)(mCLHandle);
 
         return 0;
     }
@@ -927,11 +912,44 @@ int ImageProcess::ConvertImageByCPU(ImxImageBuffer &dstBuf, ImxImageBuffer &srcB
     // case 1: same format, same resolution, copy
     if ((srcBuf.mFormat == dstBuf.mFormat) && (srcBuf.mWidth == dstBuf.mWidth) &&
         (srcBuf.mHeight == dstBuf.mHeight)) {
-        if (HAL_PIXEL_FORMAT_RAW16 == srcBuf.mFormat)
-            Revert16BitEndian((uint8_t *)srcBuf.mVirtAddr, (uint8_t *)dstBuf.mVirtAddr,
-                              srcBuf.mWidth * srcBuf.mHeight);
-        else {
-            memcpy((uint8_t *)dstBuf.mVirtAddr, (uint8_t *)srcBuf.mVirtAddr, dstBuf.mFormatSize);
+        if (srcBuf.mZoomRatio <= 1.0) {
+            memcpy((uint8_t *)dstBuf.mVirtAddr, (uint8_t *)srcBuf.mVirtAddr,
+                    dstBuf.mFormatSize);
+        } else if (srcBuf.mFormat == HAL_PIXEL_FORMAT_YCBCR_420_888) {
+            // Handle zoom in for nv12
+            int crop_width = srcBuf.mWidth / srcBuf.mZoomRatio;
+            int crop_height = srcBuf.mHeight / srcBuf.mZoomRatio;
+
+            resizeBuf.mFormatSize = srcBuf.mFormatSize;
+            ret = AllocPhyBuffer(crop_width, crop_height, srcBuf.mFormat, resizeBuf);
+            if (ret) {
+                ALOGE("%s:%d AllocPhyBuffer failed", __func__, __LINE__);
+                return BAD_VALUE;
+            }
+
+            // First Cut, then Scale
+            decreaseNV12WithCut((uint8_t *)srcBuf.mVirtAddr, srcBuf.mWidth, srcBuf.mHeight,
+                                (uint8_t *)resizeBuf.mVirtAddr, resizeBuf.mWidth,
+                                resizeBuf.mHeight);
+
+            uint8_t *pUVSrcStart =
+                    (uint8_t *)resizeBuf.mVirtAddr + resizeBuf.mWidth * resizeBuf.mHeight;
+            uint8_t *pUVDstStart = (uint8_t *)dstBuf.mVirtAddr + dstBuf.mWidth * dstBuf.mHeight;
+
+            ret = libyuv::NV12Scale(static_cast<uint8_t *>(resizeBuf.mVirtAddr), resizeBuf.mWidth,
+                                    static_cast<uint8_t *>(pUVSrcStart), resizeBuf.mWidth,
+                                    resizeBuf.mWidth, resizeBuf.mHeight,
+                                    static_cast<uint8_t *>(dstBuf.mVirtAddr), dstBuf.mWidth,
+                                    static_cast<uint8_t *>(pUVDstStart), dstBuf.mWidth,
+                                    dstBuf.mWidth, dstBuf.mHeight, libyuv::FilterMode::kFilterNone);
+
+            FreePhyBuffer(resizeBuf.buffer);
+
+            if (ret != 0) {
+                ALOGE("%s: failed to scale buffer from %dx%d to %dx%d. Ret %d", __FUNCTION__,
+                      resizeBuf.mWidth, resizeBuf.mHeight, dstBuf.mWidth, dstBuf.mHeight, ret);
+                return ret;
+            }
         }
 
         return 0;

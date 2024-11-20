@@ -12,8 +12,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 ifeq ($(findstring imx, $(TARGET_BOARD_PLATFORM)), imx)
+ifeq ($(HAVE_FSL_IMX_GPU3D),true)
 
 LOCAL_PATH := $(call my-dir)
+
+ifneq ($(BOARD_SOC_TYPE), IMX8MM)
+LOCAL_CFLAGS += -DSUPPORT_CL
 
 include $(CLEAR_VARS)
 LOCAL_PRELINK_MODULE := false
@@ -37,6 +41,8 @@ LOCAL_MODULE_TAGS := optional
 
 include $(BUILD_SHARED_LIBRARY)
 
+endif
+
 include $(CLEAR_VARS)
 LOCAL_MODULE := 2d-test
 LOCAL_MULTILIB := both
@@ -51,12 +57,16 @@ LOCAL_C_INCLUDES += \
 
 LOCAL_SHARED_LIBRARIES := liblog \
                           libcutils \
-                          libOpenCL \
                           libutils \
                           libui \
                           libyuv
 
+ifneq ($(BOARD_SOC_TYPE), IMX8MM)
+  LOCAL_SHARED_LIBRARIES += libOpenCL
+endif
+
 LOCAL_CFLAGS += -DBUILD_FOR_ANDROID
 LOCAL_MODULE_TAGS := optional
 include $(BUILD_EXECUTABLE)
+endif
 endif

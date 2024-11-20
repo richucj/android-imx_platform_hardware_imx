@@ -61,7 +61,6 @@ using google_camera_hal::StreamConfiguration;
 #define OX03C10_SENSOR_HEIGHT 1280
 #define AP1302_SENSOR_WIDTH 1280
 #define AP1302_SENSOR_HEIGHT 800
-#define LIBCAM_STREAM_BUFNUM 3
 
 // 3aState
 struct autoState {

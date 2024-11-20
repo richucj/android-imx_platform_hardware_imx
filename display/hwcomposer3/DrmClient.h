@@ -96,7 +96,7 @@ public:
 
     uint32_t getDisplayBaseId() override { return mDisplayBaseId; }
 
-    HWC3::Error setPrimaryDisplay(int displayId) override;
+    HWC3::Error setHwcPrimaryDisplay(int displayId, bool primary) override;
     HWC3::Error setActiveConfigId(int displayId, int32_t configId) override;
     HWC3::Error resetDisplayConfig(int displayId) override;
 
@@ -113,6 +113,7 @@ public:
                                                ClientTargetProperty* outProperty) override;
     HWC3::Error waitVBlank(int displayId, int64_t* timestamp) override;
 
+    void partialCleanCacheBuffer(size_t overlayNum) override;
 private:
     using DrmPrimeBufferHandle = uint32_t;
     using DrmBufferCache = LruCache<DrmPrimeBufferHandle, std::shared_ptr<DrmBuffer>>;
@@ -157,6 +158,9 @@ private:
     std::optional<HotplugCallback> mHotplugCallback;
 
     std::unique_ptr<DrmEventListener> mDrmEventListener;
+
+    uint32_t mLastOverlayCount = 0;
+    TimePoint mCheckOverlayTime;
 };
 
 } // namespace aidl::android::hardware::graphics::composer3::impl

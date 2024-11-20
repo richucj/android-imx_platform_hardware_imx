@@ -109,10 +109,12 @@ protected:
     CameraDeviceSessionHwlImpl* mSession;
 
     uint32_t mFrames;
-    char soc_type[PROPERTY_VALUE_MAX];
     uint32_t mRecoverCount;
 
     Mutex mV4l2Lock;
+
+    // The max tolerant lag between the dequeued v4l2 buffer and current capture request.
+    uint64_t mMaxLagNs;
 };
 
 } // namespace android

@@ -1,5 +1,5 @@
 /*
- * Copyright 2018 NXP.
+ * Copyright 2018-2024 NXP.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -30,7 +30,7 @@
 
 #ifdef BUILD_FOR_ANDROID
 #include <cutils/log.h>
-#define g2d_printf ALOGI
+#define g2d_printf ALOGE
 #else
 #define g2d_printf printf
 #endif
@@ -719,6 +719,9 @@ error:
 }
 
 static int get_kernel_index(struct cl_g2d_surface *src, struct cl_g2d_surface *dst) {
+    if ((src->format == CL_G2D_YUYV) && (dst->format == CL_G2D_YUYV))
+        return YUYV_TO_YUYV_INDEX;
+
     int kernel_index = -1;
     if ((src->width != dst->width) || (src->height != dst->height) || (src->width > src->stride) ||
         (dst->width > dst->stride)) {
@@ -728,8 +731,6 @@ static int get_kernel_index(struct cl_g2d_surface *src, struct cl_g2d_surface *d
 
     if ((src->format == CL_G2D_YUYV) && (dst->format == CL_G2D_NV12))
         kernel_index = YUYV_TO_NV12_INDEX;
-    else if ((src->format == CL_G2D_YUYV) && (dst->format == CL_G2D_YUYV))
-        kernel_index = YUYV_TO_YUYV_INDEX;
     else if ((src->format == CL_G2D_NV12) && (dst->format == CL_G2D_NV21))
         kernel_index = NV12_TO_NV21_INDEX;
     else if ((src->format == CL_G2D_NV12_TILED) && (dst->format == CL_G2D_NV12))

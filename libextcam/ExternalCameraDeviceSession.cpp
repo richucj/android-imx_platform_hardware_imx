@@ -1,6 +1,6 @@
 /*
  * Copyright (C) 2022 The Android Open Source Project
- * Copyright 2023 NXP
+ * Copyright 2023-2024 NXP
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -177,7 +177,7 @@ bool ExternalCameraDeviceSession::initialize() {
         mHardwareDecoder = false;
     }
 
-    if (GetProperty(kCameraMjpegCopy, "true") == "true") {
+    if (GetProperty(kCameraMjpegCopy, "false") == "true") {
         mMjpgCopy = true;
     } else {
         mMjpgCopy = false;
@@ -1215,6 +1215,11 @@ int ExternalCameraDeviceSession::configureV4l2StreamLocked(const SupportedV4L2Fo
 
     uint32_t v4lBufferCount = (fps >= kDefaultFps) ? mCfg.numVideoBuffers : mCfg.numStillBuffers;
 
+    // Double the max lag in theory.
+    mMaxLagNs = v4lBufferCount * 1000000000LL * 2 / fps;
+    ALOGI("%s: set mMaxLagNs to %" PRIu64 " ns, v4lBufferCount %u", __FUNCTION__, mMaxLagNs,
+          v4lBufferCount);
+
     // VIDIOC_REQBUFS: create buffers
     v4l2_requestbuffers req_buffers{};
     req_buffers.type = mCaptureType;
@@ -1305,6 +1310,7 @@ int ExternalCameraDeviceSession::configureV4l2StreamLocked(const SupportedV4L2Fo
     ALOGI("%s: start V4L2 streaming %dx%d@%ffps", __FUNCTION__, v4l2Fmt.width, v4l2Fmt.height, fps);
     mV4l2StreamingFmt = v4l2Fmt;
     mV4l2Streaming = true;
+    mOutputThread->mDecedFrames = 0; // new streaming start, source changed
     return OK;
 }
 
@@ -1327,62 +1333,91 @@ std::unique_ptr<V4L2Frame> ExternalCameraDeviceSession::dequeueV4l2FrameLocked(n
         }
     }
 
-    fd_set fds;
-    FD_ZERO(&fds);
-    FD_SET(mV4l2Fd.get(), &fds);
-    struct timeval timeout = {0, 0};
-    timeout.tv_sec = SELECT_TIMEOUT_SECONDS;
-    timeout.tv_usec = 0;
-
-    select(mV4l2Fd.get() + 1, &fds, NULL, NULL, &timeout);
-    if (!FD_ISSET(mV4l2Fd.get(), &fds)) {
-        ALOGE("%s: select fd %d blocked %d seconds", __func__, mV4l2Fd.get(),
-              SELECT_TIMEOUT_SECONDS);
-        return ret;
-    }
-
-    ATRACE_BEGIN("VIDIOC_DQBUF");
-    struct v4l2_plane planes;
-    memset(&planes, 0, sizeof(struct v4l2_plane));
+    uint64_t lagNs = 0;
     struct v4l2_buffer buffer;
-    memset(&buffer, 0, sizeof(buffer));
 
-    if (mPlane) {
-        buffer.m.planes = &planes;
-        buffer.length = 1;
-    }
-    buffer.type = mCaptureType;
-    buffer.memory = V4L2_MEMORY_MMAP;
-    if (TEMP_FAILURE_RETRY(ioctl(mV4l2Fd.get(), VIDIOC_DQBUF, &buffer)) < 0) {
-        ALOGE("%s: DQBUF fails: %s", __FUNCTION__, strerror(errno));
-        return ret;
-    }
-    ATRACE_END();
+    do {
+        fd_set fds;
+        FD_ZERO(&fds);
+        FD_SET(mV4l2Fd.get(), &fds);
+        struct timeval timeout = {0, 0};
+        timeout.tv_sec = SELECT_TIMEOUT_SECONDS;
+        timeout.tv_usec = 0;
 
-    if (buffer.index >= mV4L2BufferCount) {
-        ALOGE("%s: Invalid buffer id: %d", __FUNCTION__, buffer.index);
-        return ret;
-    }
+        select(mV4l2Fd.get() + 1, &fds, NULL, NULL, &timeout);
+        if (!FD_ISSET(mV4l2Fd.get(), &fds)) {
+            ALOGE("%s: select fd %d blocked %d seconds", __func__, mV4l2Fd.get(),
+                  SELECT_TIMEOUT_SECONDS);
+            return ret;
+        }
 
-    if (buffer.flags & V4L2_BUF_FLAG_ERROR) {
-        ALOGE("%s: v4l2 buf error! buf flag 0x%x", __FUNCTION__, buffer.flags);
-        // TODO: try to dequeue again
-    }
+        ATRACE_BEGIN("VIDIOC_DQBUF");
+        struct v4l2_plane planes;
+        memset(&planes, 0, sizeof(struct v4l2_plane));
+        memset(&buffer, 0, sizeof(buffer));
 
-    if (buffer.bytesused > mMaxV4L2BufferSize) {
-        ALOGE("%s: v4l2 buffer bytes used: %u maximum %u", __FUNCTION__, buffer.bytesused,
-              mMaxV4L2BufferSize);
-        return ret;
-    }
+        if (mPlane) {
+            buffer.m.planes = &planes;
+            buffer.length = 1;
+        }
+        buffer.type = mCaptureType;
+        buffer.memory = V4L2_MEMORY_MMAP;
+        if (TEMP_FAILURE_RETRY(ioctl(mV4l2Fd.get(), VIDIOC_DQBUF, &buffer)) < 0) {
+            ALOGE("%s: DQBUF fails: %s", __FUNCTION__, strerror(errno));
+            return ret;
+        }
+        ATRACE_END();
 
-    if (buffer.flags & V4L2_BUF_FLAG_TIMESTAMP_MONOTONIC) {
-        // Ideally we should also check for V4L2_BUF_FLAG_TSTAMP_SRC_SOE, but
-        // even V4L2_BUF_FLAG_TSTAMP_SRC_EOF is better than capture a timestamp now
-        *shutterTs = static_cast<nsecs_t>(buffer.timestamp.tv_sec) * 1000000000LL +
-                buffer.timestamp.tv_usec * 1000LL;
-    } else {
-        *shutterTs = systemTime(SYSTEM_TIME_MONOTONIC);
-    }
+        if (buffer.index >= mV4L2BufferCount) {
+            ALOGE("%s: Invalid buffer id: %d", __FUNCTION__, buffer.index);
+            return ret;
+        }
+
+        if (buffer.flags & V4L2_BUF_FLAG_ERROR) {
+            ALOGE("%s: v4l2 buf error! buf flag 0x%x", __FUNCTION__, buffer.flags);
+            // TODO: try to dequeue again
+        }
+
+        if (buffer.bytesused > mMaxV4L2BufferSize) {
+            ALOGE("%s: v4l2 buffer bytes used: %u maximum %u", __FUNCTION__, buffer.bytesused,
+                  mMaxV4L2BufferSize);
+            return ret;
+        }
+
+        nsecs_t curTimeNs = systemTime(SYSTEM_TIME_MONOTONIC);
+
+        if (buffer.flags & V4L2_BUF_FLAG_TIMESTAMP_MONOTONIC) {
+            // Ideally we should also check for V4L2_BUF_FLAG_TSTAMP_SRC_SOE, but
+            // even V4L2_BUF_FLAG_TSTAMP_SRC_EOF is better than capture a timestamp now
+            *shutterTs = static_cast<nsecs_t>(buffer.timestamp.tv_sec) * 1000000000LL +
+                    buffer.timestamp.tv_usec * 1000LL;
+        } else {
+            *shutterTs = curTimeNs;
+        }
+
+       // The tactic only takes effect on v4l2 buffers with flag V4L2_BUF_FLAG_TIMESTAMP_MONOTONIC.
+        // Most USB cameras should have the feature.
+        if (curTimeNs < *shutterTs) {
+            lagNs = 0;
+            ALOGW("%s: should not happen, the monotonic clock has issue, shutterTs is in the "
+                  "future, curTimeNs %" PRId64 "  < "
+                  "shutterTs %" PRId64 "",
+                  __func__, curTimeNs, *shutterTs);
+        } else {
+            lagNs = curTimeNs - *shutterTs;
+        }
+
+        if (lagNs > mMaxLagNs) {
+            ALOGI("%s: drop too old buffer, index %d, lag %" PRIu64 " ns > max %" PRIu64 " ns", __FUNCTION__,
+                  buffer.index, lagNs, mMaxLagNs);
+            int retVal = ioctl(mV4l2Fd.get(), VIDIOC_QBUF, &buffer);
+            if (retVal) {
+                ALOGE("%s: unexpected VIDIOC_QBUF failed, retVal %d", __FUNCTION__, retVal);
+                return ret;
+            }
+        }
+
+    } while (lagNs > mMaxLagNs);
 
     {
         std::lock_guard<std::mutex> lk(mV4l2BufferLock);
@@ -2471,7 +2506,14 @@ void ExternalCameraDeviceSession::OutputThread::setMjpegCopy(bool bCopy) {
 }
 
 int ExternalCameraDeviceSession::OutputThread::initVpuThread() {
-    mDecoder = new HwDecoder();
+    auto parent = mParent.lock();
+    if (parent == nullptr) {
+        ALOGE("%s: session has been disconnected!", __FUNCTION__);
+        return BAD_VALUE;
+    }
+
+    Size maxJpegSize = parent->getMaxJpegSize();
+    mDecoder = new HwDecoder(maxJpegSize.width, maxJpegSize.height);
     if (!mDecoder) {
         ALOGE("%s: Create HwDecoder Instance for MJPEG failed \n", __FUNCTION__);
         return -errno;
@@ -3107,12 +3149,22 @@ int ExternalCameraDeviceSession::OutputThread::VpuDecGetBuffer(uint8_t* inData, 
         return ret;
     }
 
+    // Increase waiting time when decoding first frame, otherwise case
+    // android.hardware.camera2.cts.SurfaceViewPreviewTest#testCameraPreview[1]
+    // will fail when source changes.
+    int mDecWaitTimeoutMs;
+    if (mDecedFrames == 0) {
+        mDecWaitTimeoutMs = 200;
+    } else {
+        mDecWaitTimeoutMs = kDecWaitTimeoutMs;
+    }
+
     nsecs_t t1, t2;
 
     if (mDebug)
         t1 = systemTime();
     // mjpeg decoded to nv12/nv16/yuyv raw data
-    ret = mDecoder->exportDecodedBuf(mDecodedData, kDecWaitTimeoutMs);
+    ret = mDecoder->exportDecodedBuf(mDecodedData, mDecWaitTimeoutMs);
     if (mDebug) {
         t2 = systemTime();
         ALOGI("exportDecodedBuf use %lld ns, %lld ms, decoded size %dx%d", (long long)t2 - t1,
@@ -3167,6 +3219,9 @@ int ExternalCameraDeviceSession::OutputThread::VpuDecGetBuffer(uint8_t* inData, 
         int ret = mYu12ThumbFrame->allocate(&mYu12ThumbFrameLayout);
         if (ret != 0) {
             ALOGE("%s: allocating YU12 thumb frame failed!", __FUNCTION__);
+            if (vaddr)
+                munmap(vaddr, size);
+
             return BAD_VALUE;
         }
     }
@@ -3315,6 +3370,37 @@ int ExternalCameraDeviceSession::OutputThread::handleFrame(uint32_t dstWidth, ui
     dstBuf.mPrivate = NULL;
 
     return imageProcess->ConvertImage(dstBuf, srcBuf, mEngine);
+}
+
+int ExternalCameraDeviceSession::OutputThread::directCopy(struct HalStreamBuffer& halBuf, uint8_t* inData, size_t inDataSize) {
+    uint64_t allocatedSize;
+    int err = GetAllocationSize(*halBuf.bufPtr, allocatedSize);
+    if (err) {
+        ALOGE("%s: GetAllocationSize failed!", __FUNCTION__);
+        return BAD_VALUE;
+    }
+
+    uint32_t copySize = inDataSize;
+    if (allocatedSize < inDataSize) {
+        ALOGW("%s: allocatedSize %lu < inDataSize %zu", __func__,
+              allocatedSize, inDataSize);
+        copySize = allocatedSize;
+    }
+
+    ALOGI("%s: halBuf %dx%d, inDataSize %zu, allocatedSize %lu",
+        __func__, halBuf.width, halBuf.height, inDataSize, allocatedSize);
+
+    void* outLayout = sHandleImporter.lock(*(halBuf.bufPtr), (uint64_t)halBuf.usage,
+                                           allocatedSize);
+    if (outLayout)
+        std::memcpy(outLayout, inData, copySize);
+
+    int relFence = sHandleImporter.unlock(*(halBuf.bufPtr));
+    if (relFence >= 0) {
+        halBuf.acquireFence = relFence;
+    }
+
+    return 0;
 }
 
 bool ExternalCameraDeviceSession::OutputThread::threadLoop() {
@@ -3560,15 +3646,7 @@ bool ExternalCameraDeviceSession::OutputThread::threadLoop() {
         switch (halBuf.format) {
             case PixelFormat::BLOB: {
                 if ((req->frameIn->mFourcc == V4L2_PIX_FMT_MJPEG) && mMjpgCopy) {
-                    ALOGI("take photo, directly copy MJPEG");
-                    void* outLayout = sHandleImporter.lock(*(halBuf.bufPtr), (uint64_t)halBuf.usage,
-                                                           inDataSize);
-                    std::memcpy(outLayout, inData, inDataSize);
-
-                    int relFence = sHandleImporter.unlock(*(halBuf.bufPtr));
-                    if (relFence >= 0) {
-                        halBuf.acquireFence = relFence;
-                    }
+                    directCopy(halBuf, inData, inDataSize);
                 } else {
                     // TODO: add nv12 as jpeg source
                     ALOGI("take photo, call createJpegLocked");
@@ -3584,16 +3662,7 @@ bool ExternalCameraDeviceSession::OutputThread::threadLoop() {
                 }
             } break;
             case PixelFormat::Y16: {
-                void* outLayout =
-                        sHandleImporter.lock(*(halBuf.bufPtr), static_cast<uint64_t>(halBuf.usage),
-                                             inDataSize);
-
-                std::memcpy(outLayout, inData, inDataSize);
-
-                int relFence = sHandleImporter.unlock(*(halBuf.bufPtr));
-                if (relFence >= 0) {
-                    halBuf.acquireFence = relFence;
-                }
+                directCopy(halBuf, inData, inDataSize);
             } break;
             case PixelFormat::YCBCR_420_888:
             case PixelFormat::YV12: {

@@ -1,6 +1,6 @@
 /*
  * Copyright (C) 2022 The Android Open Source Project
- * Copyright 2023 NXP.
+ * Copyright 2023-2024 NXP.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -130,6 +130,7 @@ public:
     virtual bool getHardwareDecFlag() const override;
 
     virtual Size getMaxThumbSize() { return mMaxThumbResolution; }
+    virtual Size getMaxJpegSize() { return mMaxJpegResolution; }
 
     // Called by CameraDevice to dump active device states
     binder_status_t dump(int fd, const char** args, uint32_t numArgs) override;
@@ -286,6 +287,8 @@ public:
         int scaleData(std::shared_ptr<AllocatedFrame>& in, YCbCrLayout& inputLayout,
                       const IMapper::Rect& inputCrop, std::shared_ptr<AllocatedFrame>& out,
                       YCbCrLayout& outLayout, const Size& outSz);
+
+        int directCopy(struct HalStreamBuffer& halBuf, uint8_t* inData, size_t inDataSize);
 
         bool mUseHalBufManager = false;
         ImxEngine mEngine = ENG_NOTCARE;
@@ -448,6 +451,9 @@ private:
     bool mUseHalBufManager = false;
 
     /* End of members not changed after initialize() */
+
+    // The max tolerant lag between the dequeued v4l2 buffer and current capture request.
+    uint64_t mMaxLagNs = 0;
 };
 
 } // namespace implementation

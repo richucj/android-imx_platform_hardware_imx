@@ -25,14 +25,13 @@
 
 #define ATRACE_TAG (ATRACE_TAG_GRAPHICS | ATRACE_TAG_HAL)
 
-#undef LOG_TAG
-#define LOG_TAG "NXPHWC"
-
 #include <aidl/android/hardware/graphics/composer3/IComposerClient.h>
 #include <android-base/logging.h>
+#include <cutils/native_handle.h>
 #include <log/log.h>
 #include <utils/Trace.h>
 
+#include "BufferInfo.h"
 #include "Time.h"
 
 // Uncomment to enable additional debug logging.
@@ -61,6 +60,7 @@
 
 // Below already defined in system/core/include/cutils/properties.h
 // #define PROPERTY_VALUE_MAX 92
+#define DEFAULT_HWC_PRIMARY_DISPLAY_ID 0
 
 namespace aidl::android::hardware::graphics::composer3::impl {
 
@@ -89,6 +89,7 @@ struct HalDisplayConfig {
 
 using HalConfig = std::unordered_map<uint32_t, HalDisplayConfig>;
 struct HalMultiConfigs {
+    uint32_t hwcId;
     uint32_t displayId;
     int32_t activeConfigId;
     std::shared_ptr<HalConfig> configs;
@@ -119,6 +120,7 @@ bool customizeGUIResolution(uint32_t& width, uint32_t& height, uint32_t* uiType)
 void parseDisplayMode(uint32_t* width, uint32_t* height, uint32_t* vrefresh, uint32_t* prefermode);
 bool checkRectOverlap(common::Rect& masked, common::Rect& src);
 void mergeRect(common::Rect& masked, common::Rect& src);
+bool getDisplayPortFromProperty(const std::string& connector_name, uint32_t* outPort);
 
 #ifdef DEBUG_DUMP_REFRESH_RATE
 nsecs_t dumpRefreshRateStart();

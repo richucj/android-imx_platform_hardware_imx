@@ -52,14 +52,20 @@ std::unique_ptr<DrmDisplay> DrmDisplay::create(
         ALOGE("%s: invalid plane.", __FUNCTION__);
         return nullptr;
     }
+
+    uint32_t port = 0;
+    if (getDisplayPortFromProperty(connector->getName(), &port)) {
+        id = port;
+    }
+
     char planeStr[100] = {0}, tempStr[100];
     for (const auto& [planeId, _] : planes) {
         sprintf(tempStr, "%d ", planeId);
         strcat(planeStr, tempStr);
     }
 
-    ALOGI("%s: display %d created: crtc=%d, connector=%d, plane=%s", __FUNCTION__, id,
-          crtc->getId(), connector->getId(), planeStr);
+    ALOGI("%s: display %d created: crtc=%d, connector=%d(%s), plane=%s", __FUNCTION__, id,
+          crtc->getId(), connector->getId(), connector->getName().c_str(), planeStr);
 
     std::unique_ptr<DrmDisplay> display(
             new DrmDisplay(id, std::move(connector), std::move(crtc), std::move(planes)));
@@ -144,6 +150,12 @@ std::tuple<HWC3::Error, std::unique_ptr<DrmAtomicRequest>> DrmDisplay::flushOver
     DEBUG_LOG("%s: flush overlay plane:%d, fbId=%d", __FUNCTION__, planeId,
               *buffer->mDrmFramebuffer);
     return std::make_tuple(HWC3::Error::None, std::move(request));
+}
+
+void DrmDisplay::clearTempBuffer(uint32_t overlaynum) {
+    if (overlaynum < mTempBuffers.planeDrmBuffer.size()) {
+        mTempBuffers.planeDrmBuffer.clear();
+    }
 }
 
 std::tuple<HWC3::Error, std::unique_ptr<DrmAtomicRequest>> DrmDisplay::flushPrimary(
@@ -292,7 +304,7 @@ std::tuple<HWC3::Error, ::android::base::unique_fd> DrmDisplay::commit(
 
 
     int vsyncPeriod = 1000000000UL / mActiveConfig.refreshRateHz; // convert to nanosecond
-    uint32_t interval = vsyncPeriod * 2 / mCommitRetryCnt / 1000; // try 2 Vsync period
+    uint32_t interval = vsyncPeriod * 2 / MAX_COMMIT_RETRY_COUNT / 1000; // try 2 Vsync period
 #ifdef DEBUG_DUMP_REFRESH_RATE
     nsecs_t now = dumpRefreshRateStart();
 #endif
@@ -332,7 +344,8 @@ std::tuple<HWC3::Error, ::android::base::unique_fd> DrmDisplay::commit(
     mPreviousBuffers.planeDrmBuffer = mTempBuffers.planeDrmBuffer;
 
     DEBUG_LOG("%s: atomic commit display:%d, plane:active=%s,disabled=%s; present fence:%d, retry"
-              "%d times", __FUNCTION__, mId, activeStr, disableStr, flushFenceFd, i);
+              " %d times",
+              __FUNCTION__, mId, activeStr, disableStr, flushFenceFd, i);
     return std::make_tuple(HWC3::Error::None, ::android::base::unique_fd(flushFenceFd));
 }
 

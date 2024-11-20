@@ -17,6 +17,8 @@
 
 #include "DrmConnector.h"
 
+#include <span>
+
 namespace aidl::android::hardware::graphics::composer3::impl {
 namespace {
 
@@ -39,6 +41,11 @@ std::unique_ptr<DrmConnector> DrmConnector::create(::android::base::borrowed_fd 
         ALOGE("%s: Failed to load connector.", __FUNCTION__);
         return nullptr;
     }
+    char buf[16];
+    snprintf(buf, sizeof(buf), "%s-%u", drmModeGetConnectorTypeName(drmConnector->connector_type),
+             drmConnector->connector_type_id);
+    connector->name = buf;
+
     drmModeEncoder* drmEncoder = drmModeGetEncoder(drmFd.get(), drmConnector->encoders[0]);
     if (!drmEncoder) {
         ALOGE("%s: drmModeGetEncoder failed for encoder 0x%08x", __FUNCTION__,
@@ -142,13 +149,13 @@ bool DrmConnector::loadEdid(::android::base::borrowed_fd drmFd) {
         drmModeFreePropertyBlob(blob);
     }
 
-    using byte_view = std::basic_string_view<uint8_t>;
+    using byte_view = std::span<const uint8_t>;
 
     constexpr size_t kEdidDescriptorOffset = 54;
     constexpr size_t kEdidDescriptorLength = 18;
 
-    byte_view edid(mEdid->data(), mEdid->size());
-    edid.remove_prefix(kEdidDescriptorOffset);
+    byte_view edid(*mEdid);
+    edid = edid.subspan(kEdidDescriptorOffset);
 
     byte_view descriptor(edid.data(), kEdidDescriptorLength);
     if (descriptor[0] == 0 && descriptor[1] == 0) {

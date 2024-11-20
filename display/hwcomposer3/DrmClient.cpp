@@ -80,7 +80,7 @@ HWC3::Error DrmClient::init(char* path, uint32_t* baseId) {
             // display port, used to identify framebuffer usage in framework(FramebufferSurface.cpp)
             displayBaseId = 0x40;
         else
-            displayBaseId = 0;
+            displayBaseId = *baseId;
 
         drmFreeVersion(version);
     }
@@ -140,6 +140,7 @@ HWC3::Error DrmClient::getDisplayConfigs(std::vector<HalMultiConfigs>* configs) 
         }
 
         configs->emplace_back(HalMultiConfigs{
+                .hwcId = display->getHwcId(),
                 .displayId = display->getId(),
                 .activeConfigId = display->getActiveConfigId(),
                 .configs = display->getDisplayConfigs(),
@@ -422,6 +423,7 @@ bool DrmClient::handleHotplug() {
             }
 
             std::unique_ptr<HalMultiConfigs> cfg(new HalMultiConfigs{
+                    .hwcId = display->getHwcId(),
                     .displayId = display->getId(),
                     .activeConfigId = display->getActiveConfigId(),
                     .configs = display->getDisplayConfigs(),
@@ -465,6 +467,7 @@ std::tuple<HWC3::Error, ::android::base::unique_fd> DrmClient::flushToDisplay(
     }
 
     std::unique_ptr<DrmAtomicRequest> request;
+    mDisplays[displayId]->clearTempBuffer(buffer.planeDrmBuffer.size());
     for (auto& pair : buffer.planeDrmBuffer) {
         auto [err, req] =
                 mDisplays[displayId]->flushOverlay(pair.first, std::move(request), pair.second);
@@ -493,6 +496,24 @@ std::tuple<HWC3::Error, ::android::base::unique_fd> DrmClient::flushToDisplay(
     }
 
     return std::make_tuple(error, std::move(outFence));
+}
+
+void DrmClient::partialCleanCacheBuffer(size_t overlayNum) {
+    if (mPlaneBufferCache && mPlaneBufferCache->getSize() > 0) {
+        uint32_t reservedBufferCount = 0;
+
+        TimePoint now = std::chrono::steady_clock::now();
+        if (mLastOverlayCount > overlayNum) {
+            if (now > mCheckOverlayTime  + Nanoseconds(500000000)) {
+                reservedBufferCount = overlayNum * 6;
+                mLastOverlayCount = overlayNum;
+                mPlaneBufferCache->partialClearCache(reservedBufferCount);
+            }
+        } else {
+            mCheckOverlayTime = now;
+            mLastOverlayCount = overlayNum;
+        }
+    }
 }
 
 std::optional<std::vector<uint8_t>> DrmClient::getEdid(uint32_t displayId) {
@@ -653,15 +674,15 @@ std::tuple<HWC3::Error, uint32_t> DrmClient::getPlaneForLayerBuffer(int displayI
     }
 }
 
-HWC3::Error DrmClient::setPrimaryDisplay(int displayId) {
+HWC3::Error DrmClient::setHwcPrimaryDisplay(int displayId, bool primary) {
     if (mDisplays.find(displayId) == mDisplays.end()) {
         DEBUG_LOG("%s: invalid display:%" PRIu32, __FUNCTION__, displayId);
         return HWC3::Error::BadDisplay;
     }
 
+    std::lock_guard<std::recursive_mutex> lock(mDisplaysMutex);
     DrmDisplay* display = mDisplays[displayId].get();
-    display->setAsPrimary(true);
-
+    display->setDisplayAsPrimary(primary);
     if (!display->isConnected())
         display->placeholderDisplayConfigs();
 

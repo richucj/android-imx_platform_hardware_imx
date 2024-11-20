@@ -71,6 +71,10 @@ void SwitchImxBuf(ImxImageBuffer &imxBufA, ImxImageBuffer &imxBufB);
 void Revert16BitEndian(uint8_t *pSrc, uint8_t *pDst, uint32_t pixels);
 void SbggrToRgb888(const uint16_t *src, uint8_t *rgb, int width, int height);
 void Rgb888ToYuv422i(const uint8_t *rgb, uint8_t *yuv422i, int width, int height);
+void decreaseNV12WithCut(uint8_t *srcBuf, int srcWidth, int srcHeight, uint8_t *dstBuf,
+                         int dstWidth, int dstHeight);
+
+int GetAllocationSize(buffer_handle_t buffer, uint64_t &allocatedSize);
 } // namespace android
 
 #endif // IMAGE_UTILS_H
