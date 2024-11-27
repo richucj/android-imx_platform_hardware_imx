@@ -38,6 +38,9 @@
 #include <signal.h>
 #include <stdio.h>
 
+/* Enabling GEAR_SELECTION subscribe to VHAL breaks AA GEAR notification */
+#define ENABLE_GEAR_SUBSCRIBE2VHAL      0
+
 namespace {
 
 using aidl::android::hardware::automotive::evs::IEvsDisplay;
@@ -250,10 +253,12 @@ int main(int argc, char** argv) {
             auto subscriptionClient = pVnet->getSubscriptionClient(pEvsListener);
             // Register for vehicle state change callbacks we care about
             // Changes in these values are what will trigger a reconfiguration of the EVS pipeline
+#if ENABLE_GEAR_SUBSCRIBE2VHAL
             if (!subscribeToVHal(subscriptionClient.get(), VehicleProperty::GEAR_SELECTION)) {
                 LOG(ERROR) << "Without gear notification, we can't support EVS.  Exiting.";
                 return EXIT_FAILURE;
             }
+#endif
             if (!subscribeToVHal(subscriptionClient.get(), VehicleProperty::TURN_SIGNAL_STATE)) {
                 LOG(WARNING) << "Didn't get turn signal notifications, so we'll ignore those.";
             }
