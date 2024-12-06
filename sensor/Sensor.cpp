@@ -636,7 +636,6 @@ HWSensorBase::HWSensorBase(int32_t sensorHandle, ISensorsEventCallback* callback
     mSensorInfo.maxRange = data.max_range * data.scale;
     mSensorInfo.power = 0;
     mIioData = data;
-    mPollFdIio.events = 0;
     setOrientation(config);
     status_t ret = setAdditionalInfoFrames(config);
     if (ret == OK) mSensorInfo.flags |= SensorFlagBits::ADDITIONAL_INFO;
