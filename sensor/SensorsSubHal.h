@@ -1,6 +1,5 @@
 /*
  * Copyright (C) 2020 The Android Open Source Project
- * Copyright 2021 NXP
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -14,33 +13,42 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+#ifndef ANDROID_HARDWARE_SENSORS_V2_1_SENSORS_SUBHAL_H
+#define ANDROID_HARDWARE_SENSORS_V2_1_SENSORS_SUBHAL_H
 
-#pragma once
-#include <V2_1/SubHal.h>
-
+#include <vector>
+#include <string.h>
 #include "Sensor.h"
+#include "SubHal.h"
 
-namespace nxp_sensors_subhal {
+using ::android::hardware::sensors::V2_1::SensorType;
 
+namespace android {
+namespace hardware {
+namespace sensors {
+namespace V2_1 {
+namespace subhal {
+namespace implementation {
+
+using ::android::hardware::sensors::V1_0::OperationMode;
+using ::android::hardware::sensors::V1_0::Result;
 using ::android::hardware::sensors::V2_1::implementation::IHalProxyCallback;
-
-using ::android::hardware::sensors::V1_0::RateLevel;
-using ::android::hardware::sensors::V1_0::SharedMemInfo;
-
-using ::android::sp;
-using ::android::hardware::hidl_handle;
-using ::android::hardware::hidl_string;
-using ::android::hardware::hidl_vec;
+using ::android::hardware::sensors::V2_1::implementation::ISensorsSubHal;
+using ::android::hardware::sensors::V2_1::subhal::implementation::ISensorsEventCallback;
+using ::sensor::hal::configuration::V1_0::Configuration;
 
 /**
  * Implementation of a ISensorsSubHal that can be used as a reference HAL implementation of sensors
- * multihal 2.0.
+ * multihal 2.0. See the README file for more details.
  */
-class SensorsSubHal : public ::android::hardware::sensors::V2_1::implementation::ISensorsSubHal,
-                      public ISensorsEventCallback {
-public:
+class SensorsSubHal : public ISensorsSubHal, public ISensorsEventCallback {
+    using Event = ::android::hardware::sensors::V2_1::Event;
+    using RateLevel = ::android::hardware::sensors::V1_0::RateLevel;
+    using SharedMemInfo = ::android::hardware::sensors::V1_0::SharedMemInfo;
+    using ScopedWakelock = ::android::hardware::sensors::V2_0::implementation::ScopedWakelock;
+
+  public:
     SensorsSubHal();
-    ~SensorsSubHal();
 
     // Methods from ::android::hardware::sensors::V2_1::ISensors follow.
     Return<void> getSensorsList_2_1(getSensorsList_2_1_cb _hidl_cb) override;
@@ -69,15 +77,17 @@ public:
     Return<void> debug(const hidl_handle& fd, const hidl_vec<hidl_string>& args) override;
 
     // Methods from ::android::hardware::sensors::V2_0::implementation::ISensorsSubHal follow.
-    const std::string getName() override { return "nxp-IIO-SensorsSubhal"; }
+    const std::string getName() override { return "NXP-IIO-SensorsSubhal"; }
 
     Return<Result> initialize(const sp<IHalProxyCallback>& halProxyCallback) override;
 
     // Method from ISensorsEventCallback.
-    void postEvents(const std::vector<Event>& events, bool wakeup) override;
+    void postEvents(const std::vector<Event>& events, ScopedWakelock wakelock) override;
 
-protected:
-    void AddSensor(struct iio_device_data& iio_data,
+    ScopedWakelock createScopedWakelock(bool lock) override;
+
+  protected:
+    void AddSensor(const struct iio_device_data& iio_data,
                    const std::optional<std::vector<Configuration>>& config);
 
     /**
@@ -90,9 +100,9 @@ protected:
      * disconnected, sensor events need to be sent to the framework, and when a wakelock should be
      * acquired.
      */
-    sp<IHalProxyCallback> mHalProxyCallback;
+    sp<IHalProxyCallback> mCallback;
 
-private:
+  private:
     /**
      * The current operation mode of the multihal framework. Ensures that all subhals are set to
      * the same operation mode.
@@ -105,4 +115,10 @@ private:
     int32_t mNextHandle;
 };
 
-} // namespace nxp_sensors_subhal
+}  // namespace implementation
+}  // namespace subhal
+}  // namespace V2_1
+}  // namespace sensors
+}  // namespace hardware
+}  // namespace android
+#endif

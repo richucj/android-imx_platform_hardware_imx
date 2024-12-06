@@ -1,6 +1,5 @@
 //
 // Copyright (C) 2020 The Android Open Source Project
-// Copyright 2021 NXP
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -14,14 +13,22 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-iio_sensor_defaults {
-    name: "iio_sensor_default",
+package {
+    default_applicable_licenses: ["Android-Apache-2.0"],
+}
+
+cc_library {
+    name: "android.hardware.sensors@2.1-nxp-IIO-Subhal",
     vendor: true,
-    header_libs: [
-        "android.hardware.sensors@2.X-multihal.header",
-    ],
     srcs: [
-        "*.cpp",
+        "iio_utils.cpp",
+        "MultiPoll.cpp",
+        "Sensor.cpp",
+        "SensorsSubHal.cpp",
+        "SensorThread.cpp",
+    ],
+    header_libs: [
+        "android.hardware.sensors@2.1-multihal.header",
     ],
     shared_libs: [
         "android.hardware.sensors@1.0",
@@ -46,39 +53,42 @@ iio_sensor_defaults {
         "-Wextra",
         "-Werror",
     ],
-    required: [
-        "sensor_hal_configuration.xml"
-    ],
     generated_sources: ["sensor_hal_configuration_V1_0_nxp"],
     generated_headers: ["sensor_hal_configuration_V1_0_nxp"],
-
 }
 
-bootstrap_go_package {
-    name: "soong-iio_sensor",
-    pkgPath: "android/soong/vendor/nxp-opensource/imx/iio_sensor",
-    deps: [
-        "blueprint",
-        "blueprint-pathtools",
-        "soong",
-        "soong-android",
-        "soong-cc",
-        "soong-genrule",
-    ],
+cc_test_host {
+    name: "android.hardware.sensors@2.1-nxp-IIO-Subhal_test",
     srcs: [
-        "iio_sensor.go",
+        "iio_utils.cpp",
+        "tests/IioUtilsTest.cpp",
     ],
-    pluginFor: ["soong_build"],
+    static_libs: [
+        "libgtest",
+        "android.hardware.sensors@1.0",
+        "android.hardware.sensors@2.0",
+        "android.hardware.sensors@2.1",
+    ],
+    shared_libs: [
+        "libbase",
+        "liblog",
+    ],
 }
 
-cc_library {
-    name: "android.hardware.sensors@2.1-nxp-IIO-Subhal",
-    defaults: ["iio_sensor_default"],
-}
-
-prebuilt_etc {
-    name: "sensor_hal_configuration.xml",
-    soc_specific: true,
-    src: "config/sensor_hal_configuration.xml",
-    sub_dir: "sensors",
+cc_test_host {
+    name: "android.hardware.sensors@2.1-nxp-IIO-Subhal_test-MultiPoll",
+    srcs: [
+        "MultiPoll.cpp",
+        "tests/MultiPoll.cpp"
+    ],
+    static_libs: [
+        "libgtest",
+        "android.hardware.sensors@1.0",
+        "android.hardware.sensors@2.0",
+        "android.hardware.sensors@2.1",
+    ],
+    shared_libs: [
+        "libbase",
+        "liblog",
+    ],
 }

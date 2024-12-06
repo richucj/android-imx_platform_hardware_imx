@@ -28,8 +28,6 @@
 #include <ui/GraphicBufferMapper.h>
 #include <ui/Rect.h>
 
-#include "NV12_resize.h"
-
 #define ALIGN_PIXEL_4(x) ((x + 3) & ~3)
 #define ALIGN_PIXEL_16(x) ((x + 15) & ~15)
 #define ALIGN_PIXEL_32(x) ((x + 31) & ~31)
@@ -134,7 +132,7 @@ enlarge:
 }
 
 int yuv422spResize(uint8_t *srcBuf, int srcWidth, int srcHeight, uint8_t *dstBuf, int dstWidth,
-                   int dstHeight, int srcHeightSpan) {
+                   int dstHeight, int dstStride, int srcHeightSpan) {
     int i, j, s;
     int h_offset;
     int v_offset;
@@ -142,7 +140,6 @@ int yuv422spResize(uint8_t *srcBuf, int srcWidth, int srcHeight, uint8_t *dstBuf
     int h_scale_ratio;
     int v_scale_ratio;
     int srcStride = srcWidth;
-    int dstStride = dstWidth;
     int srcRow = 0;
     int srcCol = 0;
     uint16_t *pUVSrcStart = NULL;
@@ -268,7 +265,6 @@ enlarge:
 
     return 0;
 }
-
 
 void decreaseNV12WithCut(uint8_t *srcBuf, int srcWidth, int srcHeight, uint8_t *dstBuf,
                          int dstWidth, int dstHeight) {
@@ -814,11 +810,15 @@ int32_t getSizeByForamtRes(int32_t format, uint32_t width, uint32_t height, bool
     return size;
 }
 
-int AllocPhyBuffer(uint32_t width, uint32_t height, uint32_t format, ImxImageBuffer &outBufInfo) {
+int AllocPhyBuffer(uint32_t width, uint32_t height, uint32_t format, ImxImageBuffer &outBufInfo,
+                   bool bCached) {
     buffer_handle_t bufferHandle;
     uint32_t bufferStride;
-    uint64_t usage = GRALLOC_USAGE_HW_CAMERA_WRITE | GRALLOC_USAGE_SW_READ_OFTEN |
-            GRALLOC_USAGE_PRIVATE_3; // need to make sure physical contiguous memory
+    uint64_t usage = GRALLOC_USAGE_HW_CAMERA_WRITE | GRALLOC_USAGE_PRIVATE_3; // need to make sure physical contiguous memory
+
+    if (bCached)
+        usage |= GRALLOC_USAGE_SW_READ_OFTEN;
+
     auto status = GraphicBufferAllocator::get().allocate(width, height, format,
                                                          /*layerCount=*/1, usage, &bufferHandle,
                                                          &bufferStride, "NxpCamera");

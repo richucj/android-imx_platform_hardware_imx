@@ -112,6 +112,8 @@ void AudioCardManager::scanAvailableCard()
             continue;
         }
         audio_card->card = card;
+        audio_card->card_name = strdup(card_name);
+        audio_card->locked = false;
         mCards.push_back(audio_card);
         mMixers.push_back(mixer);
     }
@@ -501,6 +503,9 @@ void AudioCardManager::releaseCard(struct audio_card* audio_card) {
 
     if (audio_card->driver_name)
         free(audio_card->driver_name);
+
+    if (audio_card->card_name)
+        free(audio_card->card_name);
 
     if (audio_card->bus_name)
         free(audio_card->bus_name);

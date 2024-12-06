@@ -54,6 +54,8 @@
 #include "Layer.h"
 #include "Time.h"
 #include "VsyncThread.h"
+#include "HDCPThread.h"
+
 
 namespace aidl::android::hardware::graphics::composer3::impl {
 
@@ -132,10 +134,14 @@ public:
     HWC3::Error acceptChanges();
     HWC3::Error present(::android::base::unique_fd* outDisplayFence,
                         std::unordered_map<int64_t, ::android::base::unique_fd>* outLayerFences);
+    HWC3::Error getDisplayConfigurations(int32_t /*maxFrameIntervalNs*/,
+                                         std::vector<DisplayConfiguration>* outConfigs);
+    HWC3::Error notifyExpectedPresent(const ClockMonotonicTimestamp& expectedPresentTime,
+                                      int32_t frameIntervalNs);
 
     // Non HWCComposer3 interface.
     int64_t getHwcId() const { return mId; }
-    uint64_t getId() const { return mDisplayId; }
+    uint32_t getId() const { return mDisplayId; }
 
     Layer* getLayer(int64_t layerHandle);
 
@@ -144,6 +150,7 @@ public:
     bool hasColorTransform() const { return mColorTransform.has_value(); }
     std::array<float, 16> getColorTransform() const { return *mColorTransform; }
     common::ColorTransform getColorTransformHint() { return mColorTransformHint; }
+    PowerMode getPowerMode() const { return mPowerMode; }
 
     FencedBuffer& getClientTarget() { return mClientTarget; }
     buffer_handle_t waitAndGetClientTargetBuffer();
@@ -151,18 +158,17 @@ public:
 
     const std::vector<Layer*>& getOrderedLayers() { return mOrderedLayers; }
 
-    HWC3::Error setCapability(std::vector<DisplayCapability>& caps) {
-        mCapability.insert(mCapability.end(), caps.begin(), caps.end());
+    HWC3::Error setDisplayCapabilities(std::vector<DisplayCapability>& caps) {
+        mDisplayCapabilities.insert(mDisplayCapabilities.end(), caps.begin(), caps.end());
         return HWC3::Error::None;
     }
     HWC3::Error takeEffectConfig(int32_t configId);
     std::optional<TimePoint>& getExpectedPresentTime() { return mExpectedPresentTime; }
     HWC3::Error checkAndWaitNextVsync(int64_t* timestamp);
-    HWC3::Error getDisplayConfigurations(int32_t /*maxFrameIntervalNs*/,
-                                         std::vector<DisplayConfiguration>* outConfigs);
-    HWC3::Error notifyExpectedPresent(const ClockMonotonicTimestamp& expectedPresentTime,
-                                      int32_t frameIntervalNs);
 
+    using HDCPThreadCallback = std::function<void (Display*)>;
+    void setHDCPCallback(const HDCPThreadCallback& callback);
+    void setHDCPThreadEnable(bool enable);
 private:
     bool hasConfig(int32_t configId) const;
     DisplayConfig* getConfig(int32_t configId);
@@ -185,7 +191,9 @@ private:
     std::string mName;
     PowerMode mPowerMode = PowerMode::OFF;
     bool mVsyncStarted = false;
+    bool mHDCPStarted = false;
     VsyncThread mVsyncThread;
+    HDCPThread mHDCPThread;
     FencedBuffer mClientTarget;
     FencedBuffer mReadbackBuffer;
     // Will only be non-null after the Display has been validated and
@@ -208,7 +216,7 @@ private:
     std::optional<std::array<float, 16>> mColorTransform;
     std::vector<uint8_t> mEdid;
     std::unique_ptr<Edid> mEdidParser;
-    std::vector<DisplayCapability> mCapability;
+    std::vector<DisplayCapability> mDisplayCapabilities;
     common::ColorTransform mColorTransformHint = common::ColorTransform::IDENTITY;
     ClientTargetProperty mClientTargetProperty{common::PixelFormat::RGBA_8888,
                                                common::Dataspace::SRGB_LINEAR};

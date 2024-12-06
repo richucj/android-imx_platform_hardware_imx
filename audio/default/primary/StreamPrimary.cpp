@@ -23,6 +23,7 @@
 #include <cutils/properties.h>
 #include <error/Result.h>
 #include <error/expected_utils.h>
+#include <fstream>
 
 #include "PrimaryMixer.h"
 #include "core-impl/AudioCardManager.h"
@@ -36,12 +37,15 @@ extern "C" {
 #define LPA_PERIOD_MS 500
 #define LPA_BUFFER_SECOND 20
 
+using aidl::android::hardware::audio::common::isBitPositionFlagSet;
 using aidl::android::hardware::audio::common::SinkMetadata;
 using aidl::android::hardware::audio::common::SourceMetadata;
 using aidl::android::media::audio::common::AudioDevice;
 using aidl::android::media::audio::common::AudioDeviceDescription;
 using aidl::android::media::audio::common::AudioDeviceType;
+using aidl::android::media::audio::common::AudioIoFlags;
 using aidl::android::media::audio::common::AudioOffloadInfo;
+using aidl::android::media::audio::common::AudioOutputFlags;
 using aidl::android::media::audio::common::MicrophoneInfo;
 using android::base::GetBoolProperty;
 
@@ -52,22 +56,73 @@ StreamPrimary::StreamPrimary(StreamContext* context, const Metadata& metadata)
       mIsAsynchronous(!!getContext().getAsyncCallback()) {
     context->startStreamDataProcessor();
     mSavedConfig = mConfig;
+    if (auto flags = getContext().getFlags();
+        (flags.getTag() == AudioIoFlags::Tag::output &&
+         (isBitPositionFlagSet(flags.template get<AudioIoFlags::Tag::output>(),
+                               AudioOutputFlags::PRIMARY)))) {
+        mPrimary = true;
+    }
+    ALOGD("%s: primary: %d", __func__, mPrimary);
+    mDump = property_get_bool("persist.vendor.audio.dump", false);
+    if (mDump) {
+        std::ofstream ifile(kDumpInputFile, std::ios::trunc);
+        std::ofstream ofile(kDumpOutputFile, std::ios::trunc);
+    }
 }
 
 ::android::status_t StreamPrimary::pause() {
-    if (mHardwarePause) {
+    if (mHardwarePause && mStarted) {
         proxy_pause(mAlsaDeviceProxies[0].get());
     }
     return ::android::OK;
 }
 
+void StreamPrimary::dump(const void *buffer, size_t bytes, const char *name) {
+    if ((buffer == NULL) || (bytes == 0) || (name == NULL))
+        return;
+
+    int fdDump = open(name, O_CREAT | O_APPEND | O_WRONLY, S_IRWXU | S_IRWXG);
+    if (fdDump < 0) {
+        ALOGW("%s: file open error, srcFile: %s, fd %d", __func__, name, fdDump);
+        return;
+    }
+
+    write(fdDump, buffer, bytes);
+    ::close(fdDump);
+
+    return;
+}
+
+void StreamPrimary::tryStart(){
+    auto status = StreamAlsa::start();
+    if (status != ::android::OK) {
+        mStarted = false;
+    } else {
+        mStarted = true;
+    }
+}
+
 ::android::status_t StreamPrimary::start() {
-    if (!mAlsaDeviceProxies.empty() && mHardwarePause) {
+    if (!mAlsaDeviceProxies.empty()) {
         // This is a resume after a pause.
-        proxy_resume(mAlsaDeviceProxies[0].get());
+        if (mHardwarePause && mStarted) {
+            proxy_resume(mAlsaDeviceProxies[0].get());
+        }
         return ::android::OK;
     }
-    RETURN_STATUS_IF_ERROR(StreamAlsa::start());
+    mCard = AudioCardManager::getCardForDevice(getConnectedDevices().at(0));
+    if (!mCard) {
+        return ::android::NO_INIT;
+    }
+    if (mPrimary) {
+        if (!mCard->locked) {
+            tryStart();
+        }
+    } else {
+        mCard->locked = true;
+        LOG(DEBUG) << __func__ << ": lock the card";
+        tryStart();
+    }
     mStartTimeNs = ::android::uptimeNanos();
     mFramesSinceStart = 0;
     mSkipNextTransfer = false;
@@ -76,6 +131,54 @@ StreamPrimary::StreamPrimary(StreamContext* context, const Metadata& metadata)
 
 ::android::status_t StreamPrimary::transfer(void* buffer, size_t frameCount,
                                             size_t* actualFrameCount, int32_t* latencyMs) {
+
+    if (mPrimary) {
+        if (mStarted && mCard->locked) {
+            LOG(DEBUG) << __func__ << ": standby the primary stream to release the card.";
+            standby();
+        } else if (!mStarted && !mCard->locked) {
+            tryStart();
+        }
+    } else /* direct stream */{
+        if (!mStarted) {
+            tryStart();
+        }
+        if (!mCard->locked) {
+            LOG(WARNING) << __func__ << ": error state, direct transfer without lock.";
+            mCard->locked = true;
+        }
+    }
+
+    mFramesSinceStart += frameCount;
+    if (!mStarted) {
+        *actualFrameCount = frameCount;
+        const long bufferDurationUs =
+                (*actualFrameCount) * MICROS_PER_SECOND / mContext.getSampleRate();
+        const auto totalDurationUs =
+                (::android::uptimeNanos() - mStartTimeNs) / NANOS_PER_MICROSECOND;
+        const long totalOffsetUs =
+                mFramesSinceStart * MICROS_PER_SECOND / mContext.getSampleRate() - totalDurationUs;
+        if (totalOffsetUs > 0) {
+            const long sleepTimeUs = std::min(totalOffsetUs, bufferDurationUs);
+            if (sleepTimeUs > 500000) {
+                LOG(WARNING) << __func__ << ": sleeping for " << sleepTimeUs << " us";
+            }
+            usleep(sleepTimeUs);
+        } else {
+            LOG(WARNING) << __func__ << ": Wrong sleep time: totalOffsetUs " << totalOffsetUs
+                << ", bufferDurationUs " << bufferDurationUs
+                << ", totalDurationUs " << totalDurationUs
+                << ", mFramesSinceStart " << mFramesSinceStart
+                << ", actualFrameCount " << *actualFrameCount;
+        }
+        return ::android::OK;
+    }
+
+    if (mDump && mIsInput)
+        dump(buffer, frameCount * mFrameSizeBytes, kDumpInputFile);
+    else if (mDump && !mIsInput)
+        dump(buffer, frameCount * mFrameSizeBytes, kDumpOutputFile);
+
     if (mIsStereoToMono) {
         if (mIsInput) {
             auto dst = static_cast<int16_t*>(buffer);
@@ -111,8 +214,51 @@ StreamPrimary::StreamPrimary(StreamContext* context, const Metadata& metadata)
         return ::android::OK;
     }
 
+    if (mIsS16ToS24) {
+        auto channels = aidl::android::hardware::audio::common::getChannelCount(getContext().getChannelLayout());
+        auto src = static_cast<int16_t*>(buffer);
+        std::unique_ptr<int32_t[]> dst{new int32_t[frameCount * channels]};
+
+        memcpy_to_q8_23_from_i16(dst.get(), src, frameCount * channels);
+        RETURN_STATUS_IF_ERROR(
+                StreamAlsa::transfer(dst.get(), frameCount * channels, actualFrameCount, latencyMs));
+
+        *actualFrameCount /= 2;
+
+        return ::android::OK;
+    }
+
     RETURN_STATUS_IF_ERROR(
             StreamAlsa::transfer(buffer, frameCount, actualFrameCount, latencyMs));
+    return ::android::OK;
+}
+
+void StreamPrimary::stop() {
+    if (!mPrimary && mCard) {
+        mCard->locked = false;
+        LOG(DEBUG) << __func__ << ": unlock the card.";
+    }
+    mStarted = false;
+}
+
+::android::status_t StreamPrimary::standby() {
+    StreamAlsa::standby();
+    stop();
+    return ::android::OK;
+}
+
+void StreamPrimary::shutdown() {
+    StreamAlsa::shutdown();
+    stop();
+}
+
+::android::status_t StreamPrimary::refinePosition(StreamDescriptor::Position* position) {
+    if (property_get_int32("vendor.audio.lpa.enable", 0) ||
+            (getContext().getFormat().encoding == "audio/vnd.sony.dsd")) {
+        return StreamAlsa::refinePosition(position);
+    }
+    // Since not all data is actually sent to the HAL, use the position maintained by Stream class
+    // which accounts for all frames passed from / to the client.
     return ::android::OK;
 }
 
@@ -140,16 +286,22 @@ std::vector<alsa::DeviceProfile> StreamPrimary::getDeviceProfiles() {
             mConfig->format = PCM_FORMAT_S32_LE;
             mIsS32ToS16 = true;
             LOG(INFO) << __func__ << ": Force set S32 format for micfil";
-        } else {
+        } else if (mIsStereoToMono || mIsS32ToS16) {
             mIsStereoToMono = false;
             mIsS32ToS16 = false;
             mConfig = mSavedConfig;
         }
 
-        if (property_get_int32("vendor.audio.lpa.enable", 0)) {
-            mConfig->period_size = mConfig->rate * LPA_PERIOD_MS / 1000;
-            mConfig->period_count = LPA_BUFFER_SECOND * 1000 / LPA_PERIOD_MS;
-            mHardwarePause = true;
+        char soc_name[PROPERTY_VALUE_MAX];
+        property_get("ro.boot.soc_type", soc_name, NULL);
+        if ((property_get_int32("vendor.persist.audio.pass.through", 0) == 2000) &&
+                ((0 == strcmp(soc_name, "imx8mp")) || (0 == strcmp(soc_name, "imx8ulp")))) {
+            mIsS16ToS24 = true;
+            LOG(INFO) << __func__ << ": Force set S24 format for passthrough on imx8mp/imx8ulp";
+            mConfig->format = PCM_FORMAT_S24_LE;
+        } else if (mIsS16ToS24) {
+            mIsS16ToS24 = false;
+            mConfig = mSavedConfig;
         }
 
         if (card->out_period_size) {
@@ -157,6 +309,13 @@ std::vector<alsa::DeviceProfile> StreamPrimary::getDeviceProfiles() {
         }
         if (card->out_period_count) {
             mConfig->period_count = card->out_period_count;
+        }
+
+        if (property_get_int32("vendor.audio.lpa.enable", 0)) {
+            mConfig->period_size = mConfig->rate * LPA_PERIOD_MS / 1000;
+            mConfig->period_count = LPA_BUFFER_SECOND * 1000 / LPA_PERIOD_MS;
+            if (!mPrimary)
+                mHardwarePause = true;
         }
     }
 
@@ -269,7 +428,6 @@ StreamSwitcher::DeviceSwitchBehavior StreamOutPrimary::switchCurrentStream(
     if (devices.size() > 1) {
         LOG(ERROR) << __func__ << ": primary stream can only be connected to one device, got: "
                    << devices.size();
-        return DeviceSwitchBehavior::UNSUPPORTED_DEVICES;
     }
     if (devices.empty() || useStubStream(devices[0]) == isStubStream()) {
         return DeviceSwitchBehavior::USE_CURRENT_STREAM;

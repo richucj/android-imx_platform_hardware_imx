@@ -184,13 +184,23 @@ HWC3::Error ClientFrameComposer::unregisterOnHotplugCallback() {
     return HWC3::Error::None;
 }
 
+void ClientFrameComposer::HDCPThreadCallback(Display* display) {
+    auto [error, client] = getDeviceClient(display->getId());
+    if (error != HWC3::Error::None) {
+        ALOGE("%s: display:%d cannot find Drm Client", __FUNCTION__, display->getId());
+        return;
+    }
+    client->setSecureMode(display->getId(), 0, false);
+    display->setHDCPThreadEnable(false);
+}
+
 HWC3::Error ClientFrameComposer::onDisplayCreate(Display* display) {
     const auto displayId = display->getId();
-    DEBUG_LOG("%s display:%" PRIu64, __FUNCTION__, displayId);
+    DEBUG_LOG("%s display:%d", __FUNCTION__, displayId);
 
     auto [error, client] = getDeviceClient(displayId);
     if (error != HWC3::Error::None) {
-        ALOGE("%s: display:%" PRIu64 " cannot find Drm Client", __FUNCTION__, displayId);
+        ALOGE("%s: display:%d cannot find Drm Client", __FUNCTION__, displayId);
         return error;
     }
 
@@ -200,7 +210,7 @@ HWC3::Error ClientFrameComposer::onDisplayCreate(Display* display) {
 
     std::vector<DisplayCapability> caps;
     if (client->getDisplayCapability(displayId, caps) == HWC3::Error::None) {
-        display->setCapability(caps);
+        display->setDisplayCapabilities(caps);
     }
 
     std::optional<std::vector<uint8_t>> edid = client->getEdid(displayId);
@@ -208,21 +218,31 @@ HWC3::Error ClientFrameComposer::onDisplayCreate(Display* display) {
         display->setEdid(*edid);
     }
 
+    // set hdcp thread callback
+    if (mHdcpEnabled) {
+        auto Callback = [this](Display* display) {
+            return HDCPThreadCallback(display);
+        };
+        display->setHDCPCallback(Callback);
+        display->setHDCPThreadEnable(true);
+        client->setSecureMode(displayId, 0, true);
+    }
+
     return HWC3::Error::None;
 }
 
 HWC3::Error ClientFrameComposer::onDisplayDestroy(Display* display) {
     const auto displayId = display->getId();
-    DEBUG_LOG("%s display:%" PRIu64, __FUNCTION__, displayId);
+    DEBUG_LOG("%s display:%d", __FUNCTION__, displayId);
 
     auto it = mDisplayBuffers.find(displayId);
     if (it == mDisplayBuffers.end()) {
-        ALOGE("%s: display:%" PRIu64 " missing display buffers?", __FUNCTION__, displayId);
+        ALOGE("%s: display:%d missing display buffers?", __FUNCTION__, displayId);
         return HWC3::Error::BadDisplay;
     }
     auto [error, client] = getDeviceClient(displayId);
     if (error != HWC3::Error::None) {
-        ALOGE("%s: display:%" PRIu64 " cannot find Drm Client", __FUNCTION__, displayId);
+        ALOGE("%s: display:%d cannot find Drm Client", __FUNCTION__, displayId);
         return error;
     }
 
@@ -235,11 +255,11 @@ HWC3::Error ClientFrameComposer::onDisplayDestroy(Display* display) {
 
 HWC3::Error ClientFrameComposer::onDisplayLayerDestroy(Display* display, Layer* layer) {
     const auto displayId = display->getId();
-    DEBUG_LOG("%s display:%" PRIu64, __FUNCTION__, displayId);
+    DEBUG_LOG("%s display:%d", __FUNCTION__, displayId);
 
     auto [error, client] = getDeviceClient(displayId);
     if (error != HWC3::Error::None) {
-        ALOGE("%s: display:%" PRIu64 " cannot find Drm Client", __FUNCTION__, displayId);
+        ALOGE("%s: display:%d cannot find Drm Client", __FUNCTION__, displayId);
         return error;
     }
 
@@ -252,17 +272,17 @@ HWC3::Error ClientFrameComposer::onDisplayLayerDestroy(Display* display, Layer* 
 
 HWC3::Error ClientFrameComposer::onDisplayClientTargetSet(Display* display) {
     const auto displayId = display->getId();
-    DEBUG_LOG("%s display:%" PRIu64, __FUNCTION__, displayId);
+    DEBUG_LOG("%s display:%d", __FUNCTION__, displayId);
 
     auto it = mDisplayBuffers.find(displayId);
     if (it == mDisplayBuffers.end()) {
-        ALOGE("%s: display:%" PRIu64 " missing display buffers?", __FUNCTION__, displayId);
+        ALOGE("%s: display:%d missing display buffers?", __FUNCTION__, displayId);
         return HWC3::Error::BadDisplay;
     }
 
     auto [error, client] = getDeviceClient(displayId);
     if (error != HWC3::Error::None) {
-        ALOGE("%s: display:%" PRIu64 " cannot find Drm Client", __FUNCTION__, displayId);
+        ALOGE("%s: display:%d cannot find Drm Client", __FUNCTION__, displayId);
         return error;
     }
     DisplayBuffer& displayBuffer = it->second;
@@ -278,8 +298,7 @@ HWC3::Error ClientFrameComposer::onDisplayClientTargetSet(Display* display) {
     auto [createError, drmBuffer] = client->create(display->getClientTarget().getBuffer(),
                                                    displayFrame, sourceCrop, DRM_BUFFER_FB);
     if (createError != HWC3::Error::None) {
-        ALOGE("%s: display:%" PRIu64 " failed to create client target drm buffer", __FUNCTION__,
-              displayId);
+        ALOGE("%s: display:%d failed to create client target drm buffer", __FUNCTION__, displayId);
         return HWC3::Error::NoResources;
     }
     displayBuffer.clientTargetDrmBuffer = std::move(drmBuffer);
@@ -289,11 +308,11 @@ HWC3::Error ClientFrameComposer::onDisplayClientTargetSet(Display* display) {
 
 HWC3::Error ClientFrameComposer::onActiveConfigChange(Display* display, int32_t configId) {
     const auto displayId = display->getId();
-    DEBUG_LOG("%s display:%" PRIu64, __FUNCTION__, displayId);
+    DEBUG_LOG("%s display:%d", __FUNCTION__, displayId);
 
     auto [error, client] = getDeviceClient(displayId);
     if (error != HWC3::Error::None) {
-        ALOGE("%s: display:%" PRIu64 " cannot find Drm Client", __FUNCTION__, displayId);
+        ALOGE("%s: display:%d cannot find Drm Client", __FUNCTION__, displayId);
         return error;
     }
 
@@ -304,17 +323,17 @@ HWC3::Error ClientFrameComposer::onActiveConfigChange(Display* display, int32_t 
 
 HWC3::Error ClientFrameComposer::validateDisplay(Display* display, DisplayChanges* outChanges) {
     const auto displayId = display->getId();
-    DEBUG_LOG("%s display:%" PRIu64, __FUNCTION__, displayId);
+    DEBUG_LOG("%s display:%d", __FUNCTION__, displayId);
 
     auto it = mDisplayBuffers.find(displayId);
     if (it == mDisplayBuffers.end()) {
-        ALOGE("%s: display:%" PRIu64 " missing display buffers?", __FUNCTION__, displayId);
+        ALOGE("%s: display:%d missing display buffers?", __FUNCTION__, displayId);
         return HWC3::Error::BadDisplay;
     }
 
     auto [error, client] = getDeviceClient(displayId);
     if (error != HWC3::Error::None) {
-        ALOGE("%s: display:%" PRIu64 " cannot find Drm Client", __FUNCTION__, displayId);
+        ALOGE("%s: display:%d cannot find Drm Client", __FUNCTION__, displayId);
         return error;
     }
 
@@ -429,8 +448,8 @@ HWC3::Error ClientFrameComposer::validateDisplay(Display* display, DisplayChange
             if ((layer->getCompositionType() == Composition::DEVICE) &&
                 (layer->getBuffer().getBuffer() != nullptr)) {
                 luckyLayer = layersForComposition.front();
-                DEBUG_LOG("%s: display:%" PRIu64 " there is a lucky layer can be presented",
-                          __FUNCTION__, displayId);
+                DEBUG_LOG("%s: display:%d there is a lucky layer can be presented", __FUNCTION__,
+                          displayId);
             }
         }
         layersForComposition.clear();
@@ -443,11 +462,11 @@ HWC3::Error ClientFrameComposer::presentDisplay(
         Display* display, ::android::base::unique_fd* outDisplayFence,
         std::unordered_map<int64_t, ::android::base::unique_fd>* outLayerFences) {
     const auto displayId = display->getId();
-    DEBUG_LOG("%s display:%" PRIu64, __FUNCTION__, displayId);
+    DEBUG_LOG("%s display:%d", __FUNCTION__, displayId);
 
     auto displayBufferIt = mDisplayBuffers.find(displayId);
     if (displayBufferIt == mDisplayBuffers.end()) {
-        ALOGE("%s: failed to find display buffers for display:%" PRIu64, __FUNCTION__, displayId);
+        ALOGE("%s: failed to find display buffers for display:%d", __FUNCTION__, displayId);
         return HWC3::Error::BadDisplay;
     }
     DisplayBuffer& displayBuffer = displayBufferIt->second;
@@ -459,7 +478,7 @@ HWC3::Error ClientFrameComposer::presentDisplay(
 
     auto [error, client] = getDeviceClient(displayId);
     if (error != HWC3::Error::None) {
-        ALOGE("%s: display:%" PRIu64 " cannot find Drm Client", __FUNCTION__, displayId);
+        ALOGE("%s: display:%d cannot find Drm Client", __FUNCTION__, displayId);
         return error;
     }
 
@@ -470,7 +489,7 @@ HWC3::Error ClientFrameComposer::presentDisplay(
     }
 
     if (layersForOverlay.size() > 0) {
-        client->partialCleanCacheBuffer(layersForOverlay.size());
+        client->partialCleanCacheBuffer(static_cast<uint32_t>(layersForOverlay.size()));
     }
     for (auto& [planeId, layer] : layersForOverlay) {
         auto handle = layer->waitAndGetBuffer(); // wait for layer buffer ready
@@ -480,8 +499,7 @@ HWC3::Error ClientFrameComposer::presentDisplay(
         auto [createError, drmBuffer] =
                 client->create(handle, rectFrame, rectSource, DRM_BUFFER_PLANE);
         if (createError != HWC3::Error::None) {
-            ALOGE("%s: display:%" PRIu64 " failed to create overlay drm buffer", __FUNCTION__,
-                  displayId);
+            ALOGE("%s: display:%d failed to create overlay drm buffer", __FUNCTION__, displayId);
             return HWC3::Error::NoResources;
         }
         drmBuffer->mZpos = layer->getZOrder();
@@ -517,7 +535,7 @@ HWC3::Error ClientFrameComposer::presentDisplay(
 
         auto [error, renderTarget] = client->getComposerTarget(mG2dComposer, displayId, secure);
         if (error != HWC3::Error::None) {
-            ALOGE("%s: display:%" PRIu64 " failed to get composer target", __FUNCTION__, displayId);
+            ALOGE("%s: display:%d failed to get composer target", __FUNCTION__, displayId);
             return error;
         }
         auto [ret, composeFence] = mG2dComposer->composeLayers(layersForComposition, renderTarget);
@@ -540,8 +558,8 @@ HWC3::Error ClientFrameComposer::presentDisplay(
         auto [createError, drmBuffer] =
                 client->create(renderTarget, displayFrame, sourceCrop, DRM_BUFFER_FB);
         if (createError != HWC3::Error::None) {
-            ALOGE("%s: display:%" PRIu64 " failed to create composer target drm buffer",
-                  __FUNCTION__, displayId);
+            ALOGE("%s: display:%d failed to create composer target drm buffer", __FUNCTION__,
+                  displayId);
             return HWC3::Error::NoResources;
         }
         displayBuffer.clientTargetDrmBuffer = std::move(drmBuffer);
@@ -560,7 +578,7 @@ HWC3::Error ClientFrameComposer::presentDisplay(
         auto [createError, drmBuffer] =
                 client->create(buffer, rectFrame, rectSource, DRM_BUFFER_NONE);
         if (createError != HWC3::Error::None) {
-            ALOGE("%s: display:%" PRIu64 " failed to create client target drm buffer", __FUNCTION__,
+            ALOGE("%s: display:%d failed to create client target drm buffer", __FUNCTION__,
                   displayId);
             return HWC3::Error::NoResources;
         }
@@ -588,15 +606,17 @@ HWC3::Error ClientFrameComposer::presentDisplay(
             common::Rect rectFrame = layer->getDisplayFrame();
             common::Rect rectSource = layer->getSourceCropInt();
             std::vector<buffer_handle_t> buffers;
-            mG2dComposer->prepareDeviceFrameBuffer(rectFrame.right - rectFrame.left,
-                                                   rectFrame.bottom - rectFrame.top,
+            mG2dComposer->prepareDeviceFrameBuffer(static_cast<uint32_t>(rectFrame.right -
+                                                                         rectFrame.left),
+                                                   static_cast<uint32_t>(rectFrame.bottom -
+                                                                         rectFrame.top),
                                                    static_cast<int>(common::PixelFormat::RGBA_8888),
                                                    buffers, 1, false);
             auto [createError, drmBuffer] =
                     client->create(buffers[0], rectFrame, rectSource, DRM_BUFFER_NONE);
             if (createError != HWC3::Error::None) {
-                ALOGE("%s: display:%" PRIu64 " failed to create client target drm buffer",
-                      __FUNCTION__, displayId);
+                ALOGE("%s: display:%d failed to create client target drm buffer", __FUNCTION__,
+                      displayId);
                 return HWC3::Error::NoResources;
             }
             displayBuffer.clientTargetDrmBuffer = drmBuffer;
@@ -611,7 +631,7 @@ HWC3::Error ClientFrameComposer::presentDisplay(
 
     if (!displayBuffer.clientTargetDrmBuffer && (displayBuffer.planeDrmBuffer.size() == 0) &&
         (displayBuffer.dummyDrmBuffer.size() == 0)) {
-        DEBUG_LOG("%s: display:%" PRIu64 " No buffer need to commit", __FUNCTION__, displayId);
+        DEBUG_LOG("%s: display:%d No buffer need to commit", __FUNCTION__, displayId);
         return HWC3::Error::None; // No buffer need to commit
     }
 
@@ -631,7 +651,7 @@ HWC3::Error ClientFrameComposer::presentDisplay(
     auto [flushError, flushCompleteFence] =
             client->flushToDisplay(displayId, displayBuffer, fbInFence);
     if (flushError != HWC3::Error::None) {
-        ALOGE("%s: display:%" PRIu64 " failed to flush drm buffer", __FUNCTION__, displayId);
+        ALOGE("%s: display:%d failed to flush drm buffer", __FUNCTION__, displayId);
     }
 
     for (auto& [_, layer] : layersForOverlay) {
@@ -654,11 +674,11 @@ HWC3::Error ClientFrameComposer::presentDisplay(
 
 HWC3::Error ClientFrameComposer::setPowerMode(Display* display, PowerMode mode) {
     const auto displayId = display->getId();
-    DEBUG_LOG("%s display:%" PRIu64, __FUNCTION__, displayId);
+    DEBUG_LOG("%s display:%d", __FUNCTION__, displayId);
 
     auto [error, client] = getDeviceClient(displayId);
     if (error != HWC3::Error::None) {
-        ALOGE("%s: display:%" PRIu64 " cannot find Drm Client", __FUNCTION__, displayId);
+        ALOGE("%s: display:%d cannot find Drm Client", __FUNCTION__, displayId);
         return error;
     }
     DrmPower power;
@@ -679,7 +699,7 @@ HWC3::Error ClientFrameComposer::setPowerMode(Display* display, PowerMode mode) 
 
     auto err = client->setPowerMode(displayId, power);
     if (err != HWC3::Error::None) {
-        ALOGE("%s: display:%" PRIu64 " failed to set power mode:%d" PRIu64, __FUNCTION__, displayId,
+        ALOGE("%s: display:%d failed to set power mode:%d" PRIu64, __FUNCTION__, displayId,
               static_cast<int>(mode));
     }
 
@@ -708,11 +728,11 @@ std::tuple<HWC3::Error, DeviceClient*> ClientFrameComposer::getDeviceClient(uint
 
 HWC3::Error ClientFrameComposer::setDisplayBrightness(Display* display, float brightness) {
     const auto displayId = display->getId();
-    DEBUG_LOG("%s display:%" PRIu64, __FUNCTION__, displayId);
+    DEBUG_LOG("%s display:%d", __FUNCTION__, displayId);
 
     auto [error, client] = getDeviceClient(displayId);
     if (error != HWC3::Error::None) {
-        ALOGE("%s: display:%" PRIu64 " cannot find Drm Client", __FUNCTION__, displayId);
+        ALOGE("%s: display:%d cannot find Drm Client", __FUNCTION__, displayId);
         return error;
     }
 
@@ -724,11 +744,11 @@ HWC3::Error ClientFrameComposer::setDisplayBrightness(Display* display, float br
 HWC3::Error ClientFrameComposer::getDisplayConnectionType(Display* display,
                                                           DisplayConnectionType* outType) {
     const auto displayId = display->getId();
-    DEBUG_LOG("%s display:%" PRIu64, __FUNCTION__, displayId);
+    DEBUG_LOG("%s display:%d", __FUNCTION__, displayId);
 
     auto [error, client] = getDeviceClient(displayId);
     if (error != HWC3::Error::None) {
-        ALOGE("%s: display:%" PRIu64 " cannot find Drm Client", __FUNCTION__, displayId);
+        ALOGE("%s: display:%d cannot find Drm Client", __FUNCTION__, displayId);
         return error;
     }
 
@@ -740,11 +760,11 @@ HWC3::Error ClientFrameComposer::getDisplayConnectionType(Display* display,
 HWC3::Error ClientFrameComposer::getClientTargetProperty(Display* display,
                                                          ClientTargetProperty* outProperty) {
     const auto displayId = display->getId();
-    DEBUG_LOG("%s display:%" PRIu64, __FUNCTION__, displayId);
+    DEBUG_LOG("%s display:%d", __FUNCTION__, displayId);
 
     auto [error, client] = getDeviceClient(displayId);
     if (error != HWC3::Error::None) {
-        ALOGE("%s: display:%" PRIu64 " cannot find Drm Client", __FUNCTION__, displayId);
+        ALOGE("%s: display:%d cannot find Drm Client", __FUNCTION__, displayId);
         return error;
     }
 
@@ -753,11 +773,11 @@ HWC3::Error ClientFrameComposer::getClientTargetProperty(Display* display,
 
 HWC3::Error ClientFrameComposer::waitHardwareVsyncTimestamp(Display* display, int64_t* timestamp) {
     const auto displayId = display->getId();
-    DEBUG_LOG("%s display:%" PRIu64, __FUNCTION__, displayId);
+    DEBUG_LOG("%s display:%d", __FUNCTION__, displayId);
 
     auto [error, client] = getDeviceClient(displayId);
     if (error != HWC3::Error::None) {
-        ALOGE("%s: display:%" PRIu64 " cannot find Drm Client", __FUNCTION__, displayId);
+        ALOGE("%s: display:%d cannot find Drm Client", __FUNCTION__, displayId);
         return error;
     }
 

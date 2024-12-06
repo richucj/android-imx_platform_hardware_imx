@@ -1,6 +1,5 @@
 /*
  * Copyright (C) 2020 The Android Open Source Project
- * Copyright 2021 NXP
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -14,23 +13,20 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-#pragma once
-#include <android-base/properties.h>
-#include <android/hardware/sensors/2.1/types.h>
-#include <hardware/sensors.h>
-#include <inttypes.h>
-#include <log/log.h>
-#include <poll.h>
-#include <sys/socket.h>
-#include <utils/SystemClock.h>
+#ifndef ANDROID_HARDWARE_SENSORS_V2_1_SENSOR_H
+#define ANDROID_HARDWARE_SENSORS_V2_1_SENSOR_H
 
-#include <cmath>
+#include <android-base/unique_fd.h>
+#include <android/hardware/sensors/2.1/types.h>
+#include <poll.h>
 #include <condition_variable>
 #include <memory>
 #include <mutex>
 #include <thread>
 #include <vector>
 
+#include "SensorThread.h"
+#include "V2_0/ScopedWakelock.h"
 #include "iio_utils.h"
 #include "sensor_hal_configuration_V1_0.h"
 
@@ -38,23 +34,22 @@
 // Subtract the timestamp channel to get the number of data channels
 #define NUM_OF_DATA_CHANNELS NUM_OF_CHANNEL_SUPPORTED - 1
 
+using android::base::unique_fd;
 using ::android::hardware::sensors::V1_0::AdditionalInfo;
-using ::android::hardware::sensors::V1_0::MetaDataEventType;
 using ::android::hardware::sensors::V1_0::OperationMode;
 using ::android::hardware::sensors::V1_0::Result;
-using ::android::hardware::sensors::V1_0::SensorFlagBits;
-using ::android::hardware::sensors::V1_0::SensorStatus;
+using ::android::hardware::sensors::V2_0::implementation::ScopedWakelock;
 using ::android::hardware::sensors::V2_1::Event;
 using ::android::hardware::sensors::V2_1::SensorInfo;
 using ::android::hardware::sensors::V2_1::SensorType;
-
-using ::android::status_t;
-using ::android::base::GetProperty;
-using ::android::hardware::Return;
-
 using ::sensor::hal::configuration::V1_0::Configuration;
 
-namespace nxp_sensors_subhal {
+namespace android {
+namespace hardware {
+namespace sensors {
+namespace V2_1 {
+namespace subhal {
+namespace implementation {
 
 static constexpr unsigned int frequency_to_us(unsigned int x) {
     return (1E6 / x);
@@ -69,17 +64,16 @@ static constexpr unsigned int ns_to_frequency(unsigned int x) {
 // Based on commonly used IMUs, 3.6V is picked as the default.
 constexpr auto SENSOR_VOLTAGE_DEFAULT = 3.6f;
 
-static constexpr char kTriggerType[] = "vendor.sensor.trigger";
-
 class ISensorsEventCallback {
-public:
+  public:
     virtual ~ISensorsEventCallback() = default;
-    virtual void postEvents(const std::vector<Event>& events, bool wakeup) = 0;
+    virtual void postEvents(const std::vector<Event>& events, ScopedWakelock wakelock) = 0;
+    virtual ScopedWakelock createScopedWakelock(bool lock) = 0;
 };
 
 // Virtual Base Class for Sensor
 class SensorBase {
-public:
+  public:
     SensorBase(int32_t sensorHandle, ISensorsEventCallback* callback, SensorType type);
     virtual ~SensorBase();
     const SensorInfo& getSensorInfo() const;
@@ -90,40 +84,46 @@ public:
     bool supportsDataInjection() const;
     Result injectEvent(const Event& event);
 
-protected:
+    bool isEnabled() const;
+    OperationMode getOperationMode() const;
+
+  protected:
+    friend class SensorThread;
+
+    virtual void pollSensor() = 0;
     bool isWakeUpSensor();
+
     bool mIsEnabled;
     int64_t mSamplingPeriodNs;
     SensorInfo mSensorInfo;
-    std::atomic_bool mStopThread;
-    std::condition_variable mWaitCV;
-    std::mutex mRunMutex;
-    std::thread mRunThread;
     ISensorsEventCallback* mCallback;
     OperationMode mMode;
+    SensorThread mSensorThread;
 };
+
+class SensorThread;
 
 // HWSensorBase represents the actual physical sensor provided as the IIO device
 class HWSensorBase : public SensorBase {
-public:
+  public:
     static HWSensorBase* buildSensor(int32_t sensorHandle, ISensorsEventCallback* callback,
-                                     struct iio_device_data& iio_data,
+                                     const struct iio_device_data& iio_data,
                                      const std::optional<std::vector<Configuration>>& config);
     ~HWSensorBase();
     void batch(int32_t samplingPeriodNs);
     void activate(bool enable);
+    void setupHrtimerTrigger(const std::string& device_dir, uint8_t dev_num, bool enable);
+    void setupSysfsTrigger(const std::string& device_dir, uint8_t dev_num, bool enable);
     Result flush();
     struct iio_device_data mIioData;
-    struct pollfd mPollFdIio;
-    HWSensorBase(int32_t sensorHandle, ISensorsEventCallback* callback,
-                 const struct iio_device_data& iio_data,
-                 const std::optional<std::vector<Configuration>>& config);
 
-    std::vector<uint8_t> mSensorRawData;
-    ssize_t mScanSize;
-    int64_t mXMap, mYMap, mZMap;
+  protected:
+    void pollSensor() override;
 
-private:
+  private:
+    void idleLoop();
+    void pollForEvents();
+
     static constexpr uint8_t LOCATION_X_IDX = 3;
     static constexpr uint8_t LOCATION_Y_IDX = 7;
     static constexpr uint8_t LOCATION_Z_IDX = 11;
@@ -131,18 +131,40 @@ private:
     static constexpr uint8_t ROTATION_Y_IDX = 1;
     static constexpr uint8_t ROTATION_Z_IDX = 2;
 
+    std::string freq_file_name;
+    unique_fd fd_acc_x;
+    unique_fd fd_acc_y;
+    unique_fd fd_acc_z;
+    unique_fd fd_mag_x;
+    unique_fd fd_mag_y;
+    unique_fd fd_mag_z;
+
+    ssize_t mScanSize;
+    struct pollfd mPollFdIio;
+    std::vector<char> mSensorRawData;
+    int64_t mXMap, mYMap, mZMap;
     bool mXNegate, mYNegate, mZNegate;
     std::vector<AdditionalInfo> mAdditionalInfoFrames;
 
+    HWSensorBase(int32_t sensorHandle, ISensorsEventCallback* callback,
+                 const struct iio_device_data& iio_data,
+                 const std::optional<std::vector<Configuration>>& config);
+
+    ssize_t calculateScanSize();
+    void run();
     void setOrientation(std::optional<std::vector<Configuration>> config);
+    void readSysfsRawData(Event* evt);
+    void processScanData(char* data, Event* evt);
     void setAxisDefaultValues();
     status_t setAdditionalInfoFrames(const std::optional<std::vector<Configuration>>& config);
+    void sendAdditionalInfoReport();
     status_t getSensorPlacement(AdditionalInfo* sensorPlacement,
                                 const std::optional<std::vector<Configuration>>& config);
-    ssize_t calculateScanSize();
-    void processScanData(uint8_t* data, Event* evt);
-protected:
-    void sendAdditionalInfoReport();
 };
-
-} // namespace nxp_sensors_subhal
+}  // namespace implementation
+}  // namespace subhal
+}  // namespace V2_1
+}  // namespace sensors
+}  // namespace hardware
+}  // namespace android
+#endif  // ANDROID_HARDWARE_SENSORS_V2_1_SENSOR_H

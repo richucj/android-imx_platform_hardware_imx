@@ -14,6 +14,8 @@
  * limitations under the License.
  */
 
+soong_namespace { }
+
 package {
     default_applicable_licenses: ["Android-Apache-2.0"],
 }
@@ -141,6 +143,7 @@ cc_binary {
         "FbdevClient.cpp",
         "FbdevDisplay.cpp",
         "FenceMonitor.cpp",
+        "HDCPThread.cpp",
         "Layer.cpp",
         "Main.cpp",
         "PollThread.cpp",
@@ -148,6 +151,8 @@ cc_binary {
     ],
     cflags: [
         "-DLOG_TAG=\"NxpHWC\"",
+        "-Wall",
+        "-Wthread-safety",
     ],
 }
 

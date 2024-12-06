@@ -40,7 +40,9 @@
         </xs:sequence>
     </xs:complexType>
     <!-- attribute type describes the sensor type. Possible values are the Enum
-        values of SensorType specified in hardware/interfaces/sensors/1.0/types.hal
+        values of SensorType specified in hardware/interfaces/sensors/2.1/types.hal
+        (which inherits most of its values from SensorType in
+        hardware/interfaces/sensors/1.0/types.hal)
     -->
     <xs:complexType name="sensor">
         <xs:sequence>

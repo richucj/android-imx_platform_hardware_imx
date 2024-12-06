@@ -32,6 +32,8 @@
 
 #include "Common.h"
 #include "Device.h"
+using android::base::ReadFileToString;
+using android::base::WriteStringToFd;
 
 namespace aidl::android::hardware::graphics::composer3::impl {
 namespace {
@@ -86,8 +88,9 @@ bool isValidPowerMode(PowerMode mode) {
 } // namespace
 
 Display::Display(FrameComposer* composer, int64_t id, uint32_t displayId)
-      : mComposer(composer), mId(id), mDisplayId(displayId), mVsyncThread(this) {
+      : mComposer(composer), mId(id), mDisplayId(displayId), mVsyncThread(this), mHDCPThread(this) {
     mVsyncStarted = false;
+    mHDCPStarted = false;
     setLegacyEdid();
 }
 
@@ -131,6 +134,13 @@ HWC3::Error Display::init(const std::vector<DisplayConfig>& configs, int32_t act
         mVsyncThread.start(activeConfig.getVsyncPeriod());
         mVsyncStarted = true;
     }
+
+    if (IsHdcpUserEnabled()) {
+        if (!mHDCPStarted) {
+            mHDCPThread.start();
+            mHDCPStarted = true;
+        }
+    }
     return HWC3::Error::None;
 }
 
@@ -149,10 +159,10 @@ HWC3::Error Display::updateParameters(uint32_t width, uint32_t height, uint32_t 
         return HWC3::Error::NoResources;
     }
     it->second.setAttribute(DisplayAttribute::VSYNC_PERIOD, 1000 * 1000 * 1000 / refreshRateHz);
-    it->second.setAttribute(DisplayAttribute::WIDTH, width);
-    it->second.setAttribute(DisplayAttribute::HEIGHT, height);
-    it->second.setAttribute(DisplayAttribute::DPI_X, dpiX);
-    it->second.setAttribute(DisplayAttribute::DPI_Y, dpiY);
+    it->second.setAttribute(DisplayAttribute::WIDTH, static_cast<int32_t>(width));
+    it->second.setAttribute(DisplayAttribute::HEIGHT, static_cast<int32_t>(height));
+    it->second.setAttribute(DisplayAttribute::DPI_X, static_cast<int32_t>(dpiX));
+    it->second.setAttribute(DisplayAttribute::DPI_Y, static_cast<int32_t>(dpiY));
 
     if (edid.has_value()) {
         mEdid = *edid;
@@ -167,7 +177,16 @@ HWC3::Error Display::createLayer(int64_t* outLayerId) {
 
     std::unique_lock<std::recursive_mutex> lock(mStateMutex);
 
-    auto layer = std::make_unique<Layer>(mEdidParser.get());
+    if (*outLayerId > 0) {
+        auto it = mLayers.find(*outLayerId);
+        if (it != mLayers.end()) {
+            ALOGE("%s: hwc display:%" PRId64 " layer:%" PRId64 " already exist", __FUNCTION__, mId,
+                  *outLayerId);
+            return HWC3::Error::BadLayer;
+        }
+    }
+
+    auto layer = std::make_unique<Layer>(mEdidParser.get(), *outLayerId);
 
     const int64_t layerId = layer->getId();
     DEBUG_LOG("%s: created layer:%" PRId64, __FUNCTION__, layerId);
@@ -262,7 +281,7 @@ HWC3::Error Display::getDisplayCapabilities(std::vector<DisplayCapability>* outC
     DEBUG_LOG("%s: hwc display:%" PRId64, __FUNCTION__, mId);
 
     outCapabilities->clear();
-    for (auto& cap : mCapability) outCapabilities->push_back(cap);
+    for (auto& cap : mDisplayCapabilities) outCapabilities->push_back(cap);
 
     return HWC3::Error::None;
 }
@@ -753,10 +772,10 @@ HWC3::Error Display::setColorTransform(const std::vector<float>& transformMatrix
 HWC3::Error Display::setBrightness(float brightness) {
     DEBUG_LOG("%s: hwc display:%" PRId64 " brightness:%f", __FUNCTION__, mId, brightness);
 
-    bool supported =
-            std::any_of(mCapability.begin(), mCapability.end(), [&](DisplayCapability cap) {
-                return cap == DisplayCapability::BRIGHTNESS;
-            });
+    bool supported = std::any_of(mDisplayCapabilities.begin(), mDisplayCapabilities.end(),
+                                 [&](DisplayCapability cap) {
+                                     return cap == DisplayCapability::BRIGHTNESS;
+                                 });
     if (!supported)
         return HWC3::Error::Unsupported;
 
@@ -1052,7 +1071,7 @@ HWC3::Error Display::getDisplayConfigurations(int32_t /*maxFrameIntervalNs*/,
         config.configGroup = cfg.getConfigGroup();
         config.vsyncPeriod = cfg.getVsyncPeriod();
 
-        outConfigs->push_back(config);
+        outConfigs->emplace_back(config);
     }
 
     return HWC3::Error::None;
@@ -1062,7 +1081,15 @@ HWC3::Error Display::notifyExpectedPresent(const ClockMonotonicTimestamp& expect
                                            int32_t frameIntervalNs) {
     DEBUG_LOG("%s: hwc display:%" PRId64, __FUNCTION__, mId);
     /* Not support VRR yet */
-    return HWC3::Error::None;
+    return HWC3::Error::Unsupported;
+}
+
+void Display::setHDCPCallback(const HDCPThreadCallback& callback) {
+    mHDCPThread.setCallbacks(callback);
+}
+
+void Display::setHDCPThreadEnable(bool enable) {
+    mHDCPThread.setHDCPThreadEnabled(enable);
 }
 
 } // namespace aidl::android::hardware::graphics::composer3::impl

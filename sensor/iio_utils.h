@@ -1,6 +1,5 @@
 /*
  * Copyright (C) 2020 The Android Open Source Project
- * Copyright 2021 NXP
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -23,10 +22,18 @@
 #include <linux/types.h>
 #include <stdint.h>
 #include <sys/ioctl.h>
+#include <functional>
 
-namespace nxp_sensors_subhal {
+namespace android {
+namespace hardware {
+namespace sensors {
+namespace V2_1 {
+namespace subhal {
+namespace implementation {
 
 using ::android::hardware::sensors::V2_1::SensorType;
+
+extern const char* DEFAULT_IIO_DIR;
 
 static constexpr auto DEFAULT_IIO_BUFFER_LEN = 2;
 static constexpr auto DISABLE_CHANNEL = 0;
@@ -47,12 +54,6 @@ struct iio_info_channel {
     bool sign;
 };
 
-struct iio_acc_mac_data {
-    int x_raw;
-    int y_raw;
-    int z_raw;
-};
-
 struct iio_device_data {
     std::string name;
     std::string sysfspath;
@@ -61,28 +62,44 @@ struct iio_device_data {
     SensorType type;
     std::vector<iio_info_channel> channelInfo;
     std::vector<double> sampling_freq_avl;
-    std::vector<double> sampling_time_avl;
     uint8_t iio_dev_num;
-    unsigned int power_microwatts;
     int64_t max_range;
 };
 
-int load_iio_devices(std::vector<iio_device_data>* iio_data,
-                     const std::vector<sensors_supported_hal>& supported_sensors);
+#define SENSOR_SUPPORTED(SENSOR_NAME, SENSOR_TYPE) \
+    { .name = SENSOR_NAME, .type = SENSOR_TYPE, }
+    static const std::vector<sensors_supported_hal> supported_sensors = {
+            SENSOR_SUPPORTED("fxos8700", SensorType::ACCELEROMETER),
+            SENSOR_SUPPORTED("lsm303agr_accel", SensorType::ACCELEROMETER),
+            SENSOR_SUPPORTED("fxos8700", SensorType::MAGNETIC_FIELD),
+            SENSOR_SUPPORTED("lsm303agr_magn", SensorType::MAGNETIC_FIELD),
+            SENSOR_SUPPORTED("fxas21002c", SensorType::GYROSCOPE),
+            SENSOR_SUPPORTED("l3g4200d", SensorType::GYROSCOPE),
+            SENSOR_SUPPORTED("mpl3115", SensorType::PRESSURE),
+            SENSOR_SUPPORTED("mpl3115", SensorType::AMBIENT_TEMPERATURE),
+            SENSOR_SUPPORTED("isl29023", SensorType::LIGHT),
+            SENSOR_SUPPORTED("rpmsg-iio-pedometer", SensorType::STEP_COUNTER),
+    };
+#undef SENSOR_SUPPORTED
+
+using DeviceFilterFunction = std::function<bool(iio_device_data*)>;
+
+int load_iio_devices(std::string iio_dir, std::vector<iio_device_data>* iio_data,
+                     DeviceFilterFunction filter);
 int scan_elements(const std::string& device_dir, struct iio_device_data* iio_data);
 int enable_sensor(const std::string& name, const bool flag);
 int enable_step_sensor(const std::string& name, const bool flag);
 int set_sampling_frequency(const std::string& name, const double frequency);
-int get_sampling_available(const std::string& time_file, std::vector<double>* sfa);
-int get_sampling_time_available(const std::string& file, std::vector<double>* sfa);
-int get_sampling_frequency_available(const std::string& file, std::vector<double>* sfa);
-int get_sensor_light(const std::string& device_dir, unsigned int* light);
-int get_sensor_stepcounter(const std::string& device_dir, unsigned int* stepcounter);
-int add_trigger(const std::string& device_dir, uint8_t dev_num, const bool enable);
+int get_light_value(const std::string& device_dir, unsigned int* light);
+int get_stepcounter_value(const std::string& device_dir, unsigned int* stepcounter);
 int add_hrtimer_trigger(const std::string& device_dir, uint8_t dev_num, const bool enable);
-int trigger_data(int dev_num);
+int add_trigger(const std::string& device_dir, uint8_t dev_num, const bool enable);
+int trigger_data(int dev_num, int64_t trigger_period_ns);
 int64_t get_timestamp();
-int get_pressure_scale(const std::string& file, float* scale);
-
-} // namespace nxp_sensors_subhal
+}  // namespace implementation
+}  // namespace subhal
+}  // namespace V2_1
+}  // namespace sensors
+}  // namespace hardware
+}  // namespace android
 #endif

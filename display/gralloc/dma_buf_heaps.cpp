@@ -50,7 +50,7 @@ struct custom_heap {
     const char *name;
     struct {
         const char *name;
-        int flags;
+        uint32_t flags;
     } ion_fallback;
 };
 
@@ -118,7 +118,9 @@ static dma_buf_heap pick_dma_buf_heap(uint64_t usage) {
         return dma_buf_heap::protected_memory;
     } else if ((usage & GRALLOC_USAGE_HW_VIDEO_ENCODER) || (usage & GRALLOC_USAGE_HW_FB) ||
                (usage & GRALLOC_USAGE_HW_COMPOSER) || (usage & GRALLOC_USAGE_PRIVATE_3) ||
-               (usage & GRALLOC_USAGE_HW_CAMERA_WRITE)) {
+               (usage & GRALLOC_USAGE_HW_CAMERA_WRITE) || (usage & GRALLOC_USAGE_HW_TEXTURE) ||
+               (usage & GRALLOC_USAGE_HW_RENDER) ||
+               (usage & static_cast<uint64_t>(BufferUsage::GPU_DATA_BUFFER))) {
         if (usage & (GRALLOC_USAGE_SW_READ_OFTEN | GRALLOC_USAGE_SW_WRITE_OFTEN))
             return dma_buf_heap::physically_contiguous;
         else
@@ -158,6 +160,9 @@ gralloc_handle *allocator_allocate(const gralloc_buffer_descriptor *descriptor) 
     auto allocator = get_global_buffer_allocator();
 
     auto heap = pick_dma_buf_heap(descriptor->usage);
+    if (descriptor->name == "MediaCodec.release") // Just a workaround here
+        heap = dma_buf_heap::physically_contiguous;
+
     auto heap_name = get_dma_buf_heap_name(heap);
     int fd = allocator->Alloc(heap_name, descriptor->total_size);
     if (fd < 0) {
@@ -172,7 +177,7 @@ gralloc_handle *allocator_allocate(const gralloc_buffer_descriptor *descriptor) 
 
     hnd->flags = descriptor->flags;
     if (heap != dma_buf_heap::system && heap != dma_buf_heap::system_uncached)
-        hnd->flags |= NXP_GRALLOC_FLAGS_CONTIGIOUS;
+        hnd->flags |= NXP_GRALLOC_FLAGS_CONTIGUOUS;
     if (heap != dma_buf_heap::system_uncached &&
         heap != dma_buf_heap::physically_contiguous_uncached)
         hnd->flags |= NXP_GRALLOC_FLAGS_CACHED;
@@ -250,19 +255,19 @@ void allocator_close() {
     /* nop */
 }
 
-int allocator_get_physical_address(int fd, uint64_t usage, uint64_t *addr) {
+int allocator_get_physical_address(gralloc_handle_t handle, uint64_t *addr) {
+    if (!(handle->flags & NXP_GRALLOC_FLAGS_CONTIGUOUS)) {
+        ALOGW("%s: cannot get physical address for non-contiguous memory", __func__);
+        return -EINVAL;
+    }
+
+    int fd = handle->fds[0];
     if (fd < 0) {
-        ALOGE("%s: invalid parameters", __func__);
+        ALOGE("%s: invalid fd", __func__);
         return -EINVAL;
     }
 
-    auto heap = pick_dma_buf_heap(usage);
-    if ((heap == dma_buf_heap::system) || (heap == dma_buf_heap::system_uncached)) {
-        ALOGW("%s: no physical address for system heap", __func__);
-        return -EINVAL;
-    }
-
-    uint64_t phy_addr = -1;
+    uint64_t phy_addr = std::numeric_limits<uint64_t>::max();
     struct dmabuf_imx_phys_data data;
     int fd_;
     fd_ = open("/dev/dmabuf_imx", O_RDONLY | O_CLOEXEC);
@@ -270,7 +275,7 @@ int allocator_get_physical_address(int fd, uint64_t usage, uint64_t *addr) {
         ALOGE("%s: open /dev/dmabuf_imx failed: %s", __func__, strerror(errno));
         return -EINVAL;
     }
-    data.dmafd = fd;
+    data.dmafd = static_cast<uint32_t>(fd);
     if (ioctl(fd_, DMABUF_GET_PHYS, &data) < 0) {
         ALOGE("%s ioctl DMABUF_GET_PHYS failed", __func__);
         close(fd_);
