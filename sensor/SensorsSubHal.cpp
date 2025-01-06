@@ -58,7 +58,7 @@ static std::optional<std::vector<Sensor>> readSensorsConfigFromXml() {
         auto sensorConfig = ::sensor::hal::configuration::V1_0::read(sensor_config_file.c_str());
         if (sensorConfig) {
             auto modulesList = sensorConfig->getFirstModules()->get_module();
-            for (auto module : modulesList) {
+            for (auto &module : modulesList) {
                 if (module.getHalName().compare(MODULE_NAME) == 0) {
                     return module.getFirstSensors()->getSensor();
                 }
@@ -71,7 +71,7 @@ static std::optional<std::vector<Sensor>> readSensorsConfigFromXml() {
 
 static std::optional<std::vector<Configuration>> getSensorConfiguration(
         const std::vector<Sensor>& sensor_list, const std::string& name, SensorType type) {
-    for (auto sensor : sensor_list) {
+    for (auto &sensor : sensor_list) {
         if ((name.compare(sensor.getName()) == 0) && (type == (SensorType)sensor.getType())) {
             return sensor.getConfiguration();
         }
@@ -139,8 +139,8 @@ Return<void> SensorsSubHal::getSensorsList_2_1(getSensorsList_2_1_cb _hidl_cb) {
 
 Return<Result> SensorsSubHal::setOperationMode(OperationMode mode) {
     for (auto& sensor : mSensors) {
-        if (sensor.second->getSensorInfo().type == SensorType::STEP_COUNTER &&
-            mode == OperationMode::DATA_INJECTION && !sensor.second->supportsDataInjection())
+        if ((sensor.second->getSensorInfo().type == SensorType::STEP_COUNTER) &&
+            (mode == OperationMode::DATA_INJECTION) && !sensor.second->supportsDataInjection())
             return Result::INVALID_OPERATION;
         sensor.second->setOperationMode(mode);
     }
@@ -206,7 +206,13 @@ Return<void> SensorsSubHal::debug(const hidl_handle& fd, const hidl_vec<hidl_str
         ALOGE("%s: missing fd for writing", __FUNCTION__);
         return Void();
     }
-    FILE* out = fdopen(dup(fd->data[0]), "w");
+
+    int dupResult = dup(fd->data[0]);
+    if (dupResult < 0) {
+        ALOGE("%s: Error occurred while dup file descriptor: %s", __FUNCTION__, strerror(errno));
+        return Void();
+    }
+    FILE* out = fdopen(dupResult, "w");
 
     if (args.size() != 0) {
         fprintf(out,

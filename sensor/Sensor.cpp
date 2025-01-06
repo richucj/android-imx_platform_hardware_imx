@@ -175,6 +175,7 @@ Result SensorBase::flush() {
     // Note: If a sensor supports batching, write all of the currently batched events for the sensor
     // to the Event FMQ prior to writing the flush complete event.
     Event ev;
+    ev.timestamp = elapsedRealtimeNano(),
     ev.sensorHandle = mSensorInfo.sensorHandle;
     ev.sensorType = SensorType::META_DATA;
     ev.u.meta.what = MetaDataEventType::META_DATA_FLUSH_COMPLETE;
@@ -201,34 +202,42 @@ void HWSensorBase::readSysfsRawData(Event* evt) {
     evt->sensorHandle = mSensorInfo.sensorHandle;
     evt->sensorType = mSensorInfo.type;
     switch (mSensorInfo.type) {
-        case SensorType::ACCELEROMETER:
+        case SensorType::ACCELEROMETER: {
             char buf_acc_x[64], buf_acc_y[64], buf_acc_z[64];
-
-            read(fd_acc_x, buf_acc_x, sizeof(buf_acc_x));
+            ssize_t bytes_acc = 1;
+            bytes_acc *= read(fd_acc_x, buf_acc_x, sizeof(buf_acc_x));
             lseek(fd_acc_x, 0L, SEEK_SET);
-            read(fd_acc_y, buf_acc_y, sizeof(buf_acc_y));
+            bytes_acc *= read(fd_acc_y, buf_acc_y, sizeof(buf_acc_y));
             lseek(fd_acc_y, 0L, SEEK_SET);
-            read(fd_acc_z, buf_acc_z, sizeof(buf_acc_z));
+            bytes_acc *= read(fd_acc_z, buf_acc_z, sizeof(buf_acc_z));
             lseek(fd_acc_z, 0L, SEEK_SET);
 
-            evt->u.vec3.x = atoi(buf_acc_x) * 0.00976;
-            evt->u.vec3.y = atoi(buf_acc_y) * 0.00976;
-            evt->u.vec3.z = atoi(buf_acc_z) * 0.00976;
-            break;
-        case SensorType::MAGNETIC_FIELD:
+            if (bytes_acc <= 0)
+                ALOGI("Error reading accelerometer x-axis data");
+            else {
+                evt->u.vec3.x = atoi(buf_acc_x) * 0.00976;
+                evt->u.vec3.y = atoi(buf_acc_y) * 0.00976;
+                evt->u.vec3.z = atoi(buf_acc_z) * 0.00976;
+            }
+        } break;
+        case SensorType::MAGNETIC_FIELD: {
             char buf_mag_x[64], buf_mag_y[64], buf_mag_z[64];
-
-            read(fd_mag_x, buf_mag_x, sizeof(buf_mag_x));
+            ssize_t bytes_mag = 1;
+            bytes_mag *= read(fd_mag_x, buf_mag_x, sizeof(buf_mag_x));
             lseek(fd_mag_x, 0L, SEEK_SET);
-            read(fd_mag_y, buf_mag_y, sizeof(buf_mag_y));
+            bytes_mag *= read(fd_mag_y, buf_mag_y, sizeof(buf_mag_y));
             lseek(fd_mag_y, 0L, SEEK_SET);
-            read(fd_mag_z, buf_mag_z, sizeof(buf_mag_z));
+            bytes_mag *= read(fd_mag_z, buf_mag_z, sizeof(buf_mag_z));
             lseek(fd_mag_z, 0L, SEEK_SET);
 
-            evt->u.vec3.x = atoi(buf_mag_x) * 0.001;
-            evt->u.vec3.y = atoi(buf_mag_y) * 0.001;
-            evt->u.vec3.z = atoi(buf_mag_z) * 0.001;
-            break;
+            if (bytes_mag <= 0)
+                ALOGI("Error reading magnetic x-axis data");
+            else {
+                evt->u.vec3.x = atoi(buf_mag_x) * 0.001;
+                evt->u.vec3.y = atoi(buf_mag_y) * 0.001;
+                evt->u.vec3.z = atoi(buf_mag_z) * 0.001;
+            }
+        } break;
         case SensorType::LIGHT:
             unsigned int light;
             get_light_value(mIioData.sysfspath, &light);
@@ -305,7 +314,7 @@ void HWSensorBase::processScanData(char* data, Event* evt) {
                     channelData[chanIdx] = (int64_t)val;
                     break;
                 default:
-                    sign_mask = 1 << (mIioData.channelInfo[i].bits_used - 1);
+                    sign_mask = static_cast<int64_t>(1) << (mIioData.channelInfo[i].bits_used - 1);
                     value_mask = sign_mask - 1;
                     if (val & sign_mask)
                         channelData[chanIdx] = -((~val & value_mask) +
@@ -447,7 +456,7 @@ static std::optional<std::vector<Location>> getLocation(
 
 static status_t checkOrientation(std::optional<std::vector<Configuration>> config) {
     status_t ret = OK;
-    std::optional<std::vector<Orientation>> sensorOrientationList = getOrientation(config);
+    std::optional<std::vector<Orientation>> sensorOrientationList = getOrientation(std::move(config));
     if (!sensorOrientationList) return OK;
     if (sensorOrientationList->empty()) return OK;
     Orientation& sensorOrientation = (*sensorOrientationList)[0];
@@ -475,7 +484,7 @@ void HWSensorBase::setAxisDefaultValues() {
     mXNegate = mYNegate = mZNegate = false;
 }
 void HWSensorBase::setOrientation(std::optional<std::vector<Configuration>> config) {
-    std::optional<std::vector<Orientation>> sensorOrientationList = getOrientation(config);
+    std::optional<std::vector<Orientation>> sensorOrientationList = getOrientation(std::move(config));
 
     if (sensorOrientationList && !sensorOrientationList->empty()) {
         Orientation& sensorOrientation = (*sensorOrientationList)[0];
@@ -638,7 +647,11 @@ HWSensorBase::HWSensorBase(int32_t sensorHandle, ISensorsEventCallback* callback
         if (min_sampling_frequency > data.sampling_freq_avl[i])
             min_sampling_frequency = data.sampling_freq_avl[i];
     }
-    mSensorInfo.minDelay = frequency_to_us(max_sampling_frequency);
+    if (max_sampling_frequency == 0)
+        mSensorInfo.minDelay = 2500;
+    else
+        mSensorInfo.minDelay = frequency_to_us(max_sampling_frequency);
+
     mSensorInfo.maxDelay = frequency_to_us(min_sampling_frequency);
     mScanSize = 16;
     buffer_path = "/dev/iio:device";
@@ -675,6 +688,7 @@ HWSensorBase::HWSensorBase(int32_t sensorHandle, ISensorsEventCallback* callback
         mSensorInfo.maxDelay = 500000;
     }
     mPollFdIio.events = POLLIN;
+    mPollFdIio.revents = 0;
     mSensorRawData.resize(mScanSize);
 }
 

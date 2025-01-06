@@ -81,7 +81,7 @@ HWC3::Error ClientFrameComposer::pollDrmThreadCallback(char* file) {
         // detect /dev/dri/card%d has been created
         HWC3::Error ret;
         // baseId: 0 is reserved for primary display, display id start from 1 when enumerate
-        uint32_t baseId = 1;
+        uint32_t baseId = 0;
         ret = checkClientFromSystem<DrmClient>("/dev/dri", "card", mDeviceClients, &baseId, 0);
         if (ret == HWC3::Error::None) {
             ALOGI("%s: Detect new DRM client, baseId=%d", __FUNCTION__, baseId);
@@ -131,7 +131,7 @@ HWC3::Error ClientFrameComposer::init() {
     DEBUG_LOG("%s", __FUNCTION__);
 
     HWC3::Error ret;
-    uint32_t baseId = 1;
+    uint32_t baseId = 0;
     mDummyBaseId = DEFAULT_HWC_PRIMARY_DISPLAY_ID; // hwcId and displayId of DummyClient
     ret = checkClientFromSystem<DrmClient>("/dev/dri", "card", mDeviceClients, &baseId, 0);
     if (ret != HWC3::Error::None) {
