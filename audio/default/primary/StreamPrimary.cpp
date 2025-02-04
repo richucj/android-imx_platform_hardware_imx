@@ -1,6 +1,6 @@
 /*
  * Copyright (C) 2023 The Android Open Source Project
- * Copyright 2024 NXP
+ * Copyright 2024-2025 NXP
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -418,8 +418,7 @@ bool StreamOutPrimary::useStubStream(const AudioDevice& device) {
     static const bool kSimulateOutput =
             GetBoolProperty("ro.boot.audio.tinyalsa.ignore_output", false);
     return kSimulateOutput || device.type.type == AudioDeviceType::OUT_TELEPHONY_TX ||
-           device.type.connection == AudioDeviceDescription::CONNECTION_BUS /*deprecated*/ ||
-           (device.type.type == AudioDeviceType::OUT_BUS && device.type.connection.empty());
+           device.type.connection == AudioDeviceDescription::CONNECTION_BUS; /*deprecated*/
 }
 
 StreamSwitcher::DeviceSwitchBehavior StreamOutPrimary::switchCurrentStream(

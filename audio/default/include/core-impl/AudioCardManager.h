@@ -1,5 +1,5 @@
 /*
- * Copyright 2020-2024 NXP
+ * Copyright 2020-2025 NXP
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -43,6 +43,8 @@ public:
     // Get the first card which supports audioDevice; NULL if not found.
     static struct audio_card* getCardForDevice(const ::aidl::android::media::audio::common::AudioDevice& audioDevice);
     static struct audio_card* getCardForDevice(const audio_devices_t& audioDevice);
+    // Get the first card which supports audioBus; NULL if not found.
+    static struct audio_card* getCardForBus(const char *bus_name);
 
 private:
     static std::vector<struct audio_card *>mCards;
