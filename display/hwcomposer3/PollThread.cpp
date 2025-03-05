@@ -134,7 +134,7 @@ void PollThread::threadLoop() {
                             reinterpret_cast<struct inotify_event*>(itemBuf);
                     if (mPollCallbacks &&
                         (*mPollCallbacks)(inotifyItem->name) == HWC3::Error::None) {
-                        mShuttingDown.store(true);
+                        mShuttingDown.store(true); // As dummy client goes away, DRM thread associated with it has to end.
                         break;
                     }
                     itemBuf += sizeof(struct inotify_event) + inotifyItem->len;

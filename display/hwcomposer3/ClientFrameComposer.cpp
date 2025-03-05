@@ -85,22 +85,15 @@ HWC3::Error ClientFrameComposer::pollDrmThreadCallback(char* file) {
         ret = checkClientFromSystem<DrmClient>("/dev/dri", "card", mDeviceClients, &baseId, 0);
         if (ret == HWC3::Error::None) {
             ALOGI("%s: Detect new DRM client, baseId=%d", __FUNCTION__, baseId);
-
-            if (mDeviceClients.size() >= 2) {
-                mDeviceClients.erase(mDummyBaseId); // remove unused dummy client
-                uint32_t minBaseId = INT_MAX;
-                for (const auto& [id, _] : mDeviceClients) {
-                    if (id < minBaseId)
-                        minBaseId = id;
-                }
-                auto client = mDeviceClients[minBaseId].get();
-                // select the minimum base id as primary display, not care connected or not for
-                // simplification
-                client->setHwcPrimaryDisplay(minBaseId, true);
-            } else {
-                ALOGW("%s: Cannot find any Drm Client, should not happen!", __FUNCTION__);
-                return HWC3::Error::NoResources;
+            uint32_t minBaseId = INT_MAX;
+            for (const auto& [id, _] : mDeviceClients) {
+                if (id < minBaseId)
+                    minBaseId = id;
             }
+            auto client = mDeviceClients[minBaseId].get();
+            // select the minimum base id as primary display, not care connected or not for
+            // simplification
+            client->setHwcPrimaryDisplay(minBaseId, true);
 
             for (auto& [_, client] : mDeviceClients) {
                 std::vector<HalMultiConfigs> deviceConfigs;

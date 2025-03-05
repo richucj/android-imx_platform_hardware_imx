@@ -107,7 +107,7 @@ private:
 
     uint32_t mDummyBaseId = 0;
     std::optional<HotplugCallback> mHotplugCallback;
-    std::unique_ptr<PollThread> mDrmThread;
+    std::unique_ptr<PollThread> mDrmThread; // Only for Dummy clients.
 
     std::map<uint32_t, std::unique_ptr<DeviceClient>> mDeviceClients;
     std::shared_ptr<DeviceComposer> mG2dComposer;
