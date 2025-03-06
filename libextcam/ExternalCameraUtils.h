@@ -37,6 +37,8 @@
 #include <unordered_map>
 #include <unordered_set>
 
+#include "ImageUtils.h"
+
 using ::aidl::android::hardware::camera::common::Status;
 using ::aidl::android::hardware::camera::device::CaptureResult;
 using ::aidl::android::hardware::camera::device::ErrorCode;
@@ -120,6 +122,9 @@ struct ExternalCameraConfig {
     // Intermediate Buffers format, nv12(default) or i420.
     char interBufFormat[INTERBUF_FORMAT_SIZE];
 
+    // The blit engine used, default ENG_CPU.
+    ImxEngine blitEngine = ENG_CPU;
+
 private:
     ExternalCameraConfig();
     static bool updateFpsList(tinyxml2::XMLElement* fpsList, std::vector<FpsLimitation>& fpsLimits);
@@ -202,7 +207,11 @@ public:
                                  YCbCrLayout* out); // return non-zero for bad input
     virtual void flush() {}
     virtual void getPhyAddr(uint64_t& phyAddr) {phyAddr = 0;}
-    virtual void assign(void* virtAddr, uint64_t phyAddr, uint32_t size) {ALOGV("%s: virtAddr %p, phyAddr %p, size %u", __func__, virtAddr, (void *)phyAddr, size);}
+    virtual void getUsage(uint64_t& usage) { usage = 0; }
+    virtual void assign(void* virtAddr, uint64_t phyAddr, uint32_t size, uint64_t usage) {
+        ALOGV("%s: virtAddr %p, phyAddr %p, size %u, usage 0x%lx", __func__, virtAddr,
+              (void*)phyAddr, size, usage);
+    }
 
 protected:
     std::mutex mLock;
@@ -233,7 +242,8 @@ public:
     virtual void flush();
 
     virtual void getPhyAddr(uint64_t& phyAddr);
-    virtual void assign(void* virtAddr, uint64_t phyAddr, uint32_t size);
+    virtual void getUsage(uint64_t& usage);
+    virtual void assign(void* virtAddr, uint64_t phyAddr, uint32_t size, uint64_t usage);
 
 private:
     buffer_handle_t dstBuffer;
@@ -241,6 +251,7 @@ private:
     uint8_t* dstBuf;
     uint64_t mPhyAddr;
     uint32_t mBufSize;
+    uint64_t mUsage;
 };
 
 enum CroppingType { HORIZONTAL = 0, VERTICAL = 1 };

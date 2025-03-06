@@ -1,5 +1,5 @@
 /*
- *  Copyright 2020-2024 NXP.
+ *  Copyright 2020-2025 NXP.
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -470,7 +470,7 @@ int32_t CameraDeviceSessionHwlImpl::processJpegBuffer(ImxStreamBuffer *srcBuf,
         }
 
         resizeBuf.mStream = srcBuf->mStream;
-        handleFrame(resizeBuf, *srcBuf, mCamBlitCscType);
+        handleFrame(resizeBuf, *srcBuf, mCamBlitCscType, mDebug);
 
         SwitchImxBuf(*srcBuf, resizeBuf);
     }
@@ -1104,6 +1104,8 @@ status_t CameraDeviceSessionHwlImpl::SubmitRequests(uint32_t frame_number,
             fenceInfo.acquire_fence_fd =
                     importFence(requests[i].output_buffers[j].acquire_fence, mDebug);
             frame_request->at(i).outBufferFences[j] = fenceInfo;
+            frame_request->at(i).hwlReq.output_buffers[j].acquire_fence = NULL;
+            frame_request->at(i).hwlReq.output_buffers[j].release_fence = NULL;
 
             int32_t stream_id = requests[i].output_buffers[j].stream_id;
             if (mDebug)
@@ -1453,6 +1455,10 @@ void CameraDeviceSessionHwlImpl::requestComplete(libcamera::Request *request) {
               mDeQueRequestIdx);
 
     return;
+}
+
+void CameraDeviceSessionHwlImpl::RepeatingRequestEnd(
+    int32_t /*frame_number*/, const std::vector<int32_t>& /*stream_ids*/) {
 }
 
 } // namespace android

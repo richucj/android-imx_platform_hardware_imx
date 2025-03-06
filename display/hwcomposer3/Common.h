@@ -37,6 +37,9 @@
 // Uncomment to enable additional debug logging.
 // #define DEBUG_NXP_HWC
 
+// Uncomment to enable additional debug logging for g2d only.
+// #define DEBUG_NXP_HWC_G2D
+
 #if defined(DEBUG_NXP_HWC)
 #define DEBUG_LOG ALOGI
 #else
@@ -45,8 +48,11 @@
 
 #define DEBUG_DUMP_REFRESH_RATE
 
-// uncomment below to enable frame dump feature
+// uncomment below to enable framebuffer dump feature
 // #define DEBUG_DUMP_FRAME
+
+// uncomment below to enable layer buffer dump feature
+// #define DEBUG_DUMP_LAYER_BUFFER
 
 #if 0 // Below already defined in Memory.h
 #define ALIGN_PIXEL_2(x) ((x + 1) & ~1)
@@ -116,6 +122,7 @@ bool Is2DCompositionUserDisabled();
 bool Is2DCompositionUserPrefered();
 bool IsHdcpUserEnabled();
 std::string getHdcpStatusPath();
+std::string getFramebufferFormat();
 
 bool customizeGUIResolution(uint32_t& width, uint32_t& height, uint32_t* uiType);
 void parseDisplayMode(uint32_t* width, uint32_t* height, uint32_t* vrefresh, uint32_t* prefermode);
@@ -129,7 +136,10 @@ void dumpRefreshRateEnd(DumpRefreshRate& dump, uint32_t vsyncPeriod, nsecs_t sta
 #endif
 
 #ifdef DEBUG_DUMP_FRAME
-void debug_dump_frame(buffer_handle_t handle);
+void debug_dump_framebuffer(buffer_handle_t handle);
+#ifdef DEBUG_DUMP_LAYER_BUFFER
+void debug_dump_layerbuffer(buffer_handle_t handle, uint32_t index);
+#endif
 #endif
 
 namespace HWC3 {

@@ -56,7 +56,7 @@ class DrmDisplay {
 public:
     static std::unique_ptr<DrmDisplay> create(
             uint32_t id, std::unique_ptr<DrmConnector> connector, std::unique_ptr<DrmCrtc> crtc,
-            std::unordered_map<uint32_t, std::unique_ptr<DrmPlane>>& planes,
+            std::unordered_map<uint32_t, std::unique_ptr<DrmPlane>> planes,
             ::android::base::borrowed_fd drmFd);
 
     uint32_t getId() const { return mId; }
@@ -130,13 +130,15 @@ private:
             mId(id),
             mConnector(std::move(connector)),
             mCrtc(std::move(crtc)),
-            mPlanes(std::move(planes)) {}
+            mPlanes(std::move(planes)) {
+        updateFramebufferFormat();
+    }
 
     bool onConnect(::android::base::borrowed_fd drmFd);
-
     bool onDisconnect(::android::base::borrowed_fd drmFd);
 
     void updateActiveConfig(std::shared_ptr<HalConfig> configs);
+    void updateFramebufferFormat();
 
     bool mIsPrimary = false;
     uint32_t mHwcId; // logic display Id, may be changed when needed
@@ -158,10 +160,15 @@ private:
     HalDisplayConfig mActiveConfig{};
     std::shared_ptr<HalConfig> mConfigs = std::make_shared<HalConfig>();
     uint32_t mUiScaleType = UI_SCALE_NONE;
+    uint32_t mFbFormat = static_cast<uint32_t>(common::PixelFormat::RGBA_8888);
     std::vector<uint32_t> mPlaneIdPool;
+    uint32_t mOverlayPlaneNum = 0;
     bool mModeSet = true;
     int32_t mOverlayMaxZpos = 0;
     uint32_t mCommitRetryCnt = MAX_COMMIT_RETRY_COUNT;
+#ifdef FIX_HANG_WHEN_FIRST_PLUG_IN
+    uint32_t mPreheatFrameCnt = 0;
+#endif
 
     uint32_t mHdrMetadataBlobId = 0;
 #ifdef DEBUG_DUMP_REFRESH_RATE

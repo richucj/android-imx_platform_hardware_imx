@@ -205,6 +205,7 @@ public:
 
         void setMjpegDecoderType(bool type);
         void setMjpegCopy(bool bCopy);
+        void setBlitEngine(ImxEngine engine);
 
         HwDecoder* mDecoder;
         uint64_t mDecedFrames = 0;
@@ -282,10 +283,10 @@ public:
         void VpuDecReturnBuffer();
         int CopyFromPrcdBuf(HalStreamBuffer &halBuf, std::vector<HalStreamBuffer *> &prcdBufs);
         int handleFrame(uint32_t width, uint32_t height, uint32_t dst_fmt, uint32_t src_fmt,
-                        uint64_t dstPhyAddr, uint64_t srcPhyAddr,
-                        uint32_t srcWidth = 0, uint32_t srcHeight = 0,
-                        uint32_t srcStride = 0, uint32_t dstStride = 0,
-                        void *srcVirtAddr = NULL, void *dstVirtAddr = NULL);
+                        uint64_t dstPhyAddr, uint64_t srcPhyAddr, uint32_t srcWidth = 0,
+                        uint32_t srcHeight = 0, uint32_t srcStride = 0, uint32_t dstStride = 0,
+                        void* srcVirtAddr = NULL, void* dstVirtAddr = NULL,
+                        uint64_t srcBuffUsage = 0, uint64_t dstBuffUsage = 0);
         int scaleData(std::shared_ptr<AllocatedFrame>& in, YCbCrLayout& inputLayout,
                       const IMapper::Rect& inputCrop, std::shared_ptr<AllocatedFrame>& out,
                       YCbCrLayout& outLayout, const Size& outSz);
@@ -293,7 +294,7 @@ public:
         int directCopy(struct HalStreamBuffer& halBuf, uint8_t* inData, size_t inDataSize);
 
         bool mUseHalBufManager = false;
-        ImxEngine mEngine = ENG_NOTCARE;
+        ImxEngine mEngine = ENG_CPU;
     };
 
 private:

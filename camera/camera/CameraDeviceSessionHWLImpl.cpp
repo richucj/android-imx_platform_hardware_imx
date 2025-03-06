@@ -1,5 +1,5 @@
 /*
- *  Copyright 2020-2024 NXP.
+ *  Copyright 2020-2025 NXP.
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -357,7 +357,7 @@ int CameraDeviceSessionHwlImpl::HandleIntent(HwlPipelineRequest *hwReq) {
         for (size_t index = 0; index < pVideoStreams.size(); index++) {
             pVideoStreams[index]->SetBufferNumber(pipeline_info->hal_streams->at(0).max_buffers +
                                                   1);
-            ret += pVideoStreams[index]->ConfigAndStart(HAL_PIXEL_FORMAT_YCbCr_422_I,
+            ret = pVideoStreams[index]->ConfigAndStart(HAL_PIXEL_FORMAT_YCbCr_422_I,
                                                         pipeline_info->streams->at(0).width,
                                                         pipeline_info->streams->at(0).height, fps,
                                                         captureIntent, sceneMode);
@@ -588,7 +588,11 @@ status_t CameraDeviceSessionHwlImpl::CapAndFeed(uint32_t frame, FrameRequest *fr
         exposure_time = pVideoStreams[0]->mDurationNS;
     }
 
-    timestamp_ns = readout_timestamp_ns - exposure_time;
+    if (readout_timestamp_ns != 0) {
+        timestamp_ns = readout_timestamp_ns - exposure_time;
+    } else {
+        ALOGE("%s: readout_timestamp_ns is 0", __func__);
+    }
 
     if (mDebug) {
         ALOGI("%s: frame %d, readout_timestamp_ns %lu, exposure_time %lu", __func__, frame,
@@ -1109,7 +1113,7 @@ int32_t CameraDeviceSessionHwlImpl::processFrameBuffer(ImxStreamBuffer *srcBuf,
     else
         engine = mCamBlitCscType;
 
-    return handleFrame(*dstBuf, *srcBuf, engine);
+    return handleFrame(*dstBuf, *srcBuf, engine, mDebug);
 }
 
 int32_t CameraDeviceSessionHwlImpl::processJpegBuffer(ImxStreamBuffer *srcBuf,
@@ -1260,7 +1264,7 @@ int32_t CameraDeviceSessionHwlImpl::processJpegBuffer(ImxStreamBuffer *srcBuf,
         }
 
         resizeBuf.mStream = srcBuf->mStream;
-        handleFrame(resizeBuf, *srcBuf, mCamBlitCscType);
+        handleFrame(resizeBuf, *srcBuf, mCamBlitCscType, mDebug);
 
         SwitchImxBuf(*srcBuf, resizeBuf);
         srcVirtual = (uint8_t *)srcBuf->mVirtAddr;
@@ -1644,6 +1648,7 @@ int CameraDeviceSessionHwlImpl::PickConfigStream(uint32_t pipeline_id, uint8_t i
         return -1;
     }
 
+    Mutex::Autolock _l(mLock);
     ALOGI("%s: previewIdx %d, callbackIdx %d, stillcapIdx %d, recordIdx %d, cameraRWIdx %d, rawIdx %d, intent %d",
           __func__, previewIdx, callbackIdx, stillcapIdx, recordIdx, cameraRWIdx, rawIdx, intent);
 
@@ -1855,6 +1860,8 @@ status_t CameraDeviceSessionHwlImpl::SubmitRequests(uint32_t frame_number,
                     importFence(requests[i].output_buffers[j].acquire_fence, mDebug);
             ALOGV("%s, acquire_fence_fd %d", __func__, fenceInfo.acquire_fence_fd);
             frame_request->at(i).outBufferFences[j] = fenceInfo;
+            frame_request->at(i).hwlReq.output_buffers[j].acquire_fence = NULL;
+            frame_request->at(i).hwlReq.output_buffers[j].release_fence = NULL;
         }
     }
 
@@ -1985,6 +1992,10 @@ int CameraDeviceSessionHwlImpl::getCapsMode(uint8_t sceneMode) {
           mMaxWidth, mMaxHeight, bHdr, caps_supports.count);
 
     return 0;
+}
+
+void CameraDeviceSessionHwlImpl::RepeatingRequestEnd(
+    int32_t /*frame_number*/, const std::vector<int32_t>& /*stream_ids*/) {
 }
 
 } // namespace android

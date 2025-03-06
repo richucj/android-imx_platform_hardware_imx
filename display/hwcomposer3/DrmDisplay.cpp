@@ -19,6 +19,7 @@
 
 #include <drm_fourcc.h>
 #include <stdlib.h>
+#include <thread>
 #include <xf86drm.h>
 
 #include "BufferInfo.h"
@@ -38,7 +39,7 @@ uint64_t addressAsUint(T* pointer) {
 
 std::unique_ptr<DrmDisplay> DrmDisplay::create(
         uint32_t id, std::unique_ptr<DrmConnector> connector, std::unique_ptr<DrmCrtc> crtc,
-        std::unordered_map<uint32_t, std::unique_ptr<DrmPlane>>& planes,
+        std::unordered_map<uint32_t, std::unique_ptr<DrmPlane>> planes,
         ::android::base::borrowed_fd drmFd) {
     if (!crtc) {
         ALOGE("%s: invalid crtc.", __FUNCTION__);
@@ -118,8 +119,9 @@ std::tuple<HWC3::Error, std::unique_ptr<DrmAtomicRequest>> DrmDisplay::flushOver
     okay &= request->Set(planeId, plane->getCrtcYProperty(), static_cast<uint64_t>(y0));
     okay &= request->Set(planeId, plane->getCrtcWProperty(), static_cast<uint64_t>(wF));
     okay &= request->Set(planeId, plane->getCrtcHProperty(), static_cast<uint64_t>(hF));
-    okay &= request->Set(planeId, plane->getSrcXProperty(), static_cast<uint64_t>(rectS.left));
-    okay &= request->Set(planeId, plane->getSrcYProperty(), static_cast<uint64_t>(rectS.top));
+    okay &= request->Set(planeId, plane->getSrcXProperty(),
+                         static_cast<uint64_t>(rectS.left << 16));
+    okay &= request->Set(planeId, plane->getSrcYProperty(), static_cast<uint64_t>(rectS.top << 16));
     okay &= request->Set(planeId, plane->getSrcWProperty(), static_cast<uint64_t>(wS << 16));
     okay &= request->Set(planeId, plane->getSrcHProperty(), static_cast<uint64_t>(hS << 16));
 
@@ -221,8 +223,8 @@ std::tuple<HWC3::Error, std::unique_ptr<DrmAtomicRequest>> DrmDisplay::flushPrim
     okay &= request->Set(planeId, plane->getCrtcYProperty(), static_cast<uint64_t>(frameY));
     okay &= request->Set(planeId, plane->getCrtcWProperty(), static_cast<uint64_t>(dw));
     okay &= request->Set(planeId, plane->getCrtcHProperty(), static_cast<uint64_t>(dh));
-    okay &= request->Set(planeId, plane->getSrcXProperty(), static_cast<uint64_t>(sourceX));
-    okay &= request->Set(planeId, plane->getSrcYProperty(), static_cast<uint64_t>(sourceY));
+    okay &= request->Set(planeId, plane->getSrcXProperty(), static_cast<uint64_t>(sourceX << 16));
+    okay &= request->Set(planeId, plane->getSrcYProperty(), static_cast<uint64_t>(sourceY << 16));
     okay &= request->Set(planeId, plane->getSrcWProperty(), static_cast<uint64_t>(sw << 16));
     okay &= request->Set(planeId, plane->getSrcHProperty(), static_cast<uint64_t>(sh << 16));
 
@@ -299,6 +301,12 @@ std::tuple<HWC3::Error, ::android::base::unique_fd> DrmDisplay::commit(
     }
 
     uint32_t vsyncPeriod = 1000000000UL / mActiveConfig.refreshRateHz;   // convert to nanosecond
+#ifdef FIX_HANG_WHEN_FIRST_PLUG_IN
+    if (mPreheatFrameCnt > 0) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(vsyncPeriod / 1000000));
+        mPreheatFrameCnt--;
+    }
+#endif
     uint32_t interval = vsyncPeriod * 2 / MAX_COMMIT_RETRY_COUNT / 1000; // try 2 Vsync period
 #ifdef DEBUG_DUMP_REFRESH_RATE
     nsecs_t now = dumpRefreshRateStart();
@@ -424,6 +432,7 @@ void DrmDisplay::buildPlaneIdPool(uint32_t* outTopOverlayId) {
         }
     }
     *outTopOverlayId = maxZposOverlayId;
+    mOverlayPlaneNum = mPlaneIdPool.size();
 
     DEBUG_LOG("%s: display:%" PRIu32 " there are %zu overlay plane", __FUNCTION__, mId,
               mPlaneIdPool.size());
@@ -442,6 +451,13 @@ uint32_t DrmDisplay::findDrmPlane(const native_handle_t* handle) {
         DEBUG_LOG("%s: overlay plane pool is empty", __FUNCTION__);
         return 0;
     }
+#ifdef OVERLAY_LIMITATION_DPU
+    if (mOverlayPlaneNum - mPlaneIdPool.size() >= 1) {
+        DEBUG_LOG("%s: already 1 overlay plane used. Not use other overlay plane to avoid display "
+                  "underrun issue", __FUNCTION__);
+        return 0;
+    }
+#endif
 
     HandleInfo info;
     if (!handle || (getInfoFromHandle(handle, &info) != 0)) {
@@ -617,11 +633,26 @@ void DrmDisplay::placeholderDisplayConfigs() {
         newConfig.modeWidth = 0;
         newConfig.modeHeight = 0;
     } else {
-        newConfig.width = 720;   // display driver of 8ulp only support max 720x1280.
-        newConfig.height = 1280; // such limitation will affect DRM checking when create DRM buffer
+#ifdef MAX_DRM_CONFIG_4K
+        newConfig.width = 3840;
+        newConfig.height = 2160;
+#elif MAX_DRM_CONFIG_720P
+        newConfig.width = 1280; // display driver of 8ulp only support max 720x1280.
+        newConfig.height = 720; // such limitation will affect DRM checking when create DRM buffer
+#else
+        newConfig.width = 1920;
+        newConfig.height = 1080;
+#endif
         newConfig.dpiX = 160;
         newConfig.dpiY = 160;
         newConfig.refreshRateHz = 60;
+#ifdef FIX_HANG_WHEN_FIRST_PLUG_IN
+        mPreheatFrameCnt = 2;
+        if (mConnector->getEncoderType() == DRM_MODE_ENCODER_LVDS) {
+            newConfig.width = 1280;
+            newConfig.height = 720;
+        }
+#endif
     }
 
     mConfigs->emplace(mStartConfigId, newConfig);
@@ -652,6 +683,48 @@ bool DrmDisplay::resetDisplayConfig() {
     return setActiveConfigId(mInitActiveConfigId);
 }
 
+void DrmDisplay::updateFramebufferFormat() {
+    DEBUG_LOG("%s: display:%" PRIu32, __FUNCTION__, mId);
+
+    uint32_t id = getPrimaryPlaneId();
+    DrmPlane* plane = mPlanes[id].get();
+    std::string cfg_format = getFramebufferFormat();
+    if (cfg_format != "") {
+        uint32_t fmt = 0, drm_fmt = 0;
+        uint64_t modifier = 0;
+        if (cfg_format == "RGBA_8888") {
+            fmt = static_cast<uint32_t>(common::PixelFormat::RGBA_8888);
+        } else if (cfg_format == "RGBX_8888") {
+            fmt = static_cast<uint32_t>(common::PixelFormat::RGBX_8888);
+        } else if (cfg_format == "RGB_888") {
+            fmt = static_cast<uint32_t>(common::PixelFormat::RGB_888);
+        } else if (cfg_format == "RGB_565") {
+            fmt = static_cast<uint32_t>(common::PixelFormat::RGB_565);
+        } else if (cfg_format == "BGRA_8888") {
+            fmt = static_cast<uint32_t>(common::PixelFormat::BGRA_8888);
+        }
+        if (fmt != 0) {
+            drm_fmt = ConvertNxpFormatToDrmFormat(fmt, &modifier);
+            if (plane->checkFormatSupported(drm_fmt)) {
+                ALOGI("%s: display:%d configure framebuffer format as %s", __FUNCTION__, mId,
+                      cfg_format.c_str());
+                mFbFormat = fmt;
+                return;
+            }
+        }
+    }
+
+    if (plane->checkFormatSupported(DRM_FORMAT_ABGR8888)) {
+        mFbFormat = static_cast<uint32_t>(common::PixelFormat::RGBA_8888);
+    } else if (plane->checkFormatSupported(DRM_FORMAT_XBGR8888)) {
+        mFbFormat = static_cast<uint32_t>(common::PixelFormat::RGBX_8888);
+    } else if (plane->checkFormatSupported(DRM_FORMAT_ARGB8888)) {
+        // primary plane of imx8ulp use such format
+        mFbFormat = static_cast<uint32_t>(common::PixelFormat::BGRA_8888);
+    } else if (plane->checkFormatSupported(DRM_FORMAT_RGB565)) {
+        mFbFormat = static_cast<uint32_t>(common::PixelFormat::RGB_565);
+    }
+}
 int DrmDisplay::getFramebufferInfo(uint32_t* width, uint32_t* height, uint32_t* format) {
     DEBUG_LOG("%s: display:%" PRIu32, __FUNCTION__, mId);
 
@@ -663,17 +736,7 @@ int DrmDisplay::getFramebufferInfo(uint32_t* width, uint32_t* height, uint32_t* 
         *height = mActiveConfig.height;
     }
 
-    uint32_t id = getPrimaryPlaneId();
-    DrmPlane* plane = mPlanes[id].get();
-    if (plane->checkFormatSupported(DRM_FORMAT_ABGR8888)) {
-        *format = static_cast<uint32_t>(common::PixelFormat::RGBA_8888);
-    } else if (plane->checkFormatSupported(DRM_FORMAT_XRGB8888)) {
-        // primary plane of imx8ulp use such format
-        *format = static_cast<uint32_t>(common::PixelFormat::BGRA_8888);
-    } else if (plane->checkFormatSupported(DRM_FORMAT_RGB565)) {
-        *format = static_cast<uint32_t>(common::PixelFormat::RGB_565);
-    }
-
+    *format = mFbFormat;
     return 0;
 }
 

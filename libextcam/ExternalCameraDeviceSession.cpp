@@ -1,6 +1,6 @@
 /*
  * Copyright (C) 2022 The Android Open Source Project
- * Copyright 2023-2024 NXP
+ * Copyright 2023-2025 NXP
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -224,6 +224,7 @@ bool ExternalCameraDeviceSession::initialize() {
     mOutputThread->setMjpegDecoderType(mHasHardwareDecoder);
     mOutputThread->setMjpegCopy(mMjpgCopy);
     mOutputThread->setExifMakeModel(mExifMake, mExifModel);
+    mOutputThread->setBlitEngine(mCfg.blitEngine);
 
     status_t status = initDefaultRequests();
     if (status != OK) {
@@ -2520,6 +2521,9 @@ void ExternalCameraDeviceSession::OutputThread::setMjpegDecoderType(bool type) {
 void ExternalCameraDeviceSession::OutputThread::setMjpegCopy(bool bCopy) {
     mMjpgCopy = bCopy;
 }
+void ExternalCameraDeviceSession::OutputThread::setBlitEngine(ImxEngine engine) {
+    mEngine = engine;
+}
 
 int ExternalCameraDeviceSession::OutputThread::initVpuThread() {
     auto parent = mParent.lock();
@@ -2558,15 +2562,6 @@ int ExternalCameraDeviceSession::OutputThread::initVpuThread() {
     }
 
     mDecedFrames = 0;
-
-    if ((strcmp(socType, "imx8qm") == 0) || (strcmp(socType, "imx8qxp") == 0))
-        mEngine = ENG_DPU;
-    else if (strcmp(socType, "imx8mq") == 0)
-        mEngine = ENG_G3D;
-    else if (strcmp(socType, "imx95") == 0)
-        mEngine = ENG_CPU;
-    else
-        mEngine = ENG_NOTCARE;
 
     return OK;
 }
@@ -3218,7 +3213,8 @@ int ExternalCameraDeviceSession::OutputThread::VpuDecGetBuffer(uint8_t* inData, 
 
     // assign decoded data to mYu12Frame
     mYu12Frame = std::make_shared<AllocatedFramePhyMem>(mDecodedData.width, mDecodedData.height, fourcc);
-    mYu12Frame->assign(vaddr, phyAddr, size);
+    mYu12Frame->assign(vaddr, phyAddr, size, mDecodedData.mUsage);
+
     ALOGV("%s: mYu12Frame format size %u, fourcc 0x%x, %dx%d, vaddr %p, phyAddr %p",
         __func__, mYu12Frame->getFormatSize(), fourcc, mDecodedData.width, mDecodedData.height, vaddr, (void *)phyAddr);
 
@@ -3318,9 +3314,11 @@ int ExternalCameraDeviceSession::OutputThread::CopyFromPrcdBuf(HalStreamBuffer &
     return ret;
 }
 
-int ExternalCameraDeviceSession::OutputThread::handleFrame(uint32_t dstWidth, uint32_t dstHeight,
-    uint32_t dst_fourcc, uint32_t src_fourcc, uint64_t dstPhyAddr, uint64_t srcPhyAddr, uint32_t srcWidth, uint32_t srcHeight,
-    uint32_t srcStride, uint32_t dstStride, void *srcVirtAddr, void *dstVirtAddr) {
+int ExternalCameraDeviceSession::OutputThread::handleFrame(
+        uint32_t dstWidth, uint32_t dstHeight, uint32_t dst_fourcc, uint32_t src_fourcc,
+        uint64_t dstPhyAddr, uint64_t srcPhyAddr, uint32_t srcWidth, uint32_t srcHeight,
+        uint32_t srcStride, uint32_t dstStride, void* srcVirtAddr, void* dstVirtAddr,
+        uint64_t srcBuffUsage, uint64_t dstBuffUsage) {
     fsl::ImageProcess* imageProcess = fsl::ImageProcess::getInstance();
 
     ImxImageBuffer srcBuf;
@@ -3367,7 +3365,7 @@ int ExternalCameraDeviceSession::OutputThread::handleFrame(uint32_t dstWidth, ui
     srcBuf.mSize = srcBuf.mFormatSize;
     srcBuf.buffer = NULL; // DPU/G3D not use;
     srcBuf.mZoomRatio = 1.0;
-    srcBuf.mUsage = 0;
+    srcBuf.mUsage = srcBuffUsage;
     srcBuf.mPrivate = NULL;
 
     dstBuf.mFormat = dstFmt;
@@ -3382,10 +3380,10 @@ int ExternalCameraDeviceSession::OutputThread::handleFrame(uint32_t dstWidth, ui
     dstBuf.mSize = dstBuf.mFormatSize;
     dstBuf.buffer = NULL;
     dstBuf.mZoomRatio = 1.0;
-    dstBuf.mUsage = 0;
+    dstBuf.mUsage = dstBuffUsage;
     dstBuf.mPrivate = NULL;
 
-    return imageProcess->ConvertImage(dstBuf, srcBuf, mEngine);
+    return imageProcess->ConvertImage(dstBuf, srcBuf, mEngine, mDebug);
 }
 
 int ExternalCameraDeviceSession::OutputThread::directCopy(struct HalStreamBuffer& halBuf, uint8_t* inData, size_t inDataSize) {
@@ -3737,16 +3735,27 @@ bool ExternalCameraDeviceSession::OutputThread::threadLoop() {
                     // HW decoder is 16 pixels aligned (1920x1080 -> 1920x1088, 800x600 -> 800x608).
                     uint8_t* outData;
                     size_t dataSize;
+                    uint64_t srcUsage = 0;
+                    uint64_t dstUsage = 0;
 
                     uint64_t dstPhyAddr = GetPhyAddrFromBuffer((*halBuf.bufPtr)->data[0]);
                     mYu12Frame->getData(&outData, &dataSize);
+                    mYu12Frame->getUsage(srcUsage);
+
+                    int err = GetUsage(*halBuf.bufPtr, dstUsage);
+                    if (err) {
+                        VpuDecReturnBuffer();
+                        lk.unlock();
+                        return onDeviceError("%s: GetUsage failed!", __FUNCTION__);
+                    }
 
                     if (mDebug)
                         t1 = systemTime();
                     ret = handleFrame(halBuf.width, halBuf.height, outputFourcc,
                                       mYu12Frame->mFourcc, dstPhyAddr, srcPhyAddr,
                                       mYu12Frame->mWidth, mYu12Frame->mHeight, mYu12Frame->mWidth,
-                                      outLayout.yStride, outData, (uint8_t*)outLayout.y);
+                                      outLayout.yStride, outData, (uint8_t*)outLayout.y, srcUsage,
+                                      dstUsage);
                     if (mDebug) {
                         t2 = systemTime();
                         ALOGI("handleFrame use %lld ns, %lld ms, src size %dx%d fmt 0x%x, dst size %dx%d fmt 0x%x",

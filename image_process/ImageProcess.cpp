@@ -1,5 +1,5 @@
 /*
- * Copyright 2023-2024 NXP.
+ * Copyright 2023-2025 NXP.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -46,6 +46,7 @@ extern "C" {
 #define GPUHELPER "libgpuhelper.so"
 #define CLENGINE "libg2d-opencl.so"
 #define G2DENGINE "libg2d"
+#define IMX_OCL_CONVERTER "lib_imx_opencl_converter.so"
 
 namespace fsl {
 
@@ -204,9 +205,43 @@ ImageProcess::ImageProcess()
     if (mCLHandle != NULL) {
         ALOGW("opencl g2d device is used!\n");
     }
+
+    memset(path, 0, sizeof(path));
+    getModule(path, IMX_OCL_CONVERTER);
+    mImxOclCvtModule = dlopen(path, RTLD_NOW);
+    if (mImxOclCvtModule == NULL) {
+        ALOGW("%s:, dlopen %s failed", __func__, path);
+        mHOcl = NULL;
+        m_ocl_open = NULL;
+        m_ocl_setParam = NULL;
+        m_ocl_getParam = NULL;
+        m_ocl_convert = NULL;
+        m_ocl_close = NULL;
+    } else {
+        m_ocl_open = (ocl_open)dlsym(mImxOclCvtModule, "OCL_Open");
+        m_ocl_setParam = (ocl_setParam)dlsym(mImxOclCvtModule, "OCL_SetParam");
+        m_ocl_getParam = (ocl_getParam)dlsym(mImxOclCvtModule, "OCL_GetParam");
+        m_ocl_convert = (ocl_convert)dlsym(mImxOclCvtModule, "OCL_Convert");
+        m_ocl_close = (ocl_close)dlsym(mImxOclCvtModule, "OCL_Close");
+
+        ret = (*m_ocl_open)(OCL_OPEN_FLAG_PROFILE, &mHOcl);
+        if (ret != 0) {
+            mHOcl = NULL;
+            ALOGW("%s: m_ocl_open failed, ret %d", __func__, ret);
+        }
+        ALOGI("%s: mHOcl %p", __func__, mHOcl);
+    }
 }
 
 ImageProcess::~ImageProcess() {
+    if (mHOcl) {
+        m_ocl_close(mHOcl);
+        mHOcl = NULL;
+    }
+
+    if (mImxOclCvtModule)
+        dlclose(mImxOclCvtModule);
+
     if (mIpuFd > 0) {
         close(mIpuFd);
         mIpuFd = -1;
@@ -266,7 +301,8 @@ void ImageProcess::getModule(char *path, const char *name) {
     return;
 }
 
-int ImageProcess::ConvertImage(ImxImageBuffer &dstBuf, ImxImageBuffer &srcBuf, ImxEngine engine) {
+int ImageProcess::ConvertImage(ImxImageBuffer &dstBuf, ImxImageBuffer &srcBuf, ImxEngine engine,
+                               bool debug) {
     int ret = 0;
 
     if (engine == ENG_BYPASS)
@@ -277,11 +313,13 @@ int ImageProcess::ConvertImage(ImxImageBuffer &dstBuf, ImxImageBuffer &srcBuf, I
         return -EINVAL;
     }
 
-    ALOGV("ImageProcess::ConvertImage, src: virt %p, phy 0x%lx, size %d, res %ux%u, format 0x%x, "
-          "dst: virt %p, phy 0x%lx, size %d, res %ux%u, format 0x%x, engine %d",
-          srcBuf.mVirtAddr, srcBuf.mPhyAddr, (int)srcBuf.mSize, srcBuf.mWidth,
-          srcBuf.mHeight, srcBuf.mFormat, dstBuf.mVirtAddr, dstBuf.mPhyAddr,
-          (int)dstBuf.mSize, dstBuf.mWidth, dstBuf.mHeight, dstBuf.mFormat, engine);
+    mDebug = debug;
+    if (mDebug)
+        ALOGI("%s: src: virt %p, phy 0x%lx, size %d, res %ux%u, format 0x%x, "
+              "dst: virt %p, phy 0x%lx, size %d, res %ux%u, format 0x%x, engine %d, ZoomRatio %f",
+              __func__, srcBuf.mVirtAddr, srcBuf.mPhyAddr, (int)srcBuf.mSize, srcBuf.mWidth,
+              srcBuf.mHeight, srcBuf.mFormat, dstBuf.mVirtAddr, dstBuf.mPhyAddr, (int)dstBuf.mSize,
+              dstBuf.mWidth, dstBuf.mHeight, dstBuf.mFormat, engine, srcBuf.mZoomRatio);
 
     // unify HAL_PIXEL_FORMAT_YCbCr_420_SP to HAL_PIXEL_FORMAT_YCBCR_420_888
     if (srcBuf.mFormat == HAL_PIXEL_FORMAT_YCbCr_420_SP) {
@@ -822,24 +860,17 @@ int ImageProcess::ConvertImageByGPU_3D(ImxImageBuffer &dstBuf, ImxImageBuffer &s
     memset(&resizeBuf, 0, sizeof(resizeBuf));
     bool bResize = false;
 
-    // Set output cache attrib based on usage.
-    // For input cache attrib, hard code to false, reason as below.
-    // 1) For DMA buffer type, the v4l2 buffer is allocated by ion in HAL, and it's un-cacheable.
-    // 2) For MMAP buffer type, the v4l2 buffer is allocated by driver and should be cacheable.
-    //    The v4l2 buffer will only be read by ENG_CPU.
-    //    GPU3D uses physical address, no need to flush the input buffer.
+    // Set input/output cache attrib based on usage.
+    bool bInputCached =
+            srcBuf.mUsage & (GRALLOC_USAGE_SW_READ_OFTEN | GRALLOC_USAGE_SW_WRITE_OFTEN);
     bool bOutputCached =
             dstBuf.mUsage & (GRALLOC_USAGE_SW_READ_OFTEN | GRALLOC_USAGE_SW_WRITE_OFTEN);
 
-    ALOGV("ConvertImageByGPU_3D, bOutputCached %d, usage 0x%lx, res src %ux%u, dst %ux%u, format "
-          "src 0x%x, dst 0x%x, size %d",
-          bOutputCached, dstBuf.mUsage, srcBuf.mWidth, srcBuf.mHeight, dstBuf.mWidth,
-          dstBuf.mHeight, srcBuf.mFormat, dstBuf.mFormat, (int)srcBuf.mFormatSize);
-
-    // Fix me! Currently, the GPU only support using physical address for uncached memory.
-    // Otherwise the physical address will be taken as virtual one, leading crash.
-    // Will remove the hard code after GPU fix the issue.
-    bOutputCached = false;
+    ALOGV("%s:%d, bInputCached %d, srcUsage 0x%lx, bOutputCached %d, dstUsage 0x%lx, "
+          "res src %ux%u, dst %ux%u, format src 0x%x, dst 0x%x, size %d",
+          __FUNCTION__, __LINE__, bInputCached, srcBuf.mUsage, bOutputCached, dstBuf.mUsage,
+          srcBuf.mWidth, srcBuf.mHeight, dstBuf.mWidth, dstBuf.mHeight, srcBuf.mFormat,
+          dstBuf.mFormat, (int)srcBuf.mFormatSize);
 
     // case 1: same format, same resolution, copy
     if ((srcBuf.mFormat == dstBuf.mFormat) && (srcBuf.mWidth == dstBuf.mWidth) &&
@@ -847,7 +878,7 @@ int ImageProcess::ConvertImageByGPU_3D(ImxImageBuffer &dstBuf, ImxImageBuffer &s
         Mutex::Autolock _l(mCLLock);
 
         cl_Copy(mCLHandle, (uint8_t *)dstBuf.mPhyAddr, (uint8_t *)srcBuf.mPhyAddr,
-                srcBuf.mFormatSize, false, bOutputCached);
+                srcBuf.mFormatSize, bInputCached, bOutputCached, true);
 
         (*mCLFlush)(mCLHandle);
         (*mCLFinish)(mCLHandle);
@@ -891,14 +922,18 @@ int ImageProcess::ConvertImageByGPU_3D(ImxImageBuffer &dstBuf, ImxImageBuffer &s
         SwitchImxBuf(srcBuf, resizeBuf);
 
         bResize = true;
+        // if resized, input cache attrib may change, update the cache state
+        bInputCached = srcBuf.mUsage & (GRALLOC_USAGE_SW_READ_OFTEN | GRALLOC_USAGE_SW_WRITE_OFTEN);
     }
 
     // case 4: diffrent format, same resolution
     {
         Mutex::Autolock _l(mCLLock);
-        cl_csc(mCLHandle, (uint8_t *)srcBuf.mPhyAddr, (uint8_t *)dstBuf.mPhyAddr,
-                        dstBuf.mWidth, dstBuf.mHeight, srcBuf.mStride, dstBuf.mStride, srcBuf.mHeightSpan,
-                        false, bOutputCached, srcBuf.mFormat, dstBuf.mFormat);
+
+        // on 8mq, if use virtual address, preview will freeze or black, use physical address here.
+        cl_Csc(mCLHandle, (uint8_t *)srcBuf.mPhyAddr, (uint8_t *)dstBuf.mPhyAddr, dstBuf.mWidth,
+               dstBuf.mHeight, srcBuf.mStride, dstBuf.mStride, srcBuf.mHeightSpan, bInputCached,
+               bOutputCached, srcBuf.mFormat, dstBuf.mFormat, true);
 
         (*mCLFlush)(mCLHandle);
         (*mCLFinish)(mCLHandle);
@@ -1019,28 +1054,27 @@ int ImageProcess::ConvertImageByCPU(ImxImageBuffer &dstBuf, ImxImageBuffer &srcB
 }
 
 void ImageProcess::cl_Copy(void *g2dHandle, uint8_t *output, uint8_t *input, uint32_t size,
-                           bool bInputCached, bool bOutputCached) {
+                           bool bInputCached, bool bOutputCached, bool bUsePhyAddr) {
     struct cl_g2d_buf g2d_output_buf;
     struct cl_g2d_buf g2d_input_buf;
 
     g2d_output_buf.buf_paddr = (uint64_t)output;
     g2d_output_buf.buf_size = size;
-    g2d_output_buf.use_phy = true;
+    g2d_output_buf.use_phy = bUsePhyAddr;
     g2d_output_buf.usage = bOutputCached ? CL_G2D_CACHED_MEMORY : CL_G2D_UNCACHED_MEMORY;
 
     g2d_input_buf.buf_paddr = (uint64_t)input;
     g2d_input_buf.buf_size = size;
-    g2d_input_buf.use_phy = true;
+    g2d_input_buf.use_phy = bUsePhyAddr;
     g2d_input_buf.usage = bInputCached ? CL_G2D_CACHED_MEMORY : CL_G2D_UNCACHED_MEMORY;
 
     (*mCLCopy)(g2dHandle, &g2d_output_buf, &g2d_input_buf, (void *)(intptr_t)size);
 }
 
-void ImageProcess::cl_csc(void *g2dHandle, uint8_t *inputBuffer, uint8_t *outputBuffer,
-                          int width, int height, int srcStride, int dstStride,
-                          int srcHeightSpan, bool bInputCached, bool bOutputCached,
-                          uint32_t inFmt, uint32_t outFmt) {
-
+void ImageProcess::cl_Csc(void *g2dHandle, uint8_t *inputBuffer, uint8_t *outputBuffer, int width,
+                          int height, int srcStride, int dstStride, int srcHeightSpan,
+                          bool bInputCached, bool bOutputCached, uint32_t inFmt, uint32_t outFmt,
+                          bool bUsePhyAddr) {
     struct cl_g2d_surface src, dst;
 
     src.format = (cl_g2d_format)convertPixelFormatToCLFormat(inFmt);
@@ -1054,7 +1088,7 @@ void ImageProcess::cl_csc(void *g2dHandle, uint8_t *inputBuffer, uint8_t *output
     src.stride = srcStride;
     src.width = width;
     src.height = height;
-    src.usePhyAddr = true;
+    src.usePhyAddr = bUsePhyAddr;
 
     dst.format = (cl_g2d_format)convertPixelFormatToCLFormat(outFmt);
     dst.usage = bOutputCached ? CL_G2D_CACHED_MEMORY : CL_G2D_UNCACHED_MEMORY;
@@ -1067,9 +1101,134 @@ void ImageProcess::cl_csc(void *g2dHandle, uint8_t *inputBuffer, uint8_t *output
     dst.stride = dstStride;
     dst.width = width;
     dst.height = height;
-    dst.usePhyAddr = true;
+    dst.usePhyAddr = bUsePhyAddr;
 
     (*mCLBlit)(g2dHandle, (void *)&src, (void *)&dst);
+}
+
+void ImageProcess::ImxImageBufferToOclBuffer(ImxImageBuffer &imxImgBuf, OCL_BUFFER &oclBuf,
+                                             OCL_FORMAT &oclFmt) {
+    int ret = 0;
+    OCL_FORMAT_PLANE_INFO plane_info;
+
+    memset(&plane_info, 0, sizeof(plane_info));
+    plane_info.ocl_format = &oclFmt;
+
+    ret = m_ocl_getParam(mHOcl, OCL_PARAM_INDEX_FORMAT_PLANE_INFO, &plane_info);
+    if (ret) {
+        ALOGE("%s: m_ocl_getParam OCL_PARAM_INDEX_FORMAT_PLANE_INFO failed, ret %d", __func__, ret);
+        return;
+    }
+
+    oclBuf.mem_type = OCL_MEM_TYPE_DEVICE;
+    oclBuf.plane_num = plane_info.plane_num;
+
+    int offset = 0;
+    for (int i = 0; i < oclBuf.plane_num; i++) {
+        oclBuf.planes[i].fd = imxImgBuf.mFd;
+        oclBuf.planes[i].offset = offset;
+        oclBuf.planes[i].vaddr = (long long)imxImgBuf.mVirtAddr + (long long)offset;
+        oclBuf.planes[i].size = plane_info.plane_size[i];
+        offset += oclBuf.planes[i].size;
+    }
+
+    return;
+}
+
+static void HalPixelFormatToOclPixelFormat(uint32_t &halPixelFormat,
+                                           OCL_PIXEL_FORMAT &oclPixelFormat) {
+    switch (halPixelFormat) {
+        case HAL_PIXEL_FORMAT_YCbCr_420_888:
+        case HAL_PIXEL_FORMAT_YCbCr_420_SP:
+            oclPixelFormat = OCL_FORMAT_NV12;
+            break;
+        case HAL_PIXEL_FORMAT_YCbCr_422_I:
+            oclPixelFormat = OCL_FORMAT_YUYV;
+            break;
+        default:
+            ALOGW("==xx %s: unsupported halPixelFormat %d, set oclPixelFormat to OCL_FORMAT_YUYV",
+                  __func__, halPixelFormat);
+            oclPixelFormat = OCL_FORMAT_YUYV;
+            break;
+    }
+
+    return;
+}
+
+static void ImxImageBufferToOclFormat(ImxImageBuffer &imxImgBuf, OCL_FORMAT &oclFormat) {
+    OCL_PIXEL_FORMAT oclPixelFormat;
+
+    HalPixelFormatToOclPixelFormat(imxImgBuf.mFormat, oclPixelFormat);
+
+    oclFormat.format = oclPixelFormat;
+    oclFormat.width = imxImgBuf.mWidth;
+    oclFormat.height = imxImgBuf.mHeight;
+    oclFormat.stride = imxImgBuf.mStride;
+    oclFormat.sliceheight = imxImgBuf.mHeight;
+    oclFormat.left = 0;
+    oclFormat.top = 0;
+    oclFormat.right = imxImgBuf.mWidth;
+    oclFormat.bottom = imxImgBuf.mHeight;
+    oclFormat.colorspace = OCL_COLORSPACE_BT709;
+
+    return;
+}
+
+int ImageProcess::ConvertImageByOclCvt(ImxImageBuffer &dstBuf, ImxImageBuffer &srcBuf) {
+    int ret = 0;
+
+    if (mHOcl == NULL) {
+        ALOGE("%s: mHOcl is NULL", __func__);
+        return BAD_VALUE;
+    }
+
+    /* set format */
+    OCL_FORMAT input_format;
+    OCL_FORMAT output_format;
+
+    memset(&input_format, 0, sizeof(input_format));
+    memset(&output_format, 0, sizeof(output_format));
+
+    ImxImageBufferToOclFormat(srcBuf, input_format);
+    ImxImageBufferToOclFormat(dstBuf, output_format);
+
+    ret = m_ocl_setParam(mHOcl, OCL_PARAM_INDEX_INPUT_FORMAT, &input_format);
+    if (ret) {
+        ALOGE("%s: m_ocl_setParam OCL_PARAM_INDEX_INPUT_FORMAT failed, ret %d", __func__, ret);
+        return ret;
+    }
+
+    ret = m_ocl_setParam(mHOcl, OCL_PARAM_INDEX_OUTPUT_FORMAT, &output_format);
+    if (ret) {
+        ALOGE("%s: m_ocl_setParam OCL_PARAM_INDEX_OUTPUT_FORMAT failed, ret %d", __func__, ret);
+        return ret;
+    }
+
+    /* set buffer */
+    OCL_BUFFER inBuffer;
+    OCL_BUFFER outBuffer;
+
+    memset(&inBuffer, 0, sizeof(inBuffer));
+    memset(&outBuffer, 0, sizeof(outBuffer));
+
+    ImxImageBufferToOclBuffer(srcBuf, inBuffer, input_format);
+    ImxImageBufferToOclBuffer(dstBuf, outBuffer, output_format);
+
+    ret = m_ocl_convert(mHOcl, &inBuffer, &outBuffer);
+    if (ret) {
+        ALOGE("%s: m_ocl_convert failed, ret %d", __func__, ret);
+        return ret;
+    }
+
+    OCL_RUN_TIME time;
+    ret = m_ocl_getParam(mHOcl, OCL_PARAM_INDEX_RUN_TIME, &time);
+    if (ret == 0)
+        ALOGV("%s: m_ocl_convert, src: res %dx%d, fmt %d, dst: res %dx%d, fmt %d, run_time=%d, kernel_time=%d\n",
+              __func__, input_format.width, input_format.height, input_format.format,
+              output_format.width, output_format.height, output_format.format, time.run_time,
+              time.kernel_time);
+
+    return 0;
 }
 
 void ImageProcess::convertYUYVtoNV12SP(uint8_t *inputBuffer, uint8_t *outputBuffer, int width,

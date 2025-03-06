@@ -29,8 +29,6 @@
 #include <cinttypes>
 #include <cmath>
 
-#include "ImageUtils.h"
-
 #define HAVE_JPEG // required for libyuv.h to export MJPEG decode APIs
 #include <libyuv.h>
 
@@ -195,6 +193,18 @@ ExternalCameraConfig ExternalCameraConfig::loadFromCfg(const char* cfgPath) {
             strncpy(ret.interBufFormat, format, INTERBUF_FORMAT_SIZE);
             ret.interBufFormat[INTERBUF_FORMAT_SIZE - 1] = 0;
             ALOGI("%s: InterBufFormat %s", __func__, ret.interBufFormat);
+        }
+    }
+
+    XMLElement* blitEngine = deviceCfg->FirstChildElement("BlitEngine");
+    if (blitEngine == nullptr) {
+        ALOGI("%s: no blitEngine specified, will use default engine CPU", __FUNCTION__);
+    } else {
+        const char* engine = NULL;
+        err = blitEngine->QueryAttribute("engine", &engine);
+        if (err == XML_SUCCESS) {
+            ret.blitEngine = ValueToImxEngine(engine);
+            ALOGI("%s: blitEngine %s, index %d", __func__, engine, ret.blitEngine);
         }
     }
 
@@ -513,6 +523,7 @@ AllocatedFramePhyMem::AllocatedFramePhyMem(uint32_t w, uint32_t h, uint32_t form
     dstBuf = NULL;
     mPhyAddr = 0;
     mBufSize = 0;
+    mUsage = 0;
 }
 
 AllocatedFramePhyMem::~AllocatedFramePhyMem() {
@@ -523,7 +534,7 @@ AllocatedFramePhyMem::~AllocatedFramePhyMem() {
     }
 }
 
-void AllocatedFramePhyMem::assign(void* virtAddr, uint64_t phyAddr, uint32_t size) {
+void AllocatedFramePhyMem::assign(void* virtAddr, uint64_t phyAddr, uint32_t size, uint64_t usage) {
     if (dstBuffer) {
         ALOGE("%s: memroy already allocated", __func__);
         return;
@@ -532,6 +543,7 @@ void AllocatedFramePhyMem::assign(void* virtAddr, uint64_t phyAddr, uint32_t siz
     dstBuf = (uint8_t *)virtAddr;
     mPhyAddr = phyAddr;
     mBufSize = size;
+    mUsage = usage;
 
     return;
 }
@@ -638,6 +650,10 @@ set_layout:
 
 void AllocatedFramePhyMem::getPhyAddr(uint64_t& phyAddr) {
     phyAddr = mPhyAddr;
+}
+
+void AllocatedFramePhyMem::getUsage(uint64_t& usage) {
+    usage = mUsage;
 }
 
 void AllocatedFramePhyMem::flush() {

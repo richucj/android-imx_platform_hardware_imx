@@ -18,6 +18,7 @@
 
 #include <vector>
 #include <core-impl/AudioCardManager.h>
+#include <audio_utils/resampler.h>
 
 #include "StreamAlsa.h"
 #include "StreamSwitcher.h"
@@ -26,7 +27,8 @@ namespace aidl::android::hardware::audio::core {
 
 class StreamPrimary : public StreamAlsa {
   public:
-    StreamPrimary(StreamContext* context, const Metadata& metadata);
+    StreamPrimary(StreamContext* context, const Metadata& metadata,
+                  const std::vector<::aidl::android::media::audio::common::AudioDevice>& devices);
 
     ::android::status_t pause() override;
     ::android::status_t start() override;
@@ -41,6 +43,8 @@ class StreamPrimary : public StreamAlsa {
 
     const bool mIsAsynchronous;
     int64_t mStartTimeNs = 0;
+    int16_t mStartRetryCount = 0;
+    const int16_t kMaxStartRetryCount = 8;
     long mFramesSinceStart = 0;
     bool mSkipNextTransfer = false;
     bool mIsStereoToMono = false;
@@ -51,26 +55,17 @@ class StreamPrimary : public StreamAlsa {
     bool mPrimaryOutput = false;
     bool mDirectOutput = false;
     struct audio_card *mCard = NULL;
+    struct resampler_itfe *mResampler;
+    int16_t *mResamplerBuffer;
     std::optional<struct pcm_config> mSavedConfig;
 
-  private:
-    /*
-      Enable audio dump feature:
-        setprop persist.vendor.audio.dump 1
-        touch /data/out.pcm
-        touch /data/in.pcm
-        chmod 777 /data/out.pcm
-        chmod 777 /data/in.pcm
-      Each boot:
-        setenforce 0
-        pkill audioserver
-    */
-    bool mDump = false;
-    const char* kDumpOutputFile = "/data/out.pcm";
-    const char* kDumpInputFile = "/data/in.pcm";
-    void dump(const void *buffer, size_t size, const char* name);
     void tryStart();
     void stop();
+
+  private:
+    static std::pair<int, int> getCardAndDeviceId(
+            const std::vector<::aidl::android::media::audio::common::AudioDevice>& devices);
+    const std::pair<int, int> mCardAndDeviceId;
 };
 
 class StreamInPrimary final : public StreamIn, public StreamSwitcher, public StreamInHwGainHelper {

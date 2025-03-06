@@ -99,13 +99,13 @@ HWC3::Error Device::getComposer(FrameComposer** outComposer) {
         }
     }
 
-    mComposerMutex.lock();
+    mSemaphore.acquire();
     *outComposer = mComposer.get();
     return HWC3::Error::None;
 }
 
 void Device::releaseComposer() {
-    mComposerMutex.unlock();
+    mSemaphore.release();
 }
 
 HWC3::Error Device::getPersistentKeyValue(const std::string& key, const std::string& defaultValue,
@@ -152,4 +152,7 @@ HWC3::Error Device::setPersistentKeyValue(const std::string& key, const std::str
     return HWC3::Error::None;
 }
 
+bool Device::persistentKeyValueEnabled() const {
+    return !getPmemPath().empty();
+}
 } // namespace aidl::android::hardware::graphics::composer3::impl

@@ -17,10 +17,13 @@
 #ifndef IMAGE_UTILS_H
 #define IMAGE_UTILS_H
 
+#include <cutils/native_handle.h>
 #include <graphics_ext.h>
 #include <linux/videodev2.h>
-#include <cutils/native_handle.h>
 
+#include <string>
+
+#include "imx_opencl_converter.h"
 #include "opencl-2d.h"
 
 namespace android {
@@ -32,6 +35,23 @@ enum {
     FORMAT_NV12 = 0x103,
     FORMAT_P010 = 0x108,
     FORMAT_RAW16 = 0x203,
+};
+
+// sort by priority
+enum ImxEngine {
+    ENG_NOTCARE = -1,
+    ENG_MIN = 0,
+    ENG_G2D = ENG_MIN,
+    ENG_DPU,
+    ENG_G3D,
+    // Compared with ENG_G3D, it extra supports scale. Also to switch between
+    // ENG_G3D(libg2d-opencl.so) and ENG_OCLCVT(lib_imx_opencl_converter.so) easily, add ENG_OCLCVT.
+    ENG_OCLCVT,
+    ENG_IPU,
+    ENG_PXP,
+    ENG_CPU,
+    ENG_BYPASS,
+    ENG_NUM
 };
 
 typedef struct tag_imx_image_buffer {
@@ -77,6 +97,8 @@ void decreaseNV12WithCut(uint8_t *srcBuf, int srcWidth, int srcHeight, uint8_t *
                          int dstWidth, int dstHeight);
 
 int GetAllocationSize(buffer_handle_t buffer, uint64_t &allocatedSize);
+int GetUsage(buffer_handle_t handle, uint64_t &usage);
+ImxEngine ValueToImxEngine(const std::string &value);
 } // namespace android
 
 #endif // IMAGE_UTILS_H

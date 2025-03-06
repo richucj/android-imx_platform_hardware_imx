@@ -32,7 +32,40 @@
 #define ALIGN_PIXEL_16(x) ((x + 15) & ~15)
 #define ALIGN_PIXEL_32(x) ((x + 31) & ~31)
 
+#define ENGINE_GPU_2D "GPU_2D"
+#define ENGINE_GPU_3D "GPU_3D"
+#define ENGINE_OCLCVT "OCLCVT"
+#define ENGINE_IPU "IPU"
+#define ENGINE_PXP "PXP"
+#define ENGINE_DPU "DPU"
+#define ENGINE_CPU "CPU"
+#define ENGINE_BYPASS "BYPASS"
+
 namespace android {
+
+ImxEngine ValueToImxEngine(const std::string &value) {
+    ImxEngine engine = ENG_G2D;
+
+    if (value == ENGINE_DPU) {
+        engine = ENG_DPU;
+    } else if (value == ENGINE_GPU_2D) {
+        engine = ENG_G2D;
+    } else if (value == ENGINE_GPU_3D) {
+        engine = ENG_G3D;
+    } else if (value == ENGINE_OCLCVT) {
+        engine = ENG_OCLCVT;
+    } else if (value == ENGINE_PXP) {
+        engine = ENG_PXP;
+    } else if (value == ENGINE_IPU) {
+        engine = ENG_IPU;
+    } else if (value == ENGINE_CPU) {
+        engine = ENG_CPU;
+    } else if (value == ENGINE_BYPASS) {
+        engine = ENG_BYPASS;
+    }
+
+    return engine;
+}
 
 int yuv422iResize(uint8_t *srcBuf, int srcWidth, int srcHeight, uint8_t *dstBuf, int dstWidth,
                   int dstHeight) {
@@ -852,6 +885,9 @@ int AllocPhyBuffer(uint32_t width, uint32_t height, uint32_t format, ImxImageBuf
     int sharedFd = bufferHandle->data[0];
     uint64_t phyAddr = GetPhyAddrFromBuffer(sharedFd);
     ALOGV("%s, vaddr:%p,  phy:%p, size:%lu\n", __func__, vaddr, (void *)phyAddr, allocatedSize);
+    uint64_t formatSize = (uint64_t)getSizeByForamtRes(format, width, height, false);
+    if (formatSize == 0)
+        formatSize = allocatedSize;
 
     outBufInfo.mFormat = format;
     outBufInfo.mWidth = width;
@@ -861,7 +897,9 @@ int AllocPhyBuffer(uint32_t width, uint32_t height, uint32_t format, ImxImageBuf
     outBufInfo.mFd = sharedFd;
     outBufInfo.buffer = bufferHandle;
     outBufInfo.mSize = allocatedSize;
+    outBufInfo.mFormatSize = formatSize;
     outBufInfo.mStride = bufferStride;
+    outBufInfo.mUsage = usage;
 
     return 0;
 }
@@ -965,6 +1003,9 @@ int GetBufferInfoFromHandle(buffer_handle_t bufferHandle, ImxImageBuffer &outBuf
     outBufInfo.mFormat = format;
     outBufInfo.mWidth = (uint32_t)width;
     outBufInfo.mHeight = (uint32_t)height;
+    // No mapper.getStride(), so just assign width.
+    // Some csc/scale functions need stride as para.
+    outBufInfo.mStride = (uint32_t)width;
     outBufInfo.mVirtAddr = vaddr;
     outBufInfo.mPhyAddr = phyAddr;
     outBufInfo.mFd = sharedFd;
@@ -987,6 +1028,17 @@ int GetAllocationSize(buffer_handle_t handle, uint64_t &allocatedSize) {
     int err = mapper.getAllocationSize(handle, &allocatedSize);
     if (err) {
         ALOGE("%s: GraphicBufferMapper getAllocationSize failed!", __FUNCTION__);
+        return BAD_VALUE;
+    }
+
+    return 0;
+}
+
+int GetUsage(buffer_handle_t handle, uint64_t &usage) {
+    GraphicBufferMapper &mapper = GraphicBufferMapper::getInstance();
+    int err = mapper.getUsage(handle, &usage);
+    if (err) {
+        ALOGE("%s: GraphicBufferMapper getUsage failed!", __FUNCTION__);
         return BAD_VALUE;
     }
 

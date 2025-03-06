@@ -1,5 +1,5 @@
 /*
- * Copyright 2023 NXP.
+ * Copyright 2023-2025 NXP.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -30,26 +30,19 @@ typedef int (*hwc_func1)(void* handle);
 typedef int (*hwc_func3)(void* handle, void* arg1, void* arg2);
 typedef int (*hwc_func4)(void* handle, void* arg1, void* arg2, void* arg3);
 
-// sort by priority
-enum ImxEngine {
-    ENG_NOTCARE = -1,
-    ENG_MIN = 0,
-    ENG_G2D = ENG_MIN,
-    ENG_DPU,
-    ENG_G3D,
-    ENG_IPU,
-    ENG_PXP,
-    ENG_CPU,
-    ENG_BYPASS,
-    ENG_NUM
-};
+typedef OCL_RESULT (*ocl_open)(OCL_OPEN_FLAG flag, OCL_HANDLE* handle);
+typedef OCL_RESULT (*ocl_setParam)(OCL_HANDLE handle, OCL_PARAM_INDEX index, void* param);
+typedef OCL_RESULT (*ocl_getParam)(OCL_HANDLE handle, OCL_PARAM_INDEX index, void* param);
+typedef OCL_RESULT (*ocl_convert)(OCL_HANDLE handle, OCL_BUFFER* in_buf, OCL_BUFFER* out_buf);
+typedef OCL_RESULT (*ocl_close)(OCL_HANDLE handle);
 
 class ImageProcess {
 public:
     static ImageProcess* getInstance();
     ~ImageProcess();
 
-    int ConvertImage(ImxImageBuffer& dst, ImxImageBuffer& src, ImxEngine engine);
+    int ConvertImage(ImxImageBuffer& dst, ImxImageBuffer& src, ImxEngine engine,
+                     bool debug = false);
     void SetMiddleBuffers(std::vector<ImxImageBuffer *> &MiddleBuffers);
 
     buffer_handle_t createBufferHandle(ImxImageBuffer& imxBuf);
@@ -72,10 +65,10 @@ private:
     int resizeWrapper(ImxImageBuffer& src, ImxImageBuffer& dst, ImxEngine engine);
 
     void cl_Copy(void* g2dHandle, uint8_t* output, uint8_t* input, uint32_t size, bool bInputCached,
-                 bool bOutputCached);
-    void cl_csc(void *g2dHandle, uint8_t *inputBuffer, uint8_t *outputBuffer, int width, int height,
-                int srcStride, int dstStride, int srcHeightSpan, bool bInputCached, bool bOutputCached,
-                uint32_t inFmt, uint32_t outFmt);
+                 bool bOutputCached, bool bUsePhyAddr = true);
+    void cl_Csc(void* g2dHandle, uint8_t* inputBuffer, uint8_t* outputBuffer, int width, int height,
+                int srcStride, int dstStride, int srcHeightSpan, bool bInputCached,
+                bool bOutputCached, uint32_t inFmt, uint32_t outFmt, bool bUsePhyAddr = true);
 
     void* getHandle();
     int openEngine(void** handle);
@@ -85,20 +78,24 @@ private:
     void LockG2dAddr(ImxImageBuffer& imxBuf);
     void UnLockG2dAddr(ImxImageBuffer& imxBuf);
 
+    int ConvertImageByOclCvt(ImxImageBuffer& dst, ImxImageBuffer& src);
+    void ImxImageBufferToOclBuffer(ImxImageBuffer& imxImgBuf, OCL_BUFFER& oclBuf,
+                                   OCL_FORMAT& oclFmt);
+
 private:
     ImageProcess();
     static Mutex sLock;
     static ImageProcess* sInstance;
+    bool mDebug = false;
 
     typedef int (ImageProcess::*ConvertByEngine)(ImxImageBuffer&, ImxImageBuffer&);
-    ConvertByEngine g_EngFuncList[ENG_NUM] = {
-        &ImageProcess::ConvertImageByGPU_2D,
-        &ImageProcess::ConvertImageByDPU,
-        &ImageProcess::ConvertImageByGPU_3D,
-        &ImageProcess::ConvertImageByIPU,
-        &ImageProcess::ConvertImageByPXP,
-        &ImageProcess::ConvertImageByCPU
-    };
+    ConvertByEngine g_EngFuncList[ENG_NUM] = {&ImageProcess::ConvertImageByGPU_2D,
+                                              &ImageProcess::ConvertImageByDPU,
+                                              &ImageProcess::ConvertImageByGPU_3D,
+                                              &ImageProcess::ConvertImageByOclCvt,
+                                              &ImageProcess::ConvertImageByIPU,
+                                              &ImageProcess::ConvertImageByPXP,
+                                              &ImageProcess::ConvertImageByCPU};
 
     int mIpuFd;
     int mPxpFd;
@@ -128,6 +125,14 @@ private:
     Mutex mCLLock;
 
     bool mbVIVG2D;
+
+    void* mImxOclCvtModule;
+    OCL_HANDLE mHOcl;
+    ocl_open m_ocl_open;
+    ocl_setParam m_ocl_setParam;
+    ocl_getParam m_ocl_getParam;
+    ocl_convert m_ocl_convert;
+    ocl_close m_ocl_close;
 };
 
 } // namespace fsl
