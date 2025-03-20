@@ -154,8 +154,7 @@ bool VideoCapture::open(const char* deviceName, const int32_t width, const int32
     memset(&bufrequest, 0, sizeof(bufrequest));
     bufrequest.type = V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE;
     bufrequest.memory = V4L2_MEMORY_DMABUF;
-    // bufrequest.memory = V4L2_MEMORY_MMAP;
-    bufrequest.count = V4L2_BUFFER_NUM;
+    bufrequest.count = MAX_V4L2_BUFFER_NUM;
     if (ioctl(mDeviceFd, VIDIOC_REQBUFS, &bufrequest) < 0) {
         PLOG(ERROR) << "VIDIOC_REQBUFS failed";
         return false;

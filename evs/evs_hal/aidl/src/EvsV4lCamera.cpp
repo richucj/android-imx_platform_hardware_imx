@@ -45,7 +45,7 @@ constexpr std::array<int32_t, 2> kDefaultResolution = {640, 480};
 
 // Arbitrary limit on number of graphics buffers allowed to be allocated
 // Safeguards against unreasonable resource consumption and provides a testable limit
-constexpr unsigned kMaxBuffersInFlight = 100;
+constexpr unsigned kMaxBuffersInFlight = MAX_V4L2_BUFFER_NUM;
 
 }  // namespace
 
@@ -489,7 +489,7 @@ unsigned EvsV4lCamera::increaseAvailableFrames_Locked(unsigned numToAdd) {
         {
             int v4l2_index = 0;
             // Find the first v4l2 index without buffer.
-            for (v4l2_index=0; v4l2_index<V4L2_BUFFER_NUM; v4l2_index++) {
+            for (v4l2_index=0; v4l2_index<MAX_V4L2_BUFFER_NUM; v4l2_index++) {
                 LOG(INFO) << "F: distance (mBuffers.at(" << v4l2_index << "), mBuffers.end()) " << std::distance(mBuffers.find(v4l2_index), mBuffers.end());
                 if (mBuffers.find(v4l2_index) == mBuffers.end())
                 break;
