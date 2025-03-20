@@ -24,7 +24,7 @@
 #include <set>
 #include <thread>
 
-#define V4L2_BUFFER_NUM 10
+#define MAX_V4L2_BUFFER_NUM 10
 typedef v4l2_buffer imageBuffer;
 
 typedef struct {
