@@ -45,7 +45,8 @@ class Bluetooth : public BnBluetooth {
     HfpConfig mHfpConfig;
 
   private:
-    struct pcm_config pcm_config_hfp;
+    struct pcm_config pcm_config_sco;
+    struct pcm_config pcm_config_speaker;
     struct pcm *pcm_speaker_out = NULL;
     struct pcm *pcm_mic_in = NULL;
     struct pcm *pcm_sco_out = NULL;

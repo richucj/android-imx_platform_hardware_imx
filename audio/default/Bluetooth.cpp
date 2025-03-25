@@ -16,6 +16,7 @@
 
 #define LOG_TAG "AHAL_Bluetooth"
 #include <android-base/logging.h>
+#include <audio_utils/primitives.h>
 
 #include "core-impl/Bluetooth.h"
 
@@ -34,7 +35,18 @@ Bluetooth::Bluetooth() {
     mHfpConfig.sampleRate = Int{8000};
     mHfpConfig.volume = Float{HfpConfig::VOLUME_MAX};
 
-    pcm_config_hfp = {
+    /* speaker and mic shares the same pcm_config */
+    pcm_config_speaker = {
+        .channels = 2,
+        .rate = 16000,
+        .period_size = 256,
+        .period_count = 4,
+        .format = PCM_FORMAT_S16_LE,
+        .start_threshold = 0,
+        .avail_min = 0,
+    };
+
+    pcm_config_sco = {
         .channels = 1,
         .rate = 16000,
         .period_size = 256,
@@ -140,29 +152,34 @@ void* Bluetooth::uplink_task(void* arg) {
 void *Bluetooth::uplink_task_impl()
 {
     int ret = 0;
-    size_t size = pcm_config_hfp.period_size;
-    void *buffer = malloc(size);
+    size_t frameCount = pcm_config_sco.period_size;
+    size_t bytesMic = frameCount * 2 * 2; // stereo, 16 bit
+    size_t bytesSco = frameCount * 1 * 2; // mono, 16 bit
+    void *bufferMic = malloc(bytesMic);
+    void *bufferSco = malloc(bytesSco);
 
-    if (!buffer) {
-        LOG(ERROR) << __func__ << "Failed to alloc " << size << " bytes";
+    if (!bufferMic || !bufferSco) {
+        LOG(ERROR) << __func__ << "Failed to alloc " << bytesMic << " bytes";
         return NULL;
     }
 
     LOG(ERROR) << __func__ << " start";
     while (uplink_running) {
-        ret = pcm_read(pcm_mic_in, buffer, size);
+        ret = pcm_read(pcm_mic_in, bufferMic, bytesMic);
         if (ret) {
             LOG(ERROR) << __func__ << "pcm read failed: " << pcm_get_error(pcm_mic_in);
             continue;
         }
-        ret = pcm_write(pcm_sco_out, buffer, size);
+        downmix_to_mono_i16_from_stereo_i16((int16_t*)bufferSco, (const int16_t*)bufferMic, frameCount);
+        ret = pcm_write(pcm_sco_out, bufferSco, bytesSco);
         if (ret) {
             LOG(ERROR) << __func__ << "pcm write failed: " << pcm_get_error(pcm_sco_out);
             continue;
         }
     }
 
-    free(buffer);
+    free(bufferMic);
+    free(bufferSco);
     LOG(ERROR) << __func__ << " stop";
     return NULL;
 }
@@ -176,29 +193,34 @@ void* Bluetooth::downlink_task(void* arg) {
 void *Bluetooth::downlink_task_impl()
 {
     int ret = 0;
-    size_t size = pcm_config_hfp.period_size;
-    void *buffer = malloc(size);
+    size_t frameCount = pcm_config_sco.period_size;
+    size_t bytesSpeaker = frameCount * 2 * 2; // stereo, 16 bit
+    size_t bytesSco = frameCount * 1 * 2; // mono, 16 bit
+    void *bufferSpeaker = malloc(bytesSpeaker);
+    void *bufferSco = malloc(bytesSco);
 
-    if (!buffer) {
-        LOG(ERROR) << __func__ << "Failed to alloc " << size << " bytes";
+    if (!bufferSpeaker || !bufferSco) {
+        LOG(ERROR) << __func__ << "Failed to alloc " << bytesSpeaker << " bytes";
         return NULL;
     }
 
     LOG(ERROR) << __func__ << " start";
     while (downlink_running) {
-        ret = pcm_read(pcm_sco_in, buffer, size);
+        ret = pcm_read(pcm_sco_in, bufferSco, bytesSco);
         if (ret) {
             LOG(ERROR) << __func__ << "pcm read failed: " << pcm_get_error(pcm_sco_in);
             continue;
         }
-        ret = pcm_write(pcm_speaker_out, buffer, size);
+        upmix_to_stereo_i16_from_mono_i16((int16_t*)bufferSpeaker, (const int16_t*)bufferSco, frameCount);
+        ret = pcm_write(pcm_speaker_out, bufferSpeaker, bytesSpeaker);
         if (ret) {
             LOG(ERROR) << __func__ << "pcm write failed: " << pcm_get_error(pcm_speaker_out);
             continue;
         }
     }
 
-    free(buffer);
+    free(bufferSpeaker);
+    free(bufferSco);
     LOG(ERROR) << __func__ << " stop";
     return NULL;
 }
@@ -206,23 +228,24 @@ void *Bluetooth::downlink_task_impl()
 void Bluetooth::startHfp() {
     LOG(DEBUG) << __func__;
     int ret = 0;
+
     ret = openPcmForDevice(AUDIO_DEVICE_OUT_SPEAKER, PCM_OUT,
-                &pcm_config_hfp, &pcm_speaker_out);
+                &pcm_config_speaker, &pcm_speaker_out);
     if (ret)
         goto error;
 
     ret = openPcmForDevice(AUDIO_DEVICE_IN_BUILTIN_MIC, PCM_IN,
-                &pcm_config_hfp, &pcm_mic_in);
+                &pcm_config_speaker, &pcm_mic_in);
     if (ret)
         goto error;
 
     ret = openPcmForDevice(AUDIO_DEVICE_OUT_BLUETOOTH_SCO, PCM_OUT,
-                &pcm_config_hfp, &pcm_sco_out);
+                &pcm_config_sco, &pcm_sco_out);
     if (ret)
         goto error;
 
     ret = openPcmForDevice(AUDIO_DEVICE_IN_BLUETOOTH_SCO_HEADSET, PCM_IN,
-                &pcm_config_hfp, &pcm_sco_in);
+                &pcm_config_sco, &pcm_sco_in);
     if (ret)
         goto error;
 
@@ -273,7 +296,8 @@ ndk::ScopedAStatus Bluetooth::setHfpConfig(const HfpConfig& in_config, HfpConfig
     }
     if (in_config.sampleRate.has_value()) {
         mHfpConfig.sampleRate = in_config.sampleRate;
-        pcm_config_hfp.rate = mHfpConfig.sampleRate.value().value;
+        pcm_config_sco.rate = mHfpConfig.sampleRate.value().value;
+        pcm_config_speaker.rate = mHfpConfig.sampleRate.value().value;
     }
     if (in_config.volume.has_value()) {
         mHfpConfig.volume = in_config.volume;
