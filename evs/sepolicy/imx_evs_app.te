@@ -24,7 +24,11 @@ allow imx_evs_app servicemanager:service_manager list;
 # Allow find evsmanagerd service
 allow imx_evs_app cartelemetryd_service:service_manager find;
 
-allow imx_evs_app gpu_device:chr_file { open read write ioctl };
+
+# allow to access EGL
+allow imx_evs_app gpu_device:dir search;
+allow imx_evs_app hal_graphics_mapper_hwservice:hwservice_manager find;
+allow imx_evs_app gpu_device:chr_file { open read write ioctl map getattr };
 allow imx_evs_app vendor_evs_prop:file { getattr map open read };;
 allow imx_evs_app cartelemetryd:binder call;
 allow imx_evs_app system_data_file:dir search;

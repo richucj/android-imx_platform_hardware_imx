@@ -1,6 +1,6 @@
 /*
  * Copyright (C) 2022 The Android Open Source Project
- * Copyright 2024 NXP
+ * Copyright 2024-2025 NXP
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -15,12 +15,15 @@
  * limitations under the License.
  */
 
-#ifndef CPP_EVS_SAMPLEDRIVER_AIDL_INCLUDE_EVSENUMERATOR_H
-#define CPP_EVS_SAMPLEDRIVER_AIDL_INCLUDE_EVSENUMERATOR_H
+#ifndef CPP_EVS_IMX_LIBCAMERA_AIDL_INCLUDE_EVSENUMERATOR_H
+#define CPP_EVS_IMX_LIBCAMERA_AIDL_INCLUDE_EVSENUMERATOR_H
 
 #include "ConfigManager.h"
 #include "EvsGlDisplay.h"
-#include "EvsV4lCamera.h"
+#include "EvsLibcameraCamera.h"
+
+#include "libcamera/camera.h"
+#include "libcamera/camera_manager.h"
 
 #include <list>
 #include <string>
@@ -93,13 +96,21 @@ public:
 
 private:
     struct CameraRecord {
-        std::string      name;
-        CameraDesc       desc;
+        std::string name;
         std::weak_ptr<EvsV4lCamera> activeInstance;
-        camType          cameraType;
 
-        CameraRecord(const char *name, const char *cameraId, camType cameraType)
-         : desc() { this->name = name; desc.id = cameraId; this->cameraType = cameraType; }
+        CameraRecord(const char *name, std::shared_ptr<EvsV4lCamera> &activeInstance)
+            { this->name = name; }
+
+        ~CameraRecord() {
+            auto pActiveCamera = activeInstance.lock(); // Lock the weak_ptr.
+            if (!pActiveCamera) {
+                LOG(WARNING) << "shared_ptr and weak_ptr share control blocks, but weak_ptr ceased to exist.";
+            } else {
+                pActiveCamera->shutdown(); // Shutdown the active camera
+            }
+        }
+
     };
 
     class ActiveDisplays {
@@ -125,14 +136,15 @@ private:
     };
 
     bool checkPermission();
-    void closeCamera_impl(const std::shared_ptr<aidlevs::IEvsCamera>& pCamera,
-                          const std::string& cameraId);
+
     ::ndk::ScopedAStatus getDisplayStateImpl(std::optional<int32_t> displayId,
                                              aidlevs::DisplayState* state);
 
-    static bool qualifyCaptureDevice(const char* deviceName);
     static bool filterVideoFromConfigure(char *deviceName);
-    static CameraRecord* findCameraById(const std::string& cameraId);
+    static std::shared_ptr<libcamera::Camera> findCameraById(const std::string& cameraId);
+
+    static void cameraAdded(std::shared_ptr<libcamera::Camera> camera);
+    static void cameraRemoved(std::shared_ptr<libcamera::Camera> camera);
     static bool enumerateCameras();
     // Enumerate available displays and return an id of the internal display
     static uint64_t enumerateDisplays();
@@ -145,10 +157,9 @@ private:
     //        Because our server has a single thread in the thread pool, these values are
     //        never accessed concurrently despite potentially having multiple instance objects
     //        using them.
-    static std::list<CameraRecord> sCameraList;
-                                                           // Object destructs if client dies.
+    static std::list<CameraRecord> sOpenCameraList;
     static std::mutex sLock;                               // Mutex on shared camera device list.
-    static std::condition_variable sCameraSignal;          // Signal on camera device addition.
+                                                           // Object destructs if client dies.
     static std::unique_ptr<ConfigManager> sConfigManager;  // ConfigManager
     static std::shared_ptr<::aidl::android::frameworks::automotive::display::ICarDisplayProxy>
             sDisplayProxy;
@@ -156,6 +167,9 @@ private:
 
     uint64_t mInternalDisplayId;
     std::shared_ptr<aidlevs::IEvsEnumeratorStatusCallback> mCallback;
+
+    static std::unique_ptr<libcamera::CameraManager> cameraManager_;
+    static unsigned int cameraId_;
 
     // Dumpsys commands
     binder_status_t parseCommand(int fd, const std::vector<std::string>& options);
@@ -165,4 +179,4 @@ private:
 
 }  // namespace aidl::android::hardware::automotive::evs::implementation
 
-#endif  // CPP_EVS_SAMPLEDRIVER_AIDL_INCLUDE_EVSENUMERATOR_H
+#endif  // CPP_EVS_IMX_LIBCAMERA_AIDL_INCLUDE_EVSENUMERATOR_H

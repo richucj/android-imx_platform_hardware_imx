@@ -1,6 +1,6 @@
 /*
  * Copyright (C) 2022 The Android Open Source Project
- * Copyright 2024 NXP
+ * Copyright 2024-2025 NXP
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -15,7 +15,12 @@
  * limitations under the License.
  */
 
-#include "EvsEnumerator.h"
+#ifdef USE_LIBCAMERA
+    #include "EvsLibcameraEnumerator.h"
+#else
+    #include "EvsV4l2Enumerator.h"
+#endif
+
 #include "EvsGlDisplay.h"
 
 #include <android/binder_manager.h>
@@ -66,8 +71,11 @@ int main() {
         return EXIT_FAILURE;
     }
 
+#ifndef USE_LIBCAMERA
+    // With libcamera the hotplug thread is managed by libcamera.
     std::atomic<bool> running{true};
     std::thread hotplugHandler(EvsEnumerator::EvsHotplugThread, service, std::ref(running));
+#endif // USE_LIBCAMERA
 
     const std::string instanceName =
             std::string(EvsEnumerator::descriptor) + std::string(kHwInstanceName);
@@ -89,11 +97,13 @@ int main() {
     // In normal operation, we don't expect the thread pool to exit
     LOG(INFO) << "EVS Hardware Enumerator is shutting down";
 
+#ifndef USE_LIBCAMERA
     // Exit a hotplug device thread
     running = false;
     if (hotplugHandler.joinable()) {
         hotplugHandler.join();
     }
+#endif // USE_LIBCAMERA
 
     return EXIT_SUCCESS;
 }

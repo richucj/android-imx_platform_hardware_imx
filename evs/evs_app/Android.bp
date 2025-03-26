@@ -56,7 +56,6 @@ cc_binary {
         "libvhalclient",
     ],
     required: [
-        "ImxConfig.json",
         "ImxFakeCamConfig.json",
         "ImxCarFromTop.png",
         "ImxLabeledChecker.png",
@@ -80,12 +79,6 @@ cc_library {
         type: "lite",
     },
     shared_libs: ["libprotobuf-cpp-lite"],
-}
-
-prebuilt_etc {
-    name: "ImxConfig.json",
-    src: "res/ImxConfig.json",
-    sub_dir: "automotive/evs",
 }
 
 prebuilt_etc {

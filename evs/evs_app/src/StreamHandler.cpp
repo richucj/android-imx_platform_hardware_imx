@@ -53,7 +53,8 @@ StreamHandler::StreamHandler(const std::shared_ptr<IEvsCamera>& pCamera, uint32_
         buffer_handle_t memHandle = nullptr;
         android::GraphicBufferAllocator& alloc(android::GraphicBufferAllocator::get());
         const auto usage = GRALLOC_USAGE_HW_TEXTURE | GRALLOC_USAGE_SW_READ_RARELY |
-                GRALLOC_USAGE_SW_WRITE_OFTEN;
+                GRALLOC_USAGE_SW_WRITE_OFTEN | GRALLOC_USAGE_HW_CAMERA_WRITE | GRALLOC_USAGE_PRIVATE_3;
+
         for (size_t i = 0; i < numBuffers; ++i) {
             unsigned pixelsPerLine;
             android::status_t result = alloc.allocate(width, height, format, 1, usage, &memHandle,
@@ -68,8 +69,7 @@ StreamHandler::StreamHandler(const std::shared_ptr<IEvsCamera>& pCamera, uint32_
                 pDesc->height = height;
                 pDesc->layers = 1;
                 pDesc->format = format;
-                pDesc->usage = GRALLOC_USAGE_HW_TEXTURE | GRALLOC_USAGE_SW_READ_RARELY |
-                        GRALLOC_USAGE_SW_WRITE_OFTEN;
+                pDesc->usage = usage;
                 pDesc->stride = pixelsPerLine;
                 buf.buffer.handle = android::dupToAidl(memHandle);
                 buf.bufferId = i;  // Unique number to identify this buffer

@@ -36,9 +36,8 @@ using namespace ::aidl::android::hardware::automotive::evs;
  * the metadata info is from evs hal. no need hardcode width/height
  * for RenderDirectView
  */
-#define WIDTH_FOR_TOP_VIEW 1280
-#define HEIGHT_FOR_TOP_VIEW 720
-
+#define WIDTH_FOR_TOP_VIEW 1920
+#define HEIGHT_FOR_TOP_VIEW 1280
 /*
  * Combines the views from all available cameras into one reprojected top down view.
  */

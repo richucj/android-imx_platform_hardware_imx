@@ -38,6 +38,7 @@ get_prop(hal_evs_driver, graphics_config_prop);
 allow hal_evs_driver graphics_config_writable_prop:file { getattr map open read };
 allow hal_evs_driver init:unix_stream_socket connectto;
 allow hal_evs_driver property_socket:sock_file write;
+allow hal_evs_driver sysfs:dir { getattr open read };
 allow hal_evs_driver sysfs:file { getattr open read };
 allow hal_evs_driver vendor_evs_prop:file { getattr map open read };
 allow hal_evs_driver vendor_evs_prop:property_service set;

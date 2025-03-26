@@ -106,7 +106,7 @@ int main(int argc, char** argv) {
     const char* evsServiceName = "default";
     int displayId = -1;
     bool useExternalMemory = false;
-    android_pixel_format_t extMemoryFormat = HAL_PIXEL_FORMAT_RGBA_8888;
+    android_pixel_format_t extMemoryFormat = HAL_PIXEL_FORMAT_RGB_888;
     int32_t mockGearSignal = static_cast<int32_t>(VehicleGear::GEAR_REVERSE);
     for (int i = 1; i < argc; i++) {
         if (strcmp(argv[i], "--test") == 0) {

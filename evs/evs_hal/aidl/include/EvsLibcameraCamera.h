@@ -1,6 +1,6 @@
 /*
  * Copyright (C) 2022 The Android Open Source Project
- * Copyright 2024 NXP
+ * Copyright 2024-2025 NXP
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -15,11 +15,13 @@
  * limitations under the License.
  */
 
-#ifndef CPP_EVS_SAMPLEDRIVER_AIDL_INCLUDE_EVSV4LCAMERA_H
-#define CPP_EVS_SAMPLEDRIVER_AIDL_INCLUDE_EVSV4LCAMERA_H
+#ifndef CPP_EVS_IMX_LIBCAMERA_AIDL_INCLUDE_EVSV4LCAMERA_H
+#define CPP_EVS_IMX_LIBCAMERA_AIDL_INCLUDE_EVSV4LCAMERA_H
 
 #include "ConfigManager.h"
-#include "VideoCapture.h"
+
+#include "libcamera/camera.h"
+#include "libcamera/camera_manager.h"
 
 #include <aidl/android/hardware/automotive/evs/BnEvsCamera.h>
 #include <aidl/android/hardware/automotive/evs/BufferDesc.h>
@@ -31,19 +33,43 @@
 #include <aidl/android/hardware/automotive/evs/ParameterRange.h>
 #include <aidl/android/hardware/automotive/evs/Stream.h>
 #include <android-base/result.h>
-#include <android/hardware_buffer.h>
 #include <ui/GraphicBuffer.h>
 
 #include <functional>
 #include <thread>
 
 namespace aidl::android::hardware::automotive::evs::implementation {
-
 namespace aidlevs = ::aidl::android::hardware::automotive::evs;
 
 #define EVS_FAKE_PROP "vendor.evs.fake.enable"
 
 class EvsV4lCamera : public ::aidl::android::hardware::automotive::evs::BnEvsCamera {
+
+    using AidlPixelFormat = ::aidl::android::hardware::graphics::common::PixelFormat;
+
+    class FrameBuffer final : public libcamera::FrameBuffer
+    {
+    public:
+        FrameBuffer(const std::vector<Plane> &planes,
+                buffer_handle_t handle)	: libcamera::FrameBuffer(planes), handle_(handle)
+        {
+        };
+        ~FrameBuffer()
+        {
+            ::android::GraphicBufferAllocator& alloc(::android::GraphicBufferAllocator::get());
+
+            alloc.free(handle_);
+        };
+
+        buffer_handle_t handle() const { return handle_; }
+
+    private:
+        const buffer_handle_t handle_;
+    };
+
+    static AidlPixelFormat formatV4l2ToAidl(int v4lFormat);
+    static libcamera::PixelFormat AidlFromat2PixelFormat(AidlPixelFormat AidlFmt);
+
 public:
     // Methods from ::android::hardware::automotive::aidlevs::IEvsCamera follow.
     ::ndk::ScopedAStatus doneWithFrame(const std::vector<aidlevs::BufferDesc>& buffers) override;
@@ -74,8 +100,8 @@ public:
     ::ndk::ScopedAStatus stopVideoStream() override;
     ::ndk::ScopedAStatus unsetPrimaryClient() override;
 
-    static std::shared_ptr<EvsV4lCamera> Create(const char* deviceName);
-    static std::shared_ptr<EvsV4lCamera> Create(const char* deviceName,
+    static std::shared_ptr<EvsV4lCamera> Create(std::shared_ptr<libcamera::Camera>);
+    static std::shared_ptr<EvsV4lCamera> Create(std::shared_ptr<libcamera::Camera>,
                                                 std::unique_ptr<ConfigManager::CameraInfo>& camInfo,
                                                 const aidlevs::Stream* streamCfg = nullptr);
     EvsV4lCamera(const EvsV4lCamera&) = delete;
@@ -91,7 +117,7 @@ public:
     ::android::base::Result<void> stopDumpFrames();
 
     // Constructors
-    EvsV4lCamera(const char* deviceName, std::unique_ptr<ConfigManager::CameraInfo>& camInfo);
+    EvsV4lCamera(std::shared_ptr<libcamera::Camera>, std::unique_ptr<ConfigManager::CameraInfo>& camInfo);
 
 private:
     // These three functions are expected to be called while mAccessLock is held
@@ -99,41 +125,51 @@ private:
     unsigned increaseAvailableFrames_Locked(unsigned numToAdd);
     unsigned decreaseAvailableFrames_Locked(unsigned numToRemove);
 
-    void forwardFrame(imageBuffer &tgt, void *pData);
-    inline bool convertToV4l2CID(aidlevs::CameraParam id, uint32_t& v4l2cid);
+    void requestComplete(libcamera::Request *request);
+    void forwardFrame(EvsV4lCamera::FrameBuffer *pBuff);
+    EvsResult queueBufferToCamera(std::unique_ptr<EvsV4lCamera::FrameBuffer> &buffer);
+
+    std::unique_ptr<EvsV4lCamera::FrameBuffer> frameBufferCreate(
+        const buffer_handle_t handle, const uint32_t format, const uint32_t stride);
+    std::unique_ptr<EvsV4lCamera::FrameBuffer> frameBufferCreate(buffer_handle_t &memHandle);
+
+    unsigned frameAddAndQueue(std::unique_ptr<EvsV4lCamera::FrameBuffer> fb);
+
+    std::unique_ptr<EvsV4lCamera::FrameBuffer> frameAllocate();
+    std::unique_ptr<EvsV4lCamera::FrameBuffer> frameImport(const BufferDesc& bDesc);
 
     // The callback used to deliver each frame
-    std::shared_ptr<aidlevs::IEvsCameraStream> mStream;
+    std::shared_ptr<aidlevs::IEvsCameraStream> mEvsStreamClient;
+    libcamera::Stream *mLibCameraStream;
 
-    // Interface to the v4l device
-    VideoCapture mVideo = {};
 
     // The properties of this camera
     aidlevs::CameraDesc mDescription = {};
+    std::shared_ptr<libcamera::Camera> mCamera;
+    std::unique_ptr<libcamera::CameraConfiguration> mLibcameraCamCfg;
 
-    uint32_t mFormat = 0;  // Values from android_pixel_format_t
+    uint32_t mWidth = 0;  // Values from android_pixel_format_t
+    uint32_t mHeight = 0;  // Values from android_pixel_format_t
+    AidlPixelFormat mFormat = AidlPixelFormat::UNSPECIFIED;  // Values from android_pixel_format_t
     uint32_t mUsage = 0;   // Values from from Gralloc.h
     uint32_t mStride = 0;  // Pixels per row (may be greater than image width)
-
-    struct BufferRecord {
-        buffer_handle_t handle;
-        bool inUse;
-
-        explicit BufferRecord(buffer_handle_t h) : handle(h), inUse(false){};
-    };
+    uint32_t mNumPlanes = 0;
 
     // Graphics buffers to transfer images and their V4L buffer id's.
-    std::unordered_map<int, BufferRecord> mBuffers;
+    int mLastCookie = 0;
+    std::vector<std::unique_ptr<EvsV4lCamera::FrameBuffer>> mAllocatedBuffers_;
+
+    enum {CONFIGURED, RUNNING, STOPPING, ACQUIRED, AVAILABLE} mState;
     // How many buffers are we currently using
     unsigned mFramesAllowed;
     // How many buffers are currently outstanding
+    unsigned mFramesQueued;
     unsigned mFramesInUse;
+    unsigned mDropFrames;
 
     std::set<uint32_t> mCameraControls;  // Available camera controls
 
-    // Which format specific function we need to use to move camera imagery into our output buffers
-    void (*mFillBufferFromVideo)(const aidlevs::BufferDesc& tgtBuff, uint8_t* tgt, void* imgData,
-                                 unsigned imgStride);
+    std::vector<std::unique_ptr<libcamera::Request>> mRequests;
 
     aidlevs::EvsResult doneWithFrame_impl(const aidlevs::BufferDesc& bufferDesc);
     // Synchronization necessary to deconflict the capture thread from the main service thread
@@ -158,4 +194,4 @@ private:
 
 }  // namespace aidl::android::hardware::automotive::evs::implementation
 
-#endif  // CPP_EVS_SAMPLEDRIVER_AIDL_INCLUDE_EVSV4LCAMERA_H
+#endif  // CPP_EVS_IMX_LIBCAMERA_AIDL_INCLUDE_EVSV4LCAMERA_H

@@ -17,9 +17,58 @@ package {
     default_applicable_licenses: ["Android-Apache-2.0"],
 }
 
+soong_config_module_type {
+    name: "IMXPLUGIN_cc_conditionals",
+    module_type: "cc_defaults",
+    config_namespace: "IMXPLUGIN",
+    variables: ["BOARD_SOC_TYPE", "MEDIA_PIPELINE"],
+    properties: ["cflags", "srcs", "shared_libs", "include_dirs"],
+}
+
+soong_config_string_variable {
+    name: "BOARD_SOC_TYPE",
+    values: ["IMX95", "IMX8Q"],
+}
+
+soong_config_string_variable {
+    name: "MEDIA_PIPELINE",
+    values: ["NEOISP"],
+}
+
+IMXPLUGIN_cc_conditionals {
+    name: "cc_conditionals_imx8_imx9",
+    soong_config_variables: {
+        BOARD_SOC_TYPE: {
+            IMX95: {
+                cflags: ["-DUSE_LIBCAMERA"],
+                srcs: [
+                    "src/libcamera/*.cpp"
+                ],
+                shared_libs: [
+                    "libcamera",
+                    "libcamera-base",
+                ],
+                include_dirs: [
+                    "vendor/nxp-opensource/libcamera/include",
+                    "vendor/nxp-opensource/libcamera/prebuilt-android/include",
+                    "vendor/nxp-opensource/libcamera/src/android",
+                ],
+            },
+            conditions_default: {
+                srcs: [
+                    "src/v4l2/*.cpp"
+                ],
+            },
+        }
+    },
+}
+
 cc_binary {
     name: "android.hardware.automotive.evs@EvsEnumeratorHw",
-    defaults: ["android.hardware.graphics.common-ndk_static"],
+    defaults: [
+        "android.hardware.graphics.common-ndk_static",
+        "cc_conditionals_imx8_imx9",
+    ],
     vendor: true,
     relative_install_path: "hw",
     overrides: ["evsmanagerd"],
@@ -72,7 +121,6 @@ cc_binary {
         "-Werror",
         "-Wthread-safety",
     ],
-
     required: [
         "imx_evs_aidl_configuration.xml",
         "fake_evs_aidl_configuration.xml",
@@ -83,15 +131,10 @@ cc_binary {
 }
 
 prebuilt_etc {
-    name: "imx_evs_aidl_configuration.xml",
-    soc_specific: true,
-    src: "resources/imx_evs_configuration.xml",
-    sub_dir: "automotive/evs",
-}
-
-prebuilt_etc {
     name: "fake_evs_aidl_configuration.xml",
     soc_specific: true,
     src: "resources/fake_evs_configuration.xml",
     sub_dir: "automotive/evs",
 }
+
+// The prebuilt_etc imx_evs_configuration.xml has been moved to device/nxp mek_8q and evk_95.

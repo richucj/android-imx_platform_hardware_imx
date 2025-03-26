@@ -1,6 +1,6 @@
 /*
  * Copyright (C) 2017 The Android Open Source Project
- * Copyright 2024 NXP
+ * Copyright 2024-2025 NXP
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -113,13 +113,16 @@ bool RenderDirectView::activate() {
             // Stream configurations are found in metadata
             RawStreamConfig* ptr = reinterpret_cast<RawStreamConfig*>(streamCfgs.data.i32);
             for (unsigned idx = 0; idx < streamCfgs.count; idx += kStreamCfgSz) {
-                if (ptr->direction == ANDROID_SCALER_AVAILABLE_STREAM_CONFIGURATIONS_OUTPUT &&
-                    ptr->format == HAL_PIXEL_FORMAT_RGB_888) {
+                if (ptr->direction == ANDROID_SCALER_AVAILABLE_STREAM_CONFIGURATIONS_OUTPUT && (
+                    ptr->format == HAL_PIXEL_FORMAT_RGBA_8888 || ptr->format == HAL_PIXEL_FORMAT_RGB_888)) {
                     if (ptr->framerate >= minReqFps && ptr->width * ptr->height > maxArea) {
                         targetCfg->id = ptr->id;
                         targetCfg->width = ptr->width;
                         targetCfg->height = ptr->height;
 
+                        targetCfg->format = ptr->format == HAL_PIXEL_FORMAT_RGBA_8888 ?
+                            aidl::android::hardware::graphics::common::PixelFormat::RGBA_8888 :
+                            aidl::android::hardware::graphics::common::PixelFormat::RGB_888;
                         maxArea = ptr->width * ptr->height;
 
                         foundCfg = true;
@@ -132,9 +135,6 @@ bool RenderDirectView::activate() {
                          << "default parameters will be used.";
         }
     }
-
-    // This client always wants below input data format
-    targetCfg->format = aidl::android::hardware::graphics::common::PixelFormat::RGB_888;
 
     // Construct our video texture
     mTexture.reset(createVideoTexture(mEnumerator, mCameraDesc.id.c_str(),
@@ -161,7 +161,6 @@ bool RenderDirectView::drawFrame(const BufferDesc& tgtBuffer) {
         LOG(ERROR) << "Failed to attached render target";
         return false;
     }
-
     // Select our screen space simple texture shader
     glUseProgram(mShaderProgram);
 
