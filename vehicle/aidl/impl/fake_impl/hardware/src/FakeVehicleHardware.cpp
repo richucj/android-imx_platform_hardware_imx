@@ -54,6 +54,8 @@ namespace fake {
 
 namespace {
 
+#define PROP_ID_TO_CSTR(A) (propIdToString(A).c_str())
+
 using ::aidl::android::hardware::automotive::vehicle::CruiseControlCommand;
 using ::aidl::android::hardware::automotive::vehicle::CruiseControlType;
 using ::aidl::android::hardware::automotive::vehicle::DriverDistractionState;
@@ -83,6 +85,12 @@ using ::aidl::android::hardware::automotive::vehicle::VehiclePropertyType;
 using ::aidl::android::hardware::automotive::vehicle::VehiclePropValue;
 using ::aidl::android::hardware::automotive::vehicle::VehicleUnit;
 
+using ::android::hardware::automotive::remoteaccess::GetApPowerBootupReasonRequest;
+using ::android::hardware::automotive::remoteaccess::GetApPowerBootupReasonResponse;
+using ::android::hardware::automotive::remoteaccess::IsVehicleInUseRequest;
+using ::android::hardware::automotive::remoteaccess::IsVehicleInUseResponse;
+using ::android::hardware::automotive::remoteaccess::PowerController;
+
 using ::android::base::EqualsIgnoreCase;
 using ::android::base::Error;
 using ::android::base::GetIntProperty;
@@ -109,6 +117,9 @@ constexpr char DEFAULT_CONFIG_DIR[] = "/vendor/etc/automotive/vhalconfig/";
 // The directory for property configuration file that overrides the default configuration file.
 // For config file format, see impl/default_config/config/README.md.
 constexpr char OVERRIDE_CONFIG_DIR[] = "/vendor/etc/automotive/vhaloverride/";
+// The optional config file for power controller grpc service that provides vehicleInUse and
+// ApPowerBootupReason property.
+constexpr char GRPC_SERVICE_CONFIG_FILE[] = "/vendor/etc/automotive/powercontroller/serverconfig";
 // If OVERRIDE_PROPERTY is set, we will use the configuration files from OVERRIDE_CONFIG_DIR to
 // overwrite the default configs.
 constexpr char OVERRIDE_PROPERTY[] = "persist.vendor.vhal_init_value_override";
@@ -249,7 +260,43 @@ const std::unordered_map<int32_t, std::vector<int32_t>> mAdasEnabledPropToAdasPr
                         toInt(VehicleProperty::CROSS_TRAFFIC_MONITORING_WARNING_STATE),
                 },
         },
+        // LSAEB
+        {
+                toInt(VehicleProperty::LOW_SPEED_AUTOMATIC_EMERGENCY_BRAKING_ENABLED),
+                {
+                        toInt(VehicleProperty::LOW_SPEED_AUTOMATIC_EMERGENCY_BRAKING_STATE),
+                },
+        },
 };
+
+// The list of VHAL properties that might be handled by an external power controller.
+const std::unordered_set<int32_t> mPowerPropIds = {toInt(VehicleProperty::VEHICLE_IN_USE),
+                                                   toInt(VehicleProperty::AP_POWER_BOOTUP_REASON)};
+
+void maybeGetGrpcServiceInfo(std::string* address) {
+    std::ifstream ifs(GRPC_SERVICE_CONFIG_FILE);
+    if (!ifs) {
+        ALOGI("Cannot open grpc service config file at: %s, assume no service is available",
+              GRPC_SERVICE_CONFIG_FILE);
+        return;
+    }
+    ifs >> *address;
+    ifs.close();
+}
+
+inline std::string vecToStringOfHexValues(const std::vector<int32_t>& vec) {
+    std::stringstream ss;
+    ss << "[";
+    for (size_t i = 0; i < vec.size(); i++) {
+        if (i != 0) {
+            ss << ",";
+        }
+        ss << std::showbase << std::hex << vec[i];
+    }
+    ss << "]";
+    return ss.str();
+}
+
 }  // namespace
 
 void FakeVehicleHardware::storePropInitialValue(const ConfigDeclaration& config) {
@@ -303,10 +350,18 @@ void FakeVehicleHardware::storePropInitialValue(const ConfigDeclaration& config)
 }
 
 FakeVehicleHardware::FakeVehicleHardware(VehicleEmulator* emulator)
-    : FakeVehicleHardware(std::make_unique<VehiclePropValuePool>(), emulator, DEFAULT_CONFIG_DIR, OVERRIDE_CONFIG_DIR, false) {ALOGI("FakeVehicleHardware::FakeVehicleHardware(VehicleEmulator* emulator)");}
+    : FakeVehicleHardware(emulator, DEFAULT_CONFIG_DIR, OVERRIDE_CONFIG_DIR, false) {}
+
+FakeVehicleHardware::FakeVehicleHardware(VehicleEmulator* emulator, std::string defaultConfigDir,
+                                         std::string overrideConfigDir, bool forceOverride)
+    : FakeVehicleHardware(std::make_unique<VehiclePropValuePool>(), emulator, defaultConfigDir, overrideConfigDir, forceOverride,
+                          /*s2rS2dConfig=*/
+                          GetIntProperty(POWER_STATE_REQ_CONFIG_PROPERTY, /*default_value=*/0)) {}
+
+
 
 FakeVehicleHardware::FakeVehicleHardware(std::unique_ptr<VehiclePropValuePool> valuePool, VehicleEmulator* emulator, std::string defaultConfigDir,
-                                         std::string overrideConfigDir, bool forceOverride)
+                                         std::string overrideConfigDir, bool forceOverride,int32_t s2rS2dConfig)
     : mValuePool(std::move(valuePool)),
       mServerSidePropStore(new VehiclePropertyStore(mValuePool)),
       mEmulator(emulator),
@@ -320,7 +375,7 @@ FakeVehicleHardware::FakeVehicleHardware(std::unique_ptr<VehiclePropValuePool> v
       mDefaultConfigDir(defaultConfigDir),
       mOverrideConfigDir(overrideConfigDir),
       mForceOverride(forceOverride) {
-    init();
+    init(s2rS2dConfig);
 }
 
 FakeVehicleHardware::~FakeVehicleHardware() {
@@ -336,21 +391,27 @@ bool FakeVehicleHardware::UseOverrideConfigDir() {
 
 std::unordered_map<int32_t, ConfigDeclaration> FakeVehicleHardware::loadConfigDeclarations() {
     std::unordered_map<int32_t, ConfigDeclaration> configsByPropId;
-    loadPropConfigsFromDir(mDefaultConfigDir, &configsByPropId);
+    bool defaultConfigLoaded = loadPropConfigsFromDir(mDefaultConfigDir, &configsByPropId);
+    if (!defaultConfigLoaded) {
+        // This cannot work without a valid default config.
+        ALOGE("Failed to load default config, exiting");
+        exit(1);
+    }
     if (UseOverrideConfigDir()) {
         loadPropConfigsFromDir(mOverrideConfigDir, &configsByPropId);
     }
     return configsByPropId;
 }
 
-void FakeVehicleHardware::init() {
+void FakeVehicleHardware::init(int32_t s2rS2dConfig) {
+    maybeGetGrpcServiceInfo(&mPowerControllerServiceAddress);
+
     for (auto& [_, configDeclaration] : loadConfigDeclarations()) {
         VehiclePropConfig cfg = configDeclaration.config;
         VehiclePropertyStore::TokenFunction tokenFunction = nullptr;
 
         if (cfg.prop == toInt(VehicleProperty::AP_POWER_STATE_REQ)) {
-            int config = GetIntProperty(POWER_STATE_REQ_CONFIG_PROPERTY, /*default_value=*/0);
-            cfg.configArray[0] = config;
+            cfg.configArray[0] = s2rS2dConfig;
         } else if (cfg.prop == OBD2_FREEZE_FRAME) {
             tokenFunction = [](const VehiclePropValue& propValue) { return propValue.timestamp; };
         }
@@ -743,7 +804,7 @@ std::optional<int32_t> FakeVehicleHardware::getSyncedAreaIdIfHvacDualOn(
 FakeVehicleHardware::ValueResultType FakeVehicleHardware::getUserHalProp(
         const VehiclePropValue& value) const {
     auto propId = value.prop;
-    ALOGI("get(): getting value for prop %d from User HAL", propId);
+    ALOGI("get(): getting value for prop %s from User HAL", PROP_ID_TO_CSTR(propId));
 
     auto result = mFakeUserHal->onGetProperty(value);
     if (!result.ok()) {
@@ -778,6 +839,13 @@ FakeVehicleHardware::ValueResultType FakeVehicleHardware::maybeGetSpecialValue(
     *isSpecialValue = false;
     int32_t propId = value.prop;
     ValueResultType result;
+
+    if (mPowerControllerServiceAddress != "") {
+        if (mPowerPropIds.find(propId) != mPowerPropIds.end()) {
+            *isSpecialValue = true;
+            return getPowerPropFromExternalService(propId);
+        }
+    }
 
     if (propId >= STARTING_VENDOR_CODE_PROPERTIES_FOR_TEST &&
         propId < ENDING_VENDOR_CODE_PROPERTIES_FOR_TEST) {
@@ -858,6 +926,58 @@ FakeVehicleHardware::ValueResultType FakeVehicleHardware::maybeGetSpecialValue(
     }
 
     return nullptr;
+}
+
+FakeVehicleHardware::ValueResultType FakeVehicleHardware::getPowerPropFromExternalService(
+        int32_t propId) const {
+    auto channel =
+            grpc::CreateChannel(mPowerControllerServiceAddress, grpc::InsecureChannelCredentials());
+    auto clientStub = PowerController::NewStub(channel);
+    switch (propId) {
+        case toInt(VehicleProperty::VEHICLE_IN_USE):
+            return getVehicleInUse(clientStub.get());
+        case toInt(VehicleProperty::AP_POWER_BOOTUP_REASON):
+            return getApPowerBootupReason(clientStub.get());
+        default:
+            return StatusError(StatusCode::INTERNAL_ERROR)
+                   << "Unsupported power property ID: " << propId;
+    }
+}
+
+FakeVehicleHardware::ValueResultType FakeVehicleHardware::getVehicleInUse(
+        PowerController::Stub* clientStub) const {
+    IsVehicleInUseRequest request = {};
+    IsVehicleInUseResponse response = {};
+    grpc::ClientContext context;
+    auto status = clientStub->IsVehicleInUse(&context, request, &response);
+    if (!status.ok()) {
+        return StatusError(StatusCode::TRY_AGAIN) << "Cannot connect to GRPC service "
+                                                  << ", error: " << status.error_message();
+    }
+    auto result = mValuePool->obtainBoolean(response.isvehicleinuse());
+    result->prop = toInt(VehicleProperty::VEHICLE_IN_USE);
+    result->areaId = 0;
+    result->status = VehiclePropertyStatus::AVAILABLE;
+    result->timestamp = elapsedRealtimeNano();
+    return result;
+}
+
+FakeVehicleHardware::ValueResultType FakeVehicleHardware::getApPowerBootupReason(
+        PowerController::Stub* clientStub) const {
+    GetApPowerBootupReasonRequest request = {};
+    GetApPowerBootupReasonResponse response = {};
+    grpc::ClientContext context;
+    auto status = clientStub->GetApPowerBootupReason(&context, request, &response);
+    if (!status.ok()) {
+        return StatusError(StatusCode::TRY_AGAIN) << "Cannot connect to GRPC service "
+                                                  << ", error: " << status.error_message();
+    }
+    auto result = mValuePool->obtainInt32(response.bootupreason());
+    result->prop = toInt(VehicleProperty::AP_POWER_BOOTUP_REASON);
+    result->areaId = 0;
+    result->status = VehiclePropertyStatus::AVAILABLE;
+    result->timestamp = elapsedRealtimeNano();
+    return result;
 }
 
 FakeVehicleHardware::ValueResultType FakeVehicleHardware::getEchoReverseBytes(
@@ -966,6 +1086,10 @@ VhalResult<void> FakeVehicleHardware::maybeSetSpecialValue(const VehiclePropValu
     VhalResult<void> isAdasPropertyAvailableResult;
     VhalResult<bool> isCruiseControlTypeStandardResult;
     switch (propId) {
+        case toInt(VehicleProperty::DISPLAY_BRIGHTNESS):
+        case toInt(VehicleProperty::PER_DISPLAY_BRIGHTNESS):
+            ALOGD("DISPLAY_BRIGHTNESS: %s", value.toString().c_str());
+            return {};
         case toInt(VehicleProperty::AP_POWER_STATE_REPORT):
             *isSpecialValue = true;
             return setApPowerStateReport(value);
@@ -1113,7 +1237,7 @@ StatusCode FakeVehicleHardware::setValues(std::shared_ptr<const SetValuesCallbac
                                           const std::vector<SetValueRequest>& requests) {
     for (auto& request : requests) {
         if (FAKE_VEHICLEHARDWARE_DEBUG) {
-            ALOGD("Set value for property ID: %d", request.value.prop);
+            ALOGD("Set value for property ID: %s", PROP_ID_TO_CSTR(request.value.prop));
         }
 
         // In a real VHAL implementation, you could either send the setValue request to vehicle bus
@@ -1149,9 +1273,9 @@ VhalResult<void> FakeVehicleHardware::setValue(const VehiclePropValue& value) {
     auto setSpecialValueResult = maybeSetSpecialValue(value, &isSpecialValue);
     if (isSpecialValue) {
         if (!setSpecialValueResult.ok()) {
-            return StatusError(getErrorCode(setSpecialValueResult))
-                   << StringPrintf("failed to set special value for property ID: %d, error: %s",
-                                   value.prop, getErrorMsg(setSpecialValueResult).c_str());
+            return StatusError(getErrorCode(setSpecialValueResult)) << StringPrintf(
+                           "failed to set special value for property ID: %s, error: %s",
+                           PROP_ID_TO_CSTR(value.prop), getErrorMsg(setSpecialValueResult).c_str());
         }
         return {};
     }
@@ -1192,7 +1316,7 @@ StatusCode FakeVehicleHardware::getValues(std::shared_ptr<const GetValuesCallbac
                                           const std::vector<GetValueRequest>& requests) const {
     for (auto& request : requests) {
         if (FAKE_VEHICLEHARDWARE_DEBUG) {
-            ALOGD("getValues(%d)", request.prop.prop);
+            ALOGD("getValues(%s)", PROP_ID_TO_CSTR(request.prop.prop));
         }
 
         // In a real VHAL implementation, you could either send the getValue request to vehicle bus
@@ -1231,8 +1355,8 @@ FakeVehicleHardware::ValueResultType FakeVehicleHardware::getValue(
     if (isSpecialValue) {
         if (!result.ok()) {
             return StatusError(getErrorCode(result))
-                   << StringPrintf("failed to get special value: %d, error: %s", value.prop,
-                                   getErrorMsg(result).c_str());
+                   << StringPrintf("failed to get special value: %s, error: %s",
+                                   PROP_ID_TO_CSTR(value.prop), getErrorMsg(result).c_str());
         } else {
             return result;
         }
@@ -1291,6 +1415,8 @@ DumpResult FakeVehicleHardware::dump(const std::vector<std::string>& options) {
         mAddExtraTestVendorConfigs = false;
         result.refreshPropertyConfigs = true;
         result.buffer = "successfully restored vendor configs";
+    } else if (EqualsIgnoreCase(option, "--dumpSub")) {
+        result.buffer = dumpSubscriptions();
     } else {
         result.buffer = StringPrintf("Invalid option: %s\n", option.c_str());
     }
@@ -1422,7 +1548,8 @@ std::string FakeVehicleHardware::genFakeDataCommand(const std::vector<std::strin
         if (mGeneratorHub->unregisterGenerator(propId)) {
             return "Linear event generator stopped successfully";
         }
-        return StringPrintf("No linear event generator found for property: %d", propId);
+        return StringPrintf("No linear event generator found for property: %s",
+                            PROP_ID_TO_CSTR(propId));
     } else if (command == "--startjson") {
         // --genfakedata --startjson --path path repetition
         // or
@@ -1692,23 +1819,50 @@ void FakeVehicleHardware::eventFromVehicleBus(const VehiclePropValue& value) {
     mServerSidePropStore->writeValue(mValuePool->obtain(value));
 }
 
+std::string FakeVehicleHardware::dumpSubscriptions() {
+    std::scoped_lock<std::mutex> lockGuard(mLock);
+    std::string result = "Subscriptions: \n";
+    for (const auto& [interval, actionForInterval] : mActionByIntervalInNanos) {
+        for (const auto& propIdAreaId : actionForInterval.propIdAreaIdsToRefresh) {
+            const auto& refreshInfo = mRefreshInfoByPropIdAreaId[propIdAreaId];
+            bool vur = (refreshInfo.eventMode == VehiclePropertyStore::EventMode::ON_VALUE_CHANGE);
+            float sampleRateHz = 1'000'000'000. / refreshInfo.intervalInNanos;
+            result += StringPrintf("Continuous{property: %s, areaId: %d, rate: %lf hz, vur: %b}\n",
+                                   PROP_ID_TO_CSTR(propIdAreaId.propId), propIdAreaId.areaId,
+                                   sampleRateHz, vur);
+        }
+    }
+    for (const auto& propIdAreaId : mSubOnChangePropIdAreaIds) {
+        result += StringPrintf("OnChange{property: %s, areaId: %d}\n",
+                               PROP_ID_TO_CSTR(propIdAreaId.propId), propIdAreaId.areaId);
+    }
+    return result;
+}
+
 std::string FakeVehicleHardware::dumpHelp() {
     return "Usage: \n\n"
            "[no args]: dumps (id and value) all supported properties \n"
            "--help: shows this help\n"
-           "--list: lists the ids of all supported properties\n"
-           "--get <PROP1> [PROP2] [PROPN]: dumps the value of specific properties. \n"
-           "--getWithArg <PROP> [ValueArguments]: gets the value for a specific property with "
-           "arguments. \n"
-           "--set <PROP> [ValueArguments]: sets the value of property PROP. \n"
-           "--save-prop <prop> [-a AREA_ID]: saves the current value for PROP, integration test"
-           " that modifies prop value must call this before test and restore-prop after test. \n"
-           "--restore-prop <prop> [-a AREA_ID]: restores a previously saved property value. \n"
-           "--inject-event <PROP> [ValueArguments]: inject a property update event from car\n\n"
-           "ValueArguments are in the format of [-i INT_VALUE [INT_VALUE ...]] "
-           "[-i64 INT64_VALUE [INT64_VALUE ...]] [-f FLOAT_VALUE [FLOAT_VALUE ...]] [-s STR_VALUE] "
-           "[-b BYTES_VALUE] [-a AREA_ID].\n"
-           "Notice that the string, bytes and area value can be set just once, while the other can"
+           "--list: lists the property IDs and their supported area IDs for all supported "
+           "properties\n"
+           "--get <PROP_ID_1> [PROP_ID_2] [PROP_ID_N]: dumps the value of specific properties. \n"
+           "--getWithArg <PROP_ID> [ValueArguments]: gets the value for a specific property. "
+           "The value arguments constructs a VehiclePropValue used in the getValue request. \n"
+           "--set <PROP_ID> [ValueArguments]: sets the value of property PROP_ID, the value "
+           "arguments constructs a VehiclePropValue used in the setValue request. \n"
+           "--save-prop <PROP_ID> [-a AREA_ID]: saves the current value for PROP_ID, integration "
+           "tests that modify prop value must call this before test and restore-prop after test. \n"
+           "--restore-prop <PROP_ID> [-a AREA_ID]: restores a previously saved property value. \n"
+           "--inject-event <PROP_ID> [ValueArguments]: inject a property update event from car\n\n"
+           "ValueArguments are in the format of [-a OPTIONAL_AREA_ID] "
+           "[-i INT_VALUE_1 [INT_VALUE_2 ...]] "
+           "[-i64 INT64_VALUE_1 [INT64_VALUE_2 ...]] "
+           "[-f FLOAT_VALUE_1 [FLOAT_VALUE_2 ...]] "
+           "[-s STR_VALUE] "
+           "[-b BYTES_VALUE].\n"
+           "For example: to set property ID 0x1234, areaId 0x1 to int32 values: [1, 2, 3], "
+           "use \"--set 0x1234 -a 0x1 -i 1 2 3\"\n"
+           "Note that the string, bytes and area value can be set just once, while the other can"
            " have multiple values (so they're used in the respective array), "
            "BYTES_VALUE is in the form of 0xXXXX, e.g. 0xdeadbeef.\n" +
            genFakeDataHelp() + "Fake user HAL usage: \n" + mFakeUserHal->showDumpHelp();
@@ -1759,8 +1913,9 @@ std::string FakeVehicleHardware::dumpOnePropertyById(int32_t propId, int32_t are
         result = mServerSidePropStore->readValue(value);
     }
     if (!result.ok()) {
-        return StringPrintf("failed to read property value: %d, error: %s, code: %d\n", propId,
-                            getErrorMsg(result).c_str(), getIntErrorCode(result));
+        return StringPrintf("failed to read property value: %s, error: %s, code: %d\n",
+                            PROP_ID_TO_CSTR(propId), getErrorMsg(result).c_str(),
+                            getIntErrorCode(result));
 
     } else {
         return result.value()->toString() + "\n";
@@ -1773,11 +1928,18 @@ std::string FakeVehicleHardware::dumpListProperties() {
         return "no properties to list\n";
     }
     int rowNumber = 1;
-    std::string msg = StringPrintf("listing %zu properties\n", configs.size());
+    std::stringstream ss;
+    ss << "listing " << configs.size() << " properties" << std::endl;
     for (const auto& config : configs) {
-        msg += StringPrintf("%d: %d\n", rowNumber++, config.prop);
+        std::vector<int32_t> areaIds;
+        for (const auto& areaConfig : config.areaConfigs) {
+            areaIds.push_back(areaConfig.areaId);
+        }
+        ss << rowNumber++ << ": " << PROP_ID_TO_CSTR(config.prop) << ", propID: " << std::showbase
+           << std::hex << config.prop << std::noshowbase << std::dec
+           << ", areaIDs: " << vecToStringOfHexValues(areaIds) << std::endl;
     }
-    return msg;
+    return ss.str();
 }
 
 Result<void> FakeVehicleHardware::checkArgumentsSize(const std::vector<std::string>& options,
@@ -1790,6 +1952,47 @@ Result<void> FakeVehicleHardware::checkArgumentsSize(const std::vector<std::stri
                                    minSize, size);
 }
 
+Result<int32_t> FakeVehicleHardware::parsePropId(const std::vector<std::string>& options,
+                                                 size_t index) {
+    const std::string& propIdStr = options[index];
+    auto result = stringToPropId(propIdStr);
+    if (result.ok()) {
+        return result;
+    }
+    return safelyParseInt<int32_t>(index, propIdStr);
+}
+
+// Parses areaId option ("-a"). It can be an Integer or a string in the form of "AREA_1" or
+// "AREA_1 | AREA_2 | ..."
+Result<int32_t> FakeVehicleHardware::parseAreaId(const std::vector<std::string>& options,
+                                                 size_t index, int32_t propId) {
+    const std::string& areaIdStr = options[index];
+    auto result = safelyParseInt<int32_t>(index, areaIdStr);
+    if (result.ok()) {
+        return result;
+    }
+
+    // Check for pattern matching "AREA_1 | AREA_2 | AREA_3".
+    std::regex pattern(R"(^\w+(?:( )?\|( )?\w+)*$)");
+    std::smatch match;
+    int32_t areaId = 0;
+    if (!std::regex_match(areaIdStr, match, pattern)) {
+        return result;
+    }
+    pattern = R"(\w+)";
+
+    std::sregex_iterator end;
+    for (std::sregex_iterator it(areaIdStr.begin(), areaIdStr.end(), pattern); it != end; it++) {
+        // Parse each areas contained in this areaId.
+        auto result = stringToArea(it->str(), propId);
+        if (!result.ok()) {
+            return result;
+        }
+        areaId |= result.value();
+    }
+    return areaId;
+}
+
 std::string FakeVehicleHardware::dumpSpecificProperty(const std::vector<std::string>& options) {
     if (auto result = checkArgumentsSize(options, /*minSize=*/2); !result.ok()) {
         return getErrorMsg(result);
@@ -1800,7 +2003,7 @@ std::string FakeVehicleHardware::dumpSpecificProperty(const std::vector<std::str
     size_t size = options.size();
     std::string msg = "";
     for (size_t i = 1; i < size; ++i) {
-        auto propResult = safelyParseInt<int32_t>(i, options[i]);
+        auto propResult = parsePropId(options, i);
         if (!propResult.ok()) {
             msg += getErrorMsg(propResult);
             continue;
@@ -1808,7 +2011,7 @@ std::string FakeVehicleHardware::dumpSpecificProperty(const std::vector<std::str
         int32_t prop = propResult.value();
         auto result = mServerSidePropStore->getPropConfig(prop);
         if (!result.ok()) {
-            msg += StringPrintf("No property %d\n", prop);
+            msg += StringPrintf("No property %s\n", PROP_ID_TO_CSTR(prop));
             continue;
         }
         msg += dumpOnePropertyByConfig(rowNumber++, result.value());
@@ -1836,9 +2039,9 @@ Result<VehiclePropValue> FakeVehicleHardware::parsePropOptions(
     // --set/get/inject-event PROP [-f f1 f2...] [-i i1 i2...] [-i64 i1 i2...] [-s s1 s2...]
     // [-b b1 b2...] [-a a] [-t timestamp]
     size_t optionIndex = 1;
-    auto result = safelyParseInt<int32_t>(optionIndex, options[optionIndex]);
+    auto result = parsePropId(options, optionIndex);
     if (!result.ok()) {
-        return Error() << StringPrintf("Property value: \"%s\" is not a valid int: %s\n",
+        return Error() << StringPrintf("Property ID/Name: \"%s\" is not valid: %s\n",
                                        options[optionIndex].c_str(), getErrorMsg(result).c_str());
     }
     VehiclePropValue prop = {};
@@ -1846,6 +2049,7 @@ Result<VehiclePropValue> FakeVehicleHardware::parsePropOptions(
     prop.status = VehiclePropertyStatus::AVAILABLE;
     optionIndex++;
     std::unordered_set<std::string> parsedOptions;
+    int32_t areaIdIndex = -1;
 
     while (optionIndex < options.size()) {
         std::string argType = options[optionIndex];
@@ -1920,13 +2124,7 @@ Result<VehiclePropValue> FakeVehicleHardware::parsePropOptions(
             if (argValuesSize != 1) {
                 return Error() << "Expect exact one value when using \"-a\"\n";
             }
-            auto int32Result = safelyParseInt<int32_t>(currentIndex, argValues[0]);
-            if (!int32Result.ok()) {
-                return Error() << StringPrintf("Area ID: \"%s\" is not a valid int: %s\n",
-                                               argValues[0].c_str(),
-                                               getErrorMsg(int32Result).c_str());
-            }
-            prop.areaId = int32Result.value();
+            areaIdIndex = currentIndex;
         } else if (EqualsIgnoreCase(argType, "-t")) {
             if (argValuesSize != 1) {
                 return Error() << "Expect exact one value when using \"-t\"\n";
@@ -1941,6 +2139,17 @@ Result<VehiclePropValue> FakeVehicleHardware::parsePropOptions(
         } else {
             return Error() << StringPrintf("Unknown option: %s\n", argType.c_str());
         }
+    }
+
+    if (areaIdIndex != -1) {
+        auto int32Result = parseAreaId(options, areaIdIndex, prop.prop);
+        if (!int32Result.ok()) {
+            return Error() << StringPrintf(
+                           "Area ID: \"%s\" is not a valid int or "
+                           "one or more area names: %s\n",
+                           options[areaIdIndex].c_str(), getErrorMsg(int32Result).c_str());
+        }
+        prop.areaId = int32Result.value();
     }
 
     return prop;
@@ -1994,8 +2203,9 @@ std::string FakeVehicleHardware::dumpGetPropertyWithArg(const std::vector<std::s
     }
 
     if (!result.ok()) {
-        return StringPrintf("failed to read property value: %d, error: %s, code: %d\n", prop.prop,
-                            getErrorMsg(result).c_str(), getIntErrorCode(result));
+        return StringPrintf("failed to read property value: %s, error: %s, code: %d\n",
+                            PROP_ID_TO_CSTR(prop.prop), getErrorMsg(result).c_str(),
+                            getIntErrorCode(result));
     }
     return StringPrintf("Get property result: %s\n", result.value()->toString().c_str());
 }
@@ -2088,7 +2298,7 @@ std::string FakeVehicleHardware::dumpInjectEvent(const std::vector<std::string>&
 
     eventFromVehicleBus(prop);
 
-    return StringPrintf("Event for property: %d injected", prop.prop);
+    return StringPrintf("Event for property: %s injected", PROP_ID_TO_CSTR(prop.prop));
 }
 
 StatusCode FakeVehicleHardware::checkHealth() {
@@ -2153,7 +2363,7 @@ bool FakeVehicleHardware::isVariableUpdateRateSupported(const VehiclePropConfig&
     return false;
 }
 
-void FakeVehicleHardware::refreshTimeStampForInterval(int64_t intervalInNanos) {
+void FakeVehicleHardware::refreshTimestampForInterval(int64_t intervalInNanos) {
     std::unordered_map<PropIdAreaId, VehiclePropertyStore::EventMode, PropIdAreaIdHash>
             eventModeByPropIdAreaId;
 
@@ -2203,7 +2413,7 @@ void FakeVehicleHardware::registerRefreshLocked(PropIdAreaId propIdAreaId,
 
     // This is the first action for the interval, register a timer callback for that interval.
     auto action = std::make_shared<RecurrentTimer::Callback>(
-            [this, intervalInNanos] { refreshTimeStampForInterval(intervalInNanos); });
+            [this, intervalInNanos] { refreshTimestampForInterval(intervalInNanos); });
     mActionByIntervalInNanos[intervalInNanos] = ActionForInterval{
             .propIdAreaIdsToRefresh = {propIdAreaId},
             .recurrentAction = action,
@@ -2245,7 +2455,7 @@ StatusCode FakeVehicleHardware::subscribePropIdAreaIdLocked(
         case VehiclePropertyChangeMode::CONTINUOUS:
             if (sampleRateHz == 0.f) {
                 ALOGE("Must not use sample rate 0 for a continuous property");
-                return StatusCode::INTERNAL_ERROR;
+                return StatusCode::INVALID_ARG;
             }
             // For continuous properties, we must generate a new onPropertyChange event
             // periodically according to the sample rate.
@@ -2309,30 +2519,35 @@ void FakeVehicleHardware::onValuesChangeCallback(std::vector<VehiclePropValue> v
     (*mOnPropertyChangeCallback)(std::move(subscribedUpdatedValues));
 }
 
-void FakeVehicleHardware::loadPropConfigsFromDir(
+bool FakeVehicleHardware::loadPropConfigsFromDir(
         const std::string& dirPath,
         std::unordered_map<int32_t, ConfigDeclaration>* configsByPropId) {
     ALOGI("loading properties from %s", dirPath.c_str());
-    if (auto dir = opendir(dirPath.c_str()); dir != NULL) {
-        std::regex regJson(".*[.]json", std::regex::icase);
-        while (auto f = readdir(dir)) {
-            if (!std::regex_match(f->d_name, regJson)) {
-                continue;
-            }
-            std::string filePath = dirPath /*+ "/"*/ + std::string(f->d_name);
-            ALOGI("loading properties from %s", filePath.c_str());
-            auto result = mLoader.loadPropConfig(filePath);
-            if (!result.ok()) {
-                ALOGE("failed to load config file: %s, error: %s", filePath.c_str(),
-                      result.error().message().c_str());
-                continue;
-            }
-            for (auto& [propId, configDeclaration] : result.value()) {
-                (*configsByPropId)[propId] = std::move(configDeclaration);
-            }
-        }
-        closedir(dir);
+    auto dir = opendir(dirPath.c_str());
+    if (dir == nullptr) {
+        ALOGE("Failed to open config directory: %s", dirPath.c_str());
+        return false;
     }
+
+    std::regex regJson(".*[.]json", std::regex::icase);
+    while (auto f = readdir(dir)) {
+        if (!std::regex_match(f->d_name, regJson)) {
+            continue;
+        }
+        std::string filePath = dirPath + "/" + std::string(f->d_name);
+        ALOGI("loading properties from %s", filePath.c_str());
+        auto result = mLoader.loadPropConfig(filePath);
+        if (!result.ok()) {
+            ALOGE("failed to load config file: %s, error: %s", filePath.c_str(),
+                  result.error().message().c_str());
+            continue;
+        }
+        for (auto& [propId, configDeclaration] : result.value()) {
+            (*configsByPropId)[propId] = std::move(configDeclaration);
+        }
+    }
+    closedir(dir);
+    return true;
 }
 
 Result<float> FakeVehicleHardware::safelyParseFloat(int index, const std::string& s) {

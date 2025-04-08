@@ -15,6 +15,7 @@
  */
 
 package {
+    default_team: "trendy_team_aaos_framework",
     default_applicable_licenses: ["Android-Apache-2.0"],
 }
 
@@ -28,12 +29,10 @@ cc_test {
         "VehicleHalUtils",
         "libgmock",
         "libgtest",
+        "libjsoncpp",
     ],
     header_libs: [
-        "IVehicleGeneratedHeaders",
-    ],
-    shared_libs: [
-        "libjsoncpp",
+        "IVehicleGeneratedHeaders-V4",
     ],
     data: [
         ":VehicleHalDefaultPropertiesImx_JSON",
@@ -51,15 +50,13 @@ cc_test {
         "VehicleHalUtils",
         "libgmock",
         "libgtest",
+        "libjsoncpp",
     ],
     cflags: [
         "-DENABLE_VEHICLE_HAL_TEST_PROPERTIES",
     ],
     header_libs: [
-        "IVehicleGeneratedHeaders",
-    ],
-    shared_libs: [
-        "libjsoncpp",
+        "IVehicleGeneratedHeaders-V4",
     ],
     data: [
         ":VehicleHalDefaultPropertiesImx_JSON",

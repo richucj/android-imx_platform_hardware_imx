@@ -23,4 +23,5 @@ cc_library_headers {
     vendor: true,
     header_libs: ["VehicleHalUtilHeaders"],
     export_include_dirs: ["include"],
+    host_supported: true,
 }

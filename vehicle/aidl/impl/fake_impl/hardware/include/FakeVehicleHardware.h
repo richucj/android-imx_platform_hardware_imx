@@ -32,6 +32,8 @@
 #include <android-base/result.h>
 #include <android-base/stringprintf.h>
 #include <android-base/thread_annotations.h>
+#include <grpc++/grpc++.h>
+#include <wakeup_client.grpc.pb.h>
 
 #include <map>
 #include <memory>
@@ -54,8 +56,11 @@ class FakeVehicleHardware : public IVehicleHardware {
 
     FakeVehicleHardware(VehicleEmulator* emulator);
 
-    FakeVehicleHardware(std::unique_ptr<VehiclePropValuePool> valuePool, VehicleEmulator* emulator, std::string defaultConfigDir, std::string overrideConfigDir,
+    FakeVehicleHardware(VehicleEmulator* emulator, std::string defaultConfigDir, std::string overrideConfigDir,
                         bool forceOverride);
+
+    FakeVehicleHardware(std::unique_ptr<VehiclePropValuePool> valuePool, VehicleEmulator* emulator, std::string defaultConfigDir, std::string overrideConfigDir,
+                        bool forceOverride, int32_t s2rS2dConfig);
 
     ~FakeVehicleHardware();
 
@@ -97,7 +102,7 @@ class FakeVehicleHardware : public IVehicleHardware {
     void registerOnPropertySetErrorEvent(
             std::unique_ptr<const PropertySetErrorCallback> callback) override;
 
-       // Subscribe to a new [propId, areaId] or change the update rate.
+    // Subscribe to a new [propId, areaId] or change the update rate.
     aidl::android::hardware::automotive::vehicle::StatusCode subscribe(
             aidl::android::hardware::automotive::vehicle::SubscribeOptions options) override;
 
@@ -187,18 +192,23 @@ class FakeVehicleHardware : public IVehicleHardware {
     mutable PendingRequestHandler<SetValuesCallback,
                                   aidl::android::hardware::automotive::vehicle::SetValueRequest>
             mPendingSetValueRequests;
-   // Set of HVAC properties dependent on HVAC_POWER_ON
+
+    // Set of HVAC properties dependent on HVAC_POWER_ON
     std::unordered_set<int32_t> hvacPowerDependentProps;
 
     const std::string mDefaultConfigDir;
     const std::string mOverrideConfigDir;
     const bool mForceOverride;
-    bool mAddExtraTestVendorConfigs;
+    bool mAddExtraTestVendorConfigs = false;
 
     // Only used during initialization.
     JsonConfigLoader mLoader;
 
-    void init();
+    // Only used during initialization. If not empty, points to an external grpc server that
+    // provides power controlling related properties.
+    std::string mPowerControllerServiceAddress = "";
+
+    void init(int32_t s2rS2dConfig);
     // Stores the initial value to property store.
     void storePropInitialValue(const ConfigDeclaration& config);
     // The callback that would be called when a vehicle property value change happens.
@@ -211,7 +221,7 @@ class FakeVehicleHardware : public IVehicleHardware {
             EXCLUDES(mLock);
     // Load the config files in format '*.json' from the directory and parse the config files
     // into a map from property ID to ConfigDeclarations.
-    void loadPropConfigsFromDir(const std::string& dirPath,
+    bool loadPropConfigsFromDir(const std::string& dirPath,
                                 std::unordered_map<int32_t, ConfigDeclaration>* configs);
     // Function to be called when a value change event comes from vehicle bus. In our fake
     // implementation, this function is only called during "--inject-event" dump command.
@@ -251,6 +261,11 @@ class FakeVehicleHardware : public IVehicleHardware {
     VhalResult<void> synchronizeHvacTemp(int32_t hvacDualOnAreaId,
                                          std::optional<float> newTempC) const;
     std::optional<int32_t> getSyncedAreaIdIfHvacDualOn(int32_t hvacTemperatureSetAreaId) const;
+    ValueResultType getPowerPropFromExternalService(int32_t propId) const;
+    ValueResultType getVehicleInUse(
+            android::hardware::automotive::remoteaccess::PowerController::Stub* clientStub) const;
+    ValueResultType getApPowerBootupReason(
+            android::hardware::automotive::remoteaccess::PowerController::Stub* clientStub) const;
 
     std::unordered_map<int32_t, ConfigDeclaration> loadConfigDeclarations();
 
@@ -267,17 +282,8 @@ class FakeVehicleHardware : public IVehicleHardware {
     std::string dumpSaveProperty(const std::vector<std::string>& options);
     std::string dumpRestoreProperty(const std::vector<std::string>& options);
     std::string dumpInjectEvent(const std::vector<std::string>& options);
+    std::string dumpSubscriptions();
 
-    template <typename T>
-    android::base::Result<T> safelyParseInt(int index, const std::string& s) {
-        T out;
-        if (!::android::base::ParseInt(s, &out)) {
-            return android::base::Error() << android::base::StringPrintf(
-                           "non-integer argument at index %d: %s\n", index, s.c_str());
-        }
-        return out;
-    }
-    android::base::Result<float> safelyParseFloat(int index, const std::string& s);
     std::vector<std::string> getOptionValues(const std::vector<std::string>& options,
                                              size_t* index);
     android::base::Result<aidl::android::hardware::automotive::vehicle::VehiclePropValue>
@@ -305,7 +311,7 @@ class FakeVehicleHardware : public IVehicleHardware {
     void registerRefreshLocked(PropIdAreaId propIdAreaId, VehiclePropertyStore::EventMode eventMode,
                                float sampleRateHz) REQUIRES(mLock);
     void unregisterRefreshLocked(PropIdAreaId propIdAreaId) REQUIRES(mLock);
-    void refreshTimeStampForInterval(int64_t intervalInNanos) EXCLUDES(mLock);
+    void refreshTimestampForInterval(int64_t intervalInNanos) EXCLUDES(mLock);
 
     static aidl::android::hardware::automotive::vehicle::VehiclePropValue createHwInputKeyProp(
             aidl::android::hardware::automotive::vehicle::VehicleHwKeyInputAction action,
@@ -324,6 +330,20 @@ class FakeVehicleHardware : public IVehicleHardware {
             const aidl::android::hardware::automotive::vehicle::VehiclePropConfig&
                     vehiclePropConfig,
             int32_t areaId);
+    template <typename T>
+    static android::base::Result<T> safelyParseInt(int index, const std::string& s) {
+        T out;
+        if (!::android::base::ParseInt(s, &out)) {
+            return android::base::Error() << android::base::StringPrintf(
+                           "non-integer argument at index %d: %s\n", index, s.c_str());
+        }
+        return out;
+    }
+    static android::base::Result<float> safelyParseFloat(int index, const std::string& s);
+    static android::base::Result<int32_t> parsePropId(const std::vector<std::string>& options,
+                                                      size_t index);
+    static android::base::Result<int32_t> parseAreaId(const std::vector<std::string>& options,
+                                                      size_t index, int32_t propId);
 };
 
 }  // namespace fake
