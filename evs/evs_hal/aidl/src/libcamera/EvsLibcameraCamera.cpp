@@ -788,9 +788,17 @@ std::shared_ptr<EvsV4lCamera> EvsV4lCamera::Create(
         cfg.pixelFormat = AidlFromat2PixelFormat(evsCamera->mFormat);
         camCfg->addConfiguration(cfg);
 
-        LOG(INFO) << __func__ << ": Requesting configuration from libcamera: " << cfg.toString();
-        camCfg->validate();
-        LOG(INFO) << __func__ << ": Validated configuration by libcamera: " << cfg.toString();
+        LOG(DEBUG) << __func__ << ": Requesting configuration from libcamera: " << cfg.toString();
+        switch (camCfg->validate()) {
+            case  libcamera::CameraConfiguration::Status::Adjusted:
+                LOG(DEBUG) << __func__ << ": Adjusted configuration by libcamera: ";
+                break;
+            case  libcamera::CameraConfiguration::Status::Invalid:
+                LOG(ERROR) << __func__ << ": Failed to configure camera. Libcamera rejected configuration " << cfg.toString() << " as invalid.";
+                return nullptr;
+            default: // libcamera::CameraConfiguration::Status::Valid
+                break;
+        }
         evsCamera->mNumPlanes = 1; // TODO: Convert format to number of planes.
 
         // The EvsV4lCamera::frameAllocate() doesn't support multiplanar FrameBuffers.
@@ -806,6 +814,10 @@ std::shared_ptr<EvsV4lCamera> EvsV4lCamera::Create(
             // Camera has been configured, keep configuration data important for buffer allocation.
             auto libCameraStreamSet = evsCamera->mCamera->streams();
 
+            for (auto &stream : libCameraStreamSet) {
+                LOG(DEBUG) << __func__<< ": Configured Stream cfg: " << stream->configuration().toString();
+            }
+            cfg = (*camCfg)[0];
             evsCamera->mLibcameraCamCfg = std::move(camCfg);
             evsCamera->mLibCameraStream = *(libCameraStreamSet.begin());
 
