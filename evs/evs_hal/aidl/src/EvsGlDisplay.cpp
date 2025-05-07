@@ -340,7 +340,7 @@ ScopedAStatus EvsGlDisplay::getTargetBuffer(BufferDesc* _aidl_return) {
     });
 
     // Do we have a frame available?
-    if (mBufferBusy) {
+    if (mBufferBusy || (mBuffer.handle == NULL)) {
         // This means either we have a 2nd client trying to compete for buffers
         // (an unsupported mode of operation) or else the client hasn't returned
         // a previously issued buffer yet (they're behaving badly).
@@ -349,7 +349,6 @@ ScopedAStatus EvsGlDisplay::getTargetBuffer(BufferDesc* _aidl_return) {
         return ScopedAStatus::fromServiceSpecificError(
                 static_cast<int>(EvsResult::BUFFER_NOT_AVAILABLE));
     }
-
     // Mark our buffer as busy
     mBufferBusy = true;
 
