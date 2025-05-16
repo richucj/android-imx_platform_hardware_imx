@@ -133,6 +133,15 @@ bool EvsEnumerator::checkPermission() {
     return true;
 }
 
+void EvsEnumerator::cameraAdded(std::shared_ptr<libcamera::Camera> camera) {
+    // Notify EVS is ready.
+    LOG(DEBUG) << __FUNCTION__ << ": camera  " << camera.get() << ": " << camera->id().c_str();
+    if (property_set(EVS_VIDEO_READY, "1") < 0) {
+        LOG(ERROR) << "Can not set property " << EVS_VIDEO_READY;
+    }
+    return;
+}
+
 bool EvsEnumerator::enumerateCameras() {
     if (sConfigManager == nullptr) {
         /* loads and initializes ConfigManager in a separate thread */
@@ -142,20 +151,21 @@ bool EvsEnumerator::enumerateCameras() {
         cameraManager_ = std::make_unique<libcamera::CameraManager>();
     }
 
+    cameraManager_->cameraAdded.connect(&cameraAdded);
+
     int ret = cameraManager_->start(); /* TODO: Program goes through here everytime EVS app opens. Skip this call. */
     if (ret) {
-        ALOGE("%s: Failed to start camera manager, ret %d", __func__, ret);
+        LOG(ERROR) << __FUNCTION__ << ": Failed to start camera manager, ret " << ret;
         cameraManager_.reset(); // Reset the unique_ptr.
         return false;
     }
 
     if (cameraManager_->cameras().empty()) {
-        LOG(DEBUG) << "No cameras were identified on the system." ;
-        cameraManager_->stop();
-        return false;
-    }
-    if (property_set(EVS_VIDEO_READY, "1") < 0) {
-        ALOGE("Can not set property %s", EVS_VIDEO_READY);
+        LOG(WARNING) << "No cameras were identified on the system." ;
+    } else {
+        if (property_set(EVS_VIDEO_READY, "1") < 0) {
+            LOG(ERROR) << "Can not set property " << EVS_VIDEO_READY;
+        }
     }
     return true;
 }
