@@ -122,7 +122,6 @@ cc_binary {
         "-Wthread-safety",
     ],
     required: [
-        "imx_evs_aidl_configuration.xml",
         "fake_evs_aidl_configuration.xml",
     ],
     vintf_fragments: [
