@@ -57,37 +57,6 @@ std::unique_ptr<CameraProviderHwlImpl> CameraProviderHwlImpl::Create() {
 status_t CameraProviderHwlImpl::Initialize() {
     ALOGI("enter %s", __func__);
 
-    // check if camera exists.
-    for (auto iter = mCameraDef.camera_id_map_.begin(); iter != mCameraDef.camera_id_map_.end();
-         ++iter) {
-        if (iter->second.size() >= 2) {
-            // logical camera group
-            bool logical_exist = true;
-            for (int32_t phy_index = 0; phy_index < (int32_t)iter->second.size(); phy_index++) {
-                logical_exist =
-                        logical_exist && (mSets[(iter->second[phy_index]).second].mExisting);
-            }
-
-            if (logical_exist == true) {
-                camera_id_maps.emplace(iter->first,
-                                       std::vector<std::pair<CameraDeviceStatus, uint32_t>>());
-                camera_id_maps[iter->first].reserve(iter->second.size());
-                for (int32_t physical_index = 0; physical_index < (int32_t)iter->second.size();
-                     physical_index++) {
-                    int to_add_phy_cam_id = iter->second[physical_index].second;
-                    auto device_status = CameraDeviceStatus::kPresent;
-                    camera_id_maps[iter->first].push_back(
-                            std::make_pair(device_status, to_add_phy_cam_id));
-                }
-            }
-        } else {
-            // basic camera
-            if ((mSets[iter->first].mFacing != -1) && (mSets[iter->first].mExisting == true))
-                camera_id_maps.emplace(iter->first,
-                                       std::vector<std::pair<CameraDeviceStatus, uint32_t>>());
-        }
-    }
-
     mCameraCfgParser.Init();
     mCameraDef = mCameraCfgParser.mcamera();
     memset(&mCallback, 0, sizeof(mCallback));
@@ -117,6 +86,63 @@ CameraProviderHwlImpl::~CameraProviderHwlImpl() {
 
     cameraManager_->stop();
     WaitForStatusCallbackFuture();
+}
+
+void CameraProviderHwlImpl::enumSensorSet() {
+    ALOGI("%s", __func__);
+
+    int cam_meta_size = mCameraDef.camera_metadata_vec.size();
+
+    mSets.resize(cam_meta_size);
+
+    // basic camera
+    int logical_cam_id = 0;
+    for (auto iter = mCameraDef.camera_id_map_.begin(); iter != mCameraDef.camera_id_map_.end();
+         ++iter) {
+        int physical_cam_size = iter->second.size();
+        ALOGI("%s: logical camera id is: %d; it's physical camera size is %d \n", __func__,
+              logical_cam_id, physical_cam_size);
+        if (physical_cam_size < 2) {
+            // This is a basic camera definition
+            CameraSensorMetadata basic_cam_meta = mCameraDef.camera_metadata_vec[logical_cam_id];
+
+            strncpy(mSets[logical_cam_id].mPropertyName, basic_cam_meta.camera_name,
+                    strlen(basic_cam_meta.camera_name));
+            mSets[logical_cam_id].mOrientation = basic_cam_meta.orientation;
+            // -1 means this is an invalid basic camera config node,
+            // The node only can act as physical camera for logical camera group.
+            if (strcmp(basic_cam_meta.camera_type, "back") == 0) {
+                mSets[logical_cam_id].mFacing = CAMERA_FACING_BACK;
+            } else if (strcmp(basic_cam_meta.camera_type, "front") == 0) {
+                mSets[logical_cam_id].mFacing = CAMERA_FACING_FRONT;
+            } else {
+                mSets[logical_cam_id].mFacing = -1;
+            }
+            mSets[logical_cam_id].mExisting = false;
+        }
+        logical_cam_id++;
+    }
+
+    ALOGI("%s: mCameraDef.camera_metadata_vec size %lu", __func__,
+          mCameraDef.camera_metadata_vec.size());
+
+    // physical camera
+    int first_physical_cam_id = MAX_BASIC_CAMERA_NUM; // 24
+    // At least need two physical cameras to compose logical camera group
+    if (cam_meta_size >= (MAX_BASIC_CAMERA_NUM + 1)) {
+        for (auto physical_id = first_physical_cam_id; physical_id != cam_meta_size;
+             ++physical_id) {
+            CameraSensorMetadata physical_cam_meta = mCameraDef.camera_metadata_vec[physical_id];
+            strncpy(mSets[physical_id].mPropertyName, physical_cam_meta.camera_name,
+                    strlen(physical_cam_meta.camera_name));
+            mSets[physical_id].mOrientation = physical_cam_meta.orientation;
+            if (strcmp(physical_cam_meta.camera_type, "back") == 0)
+                mSets[physical_id].mFacing = CAMERA_FACING_BACK;
+            else
+                mSets[physical_id].mFacing = CAMERA_FACING_FRONT;
+            mSets[physical_id].mExisting = false;
+        }
+    }
 }
 
 status_t CameraProviderHwlImpl::SetCallback(const HwlCameraProviderCallback& callback) {
@@ -322,8 +348,10 @@ int32_t CameraProviderHwlImpl::foundCameraId(const char* cameraName) {
     // If only 1 camera, no need use the exact name to distinguish back/front camera,
     // just return 0. Also no need change the config json.
     int cameraNumInJson = mCameraDef.camera_id_map_.size();
-    if (cameraNumInJson == 1)
+    if (cameraNumInJson == 1) {
+        mSets[0].mExisting = true;
         return 0;
+    }
 
     int32_t id = -1;
     for (int32_t index = 0; index < cameraNumInJson; index++) {
@@ -331,6 +359,7 @@ int32_t CameraProviderHwlImpl::foundCameraId(const char* cameraName) {
         ALOGI("%s: cameaMeta.camera_name %s", __func__, cameaMeta.camera_name);
         if (strstr(cameraName, cameaMeta.camera_name)) {
             id = index;
+            mSets[index].mExisting = true;
             break;
         }
     }
@@ -341,7 +370,41 @@ int32_t CameraProviderHwlImpl::foundCameraId(const char* cameraName) {
 void CameraProviderHwlImpl::cameraAdded(std::shared_ptr<libcamera::Camera> camera) {
     ALOGI("%s: %s", __func__, camera->id().c_str());
 
+    enumSensorSet();
+
     int32_t cameraId = foundCameraId(camera->id().c_str());
+
+    // check if camera exists.
+    for (auto iter = mCameraDef.camera_id_map_.begin(); iter != mCameraDef.camera_id_map_.end();
+         ++iter) {
+        if (iter->second.size() >= 2) {
+            // logical camera group
+            bool logical_exist = true;
+            for (int32_t phy_index = 0; phy_index < (int32_t)iter->second.size(); phy_index++) {
+                logical_exist =
+                        logical_exist && (mSets[(iter->second[phy_index]).second].mExisting);
+            }
+
+            if (logical_exist == true) {
+                camera_id_maps.emplace(iter->first,
+                                       std::vector<std::pair<CameraDeviceStatus, uint32_t>>());
+                camera_id_maps[iter->first].reserve(iter->second.size());
+                for (int32_t physical_index = 0; physical_index < (int32_t)iter->second.size();
+                     physical_index++) {
+                    int to_add_phy_cam_id = iter->second[physical_index].second;
+                    auto device_status = CameraDeviceStatus::kPresent;
+                    camera_id_maps[iter->first].push_back(
+                            std::make_pair(device_status, to_add_phy_cam_id));
+                }
+            }
+        } else {
+            // basic camera
+            if ((mSets[iter->first].mFacing != -1) && (mSets[iter->first].mExisting == true))
+                camera_id_maps.emplace(iter->first,
+                                       std::vector<std::pair<CameraDeviceStatus, uint32_t>>());
+        }
+    }
+
     if (cameraId == -1) {
         ALOGW("%s: camera not in config json", __func__);
         return;
