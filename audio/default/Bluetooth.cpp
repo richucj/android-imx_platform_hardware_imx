@@ -35,11 +35,12 @@ Bluetooth::Bluetooth() {
     mHfpConfig.sampleRate = Int{8000};
     mHfpConfig.volume = Float{HfpConfig::VOLUME_MAX};
 
-    /* speaker and mic shares the same pcm_config */
+    /* speaker and mic shares the same pcm_config: 48000, 2 channel, 16 bit */
+    #define PCM_CONFIG_SPEAKER_PERIOD_BYTES 4
     pcm_config_speaker = {
         .channels = 2,
-        .rate = 16000,
-        .period_size = 256,
+        .rate = 48000,
+        .period_size = 192,
         .period_count = 4,
         .format = PCM_FORMAT_S16_LE,
         .start_threshold = 0,
@@ -49,7 +50,7 @@ Bluetooth::Bluetooth() {
     pcm_config_sco = {
         .channels = 1,
         .rate = 16000,
-        .period_size = 256,
+        .period_size = 64,
         .period_count = 4,
         .format = PCM_FORMAT_S16_LE,
         .start_threshold = 0,
@@ -141,6 +142,24 @@ void Bluetooth::stopHfp() {
         pcm_close(pcm_sco_in);
         pcm_sco_in = NULL;
     }
+
+    if (mDownlinkResampler) {
+        release_resampler(mDownlinkResampler);
+        mDownlinkResampler = NULL;
+        if (mDownlinkResamplerBuffer) {
+            free(mDownlinkResamplerBuffer);
+            mDownlinkResamplerBuffer = NULL;
+        }
+    }
+
+    if (mUplinkResampler) {
+        release_resampler(mUplinkResampler);
+        mUplinkResampler = NULL;
+        if (mUplinkResamplerBuffer) {
+            free(mUplinkResamplerBuffer);
+            mUplinkResamplerBuffer = NULL;
+        }
+    }
 }
 
 void* Bluetooth::uplink_task(void* arg) {
@@ -152,35 +171,85 @@ void* Bluetooth::uplink_task(void* arg) {
 void *Bluetooth::uplink_task_impl()
 {
     int ret = 0;
-    size_t frameCount = pcm_config_sco.period_size;
-    size_t bytesMic = frameCount * 2 * 2; // stereo, 16 bit
-    size_t bytesSco = frameCount * 1 * 2; // mono, 16 bit
-    void *bufferMic = malloc(bytesMic);
-    void *bufferSco = malloc(bytesSco);
+    size_t frameCount = pcm_config_speaker.period_size;
+    size_t bytesMic = pcm_config_speaker.period_size * PCM_CONFIG_SPEAKER_PERIOD_BYTES;
+    size_t bytesSco = pcm_frames_to_bytes(pcm_sco_out, pcm_config_sco.period_size);
+    size_t inFrameCount = 0;
+    size_t outFrameCount = 0;
 
-    if (!bufferMic || !bufferSco) {
+    auto card = AudioCardManager::getCardForDevice(AUDIO_DEVICE_IN_BUILTIN_MIC);
+    if (!card) {
+        LOG(ERROR) << "card is not found";
+        return NULL;
+    }
+
+    void *bufferMic = malloc(bytesMic);
+    if (!bufferMic) {
         LOG(ERROR) << __func__ << "Failed to alloc " << bytesMic << " bytes";
         return NULL;
     }
 
-    LOG(ERROR) << __func__ << " start";
+    void *bufferSco = malloc(bytesSco);
+    if (!bufferSco) {
+        LOG(ERROR) << __func__ << "Failed to alloc " << bytesSco << " bytes";
+        free(bufferMic);
+        return NULL;
+    }
+
+    LOG(INFO) << __func__ << " start";
     while (uplink_running) {
-        ret = pcm_read(pcm_mic_in, bufferMic, bytesMic);
-        if (ret) {
-            LOG(ERROR) << __func__ << "pcm read failed: " << pcm_get_error(pcm_mic_in);
+        /* input priority: HFP(1) > PRIMARY(2) > NONE(0) */
+        if (card->inOwner == OWNER_HFP) {
+            if (!pcm_mic_in) {
+                ret = openPcmForDevice(AUDIO_DEVICE_IN_BUILTIN_MIC, PCM_IN,
+                        &pcm_config_speaker, &pcm_mic_in);
+                if (ret) {
+                    usleep(5000);
+                    continue;
+                }
+            }
+        } else {
+            std::unique_lock lock(card->mLock);
+            card->inOwner = OWNER_HFP;
             continue;
         }
-        downmix_to_mono_i16_from_stereo_i16((int16_t*)bufferSco, (const int16_t*)bufferMic, frameCount);
-        ret = pcm_write(pcm_sco_out, bufferSco, bytesSco);
+
+        ret = pcm_read(pcm_mic_in, bufferMic, bytesMic);
         if (ret) {
-            LOG(ERROR) << __func__ << "pcm write failed: " << pcm_get_error(pcm_sco_out);
+            LOG(ERROR) << __func__ << " pcm read failed: ret: " << ret << " " << pcm_get_error(pcm_mic_in);
+            usleep(5000);
+            continue;
+        }
+
+        inFrameCount = frameCount;
+        outFrameCount = frameCount;
+        if (pcm_config_sco.rate != pcm_config_speaker.rate && mUplinkResampler) {
+            mUplinkResampler->resample_from_input(mUplinkResampler,
+                    (int16_t *)bufferMic, &inFrameCount,
+                    (int16_t *)mUplinkResamplerBuffer, &outFrameCount);
+            if (inFrameCount != frameCount) {
+                LOG(ERROR) << __func__ << " resampler does not consume all input data: in "
+                    << inFrameCount << " out " << outFrameCount;
+            }
+            downmix_to_mono_i16_from_stereo_i16((int16_t*)bufferSco, (const int16_t*)mUplinkResamplerBuffer, outFrameCount);
+        } else {
+            downmix_to_mono_i16_from_stereo_i16((int16_t*)bufferSco, (const int16_t*)bufferMic, frameCount);
+        }
+
+        ret = pcm_write(pcm_sco_out, bufferSco, pcm_frames_to_bytes(pcm_sco_out, outFrameCount));
+        if (ret) {
+            LOG(ERROR) << __func__ << " pcm write failed: ret: " << ret << " " << pcm_get_error(pcm_sco_out);
+            usleep(5000);
             continue;
         }
     }
 
     free(bufferMic);
     free(bufferSco);
-    LOG(ERROR) << __func__ << " stop";
+    if (card->inOwner == OWNER_HFP) {
+        card->inOwner = OWNER_NONE;
+    }
+    LOG(INFO) << __func__ << " stop";
     return NULL;
 }
 
@@ -194,34 +263,91 @@ void *Bluetooth::downlink_task_impl()
 {
     int ret = 0;
     size_t frameCount = pcm_config_sco.period_size;
-    size_t bytesSpeaker = frameCount * 2 * 2; // stereo, 16 bit
-    size_t bytesSco = frameCount * 1 * 2; // mono, 16 bit
-    void *bufferSpeaker = malloc(bytesSpeaker);
-    void *bufferSco = malloc(bytesSco);
+    size_t bytesSpeaker = pcm_config_speaker.period_size * PCM_CONFIG_SPEAKER_PERIOD_BYTES;
+    size_t bytesSco = pcm_frames_to_bytes(pcm_sco_in, pcm_config_sco.period_size);
+    size_t inFrameCount = 0;
+    size_t outFrameCount = 0;
 
-    if (!bufferSpeaker || !bufferSco) {
+    auto card = AudioCardManager::getCardForDevice(AUDIO_DEVICE_OUT_SPEAKER);
+    if (!card) {
+        LOG(ERROR) << "card is not found";
+        return NULL;
+    }
+
+    void *bufferSpeaker = malloc(bytesSpeaker);
+    if (!bufferSpeaker) {
         LOG(ERROR) << __func__ << "Failed to alloc " << bytesSpeaker << " bytes";
         return NULL;
     }
 
-    LOG(ERROR) << __func__ << " start";
+    void *bufferSco = malloc(bytesSco);
+    if (!bufferSco) {
+        LOG(ERROR) << __func__ << "Failed to alloc " << bytesSco << " bytes";
+        free(bufferSpeaker);
+        return NULL;
+    }
+
+    LOG(INFO) << __func__ << " start";
     while (downlink_running) {
-        ret = pcm_read(pcm_sco_in, bufferSco, bytesSco);
-        if (ret) {
-            LOG(ERROR) << __func__ << "pcm read failed: " << pcm_get_error(pcm_sco_in);
+        /* output priority: DIRECT(3) > PRIMARY(2) > HFP(1) > NONE(0) */
+        if (card->outOwner > OWNER_HFP) {
+            if (pcm_speaker_out) {
+                pcm_close(pcm_speaker_out);
+                pcm_speaker_out = NULL;
+                LOG(ERROR) << __func__ << " standby hfp speaker";
+            }
+            usleep(20000);
+            continue;
+        } else if (card->outOwner == OWNER_HFP) {
+            if (!pcm_speaker_out) {
+                ret = openPcmForDevice(AUDIO_DEVICE_OUT_SPEAKER, PCM_OUT,
+                        &pcm_config_speaker, &pcm_speaker_out);
+                if (ret) {
+                    usleep(5000);
+                    continue;
+                }
+            }
+        } else {
+            std::unique_lock lock(card->mLock);
+            card->outOwner = OWNER_HFP;
             continue;
         }
-        upmix_to_stereo_i16_from_mono_i16((int16_t*)bufferSpeaker, (const int16_t*)bufferSco, frameCount);
-        ret = pcm_write(pcm_speaker_out, bufferSpeaker, bytesSpeaker);
+        ret = pcm_read(pcm_sco_in, bufferSco, bytesSco);
         if (ret) {
-            LOG(ERROR) << __func__ << "pcm write failed: " << pcm_get_error(pcm_speaker_out);
+            LOG(ERROR) << __func__ << " pcm read failed: ret: " << ret << " " << pcm_get_error(pcm_sco_in);
+            usleep(5000);
+            continue;
+        }
+
+        inFrameCount = frameCount;
+        outFrameCount = frameCount * (pcm_config_speaker.rate / pcm_config_sco.rate);
+        if (pcm_config_sco.rate != pcm_config_speaker.rate && mDownlinkResampler) {
+            mDownlinkResampler->resample_from_input(mDownlinkResampler,
+                    (int16_t *)bufferSco, &inFrameCount,
+                    (int16_t *)mDownlinkResamplerBuffer, &outFrameCount);
+            if (inFrameCount != frameCount) {
+                LOG(ERROR) << __func__ << " resampler does not consume all input data: in "
+                    << inFrameCount << " out " << outFrameCount;
+            }
+            upmix_to_stereo_i16_from_mono_i16((int16_t*)bufferSpeaker, (const int16_t*)mDownlinkResamplerBuffer, outFrameCount);
+        } else {
+            upmix_to_stereo_i16_from_mono_i16((int16_t*)bufferSpeaker, (const int16_t*)bufferSco, frameCount);
+        }
+
+        ret = pcm_write(pcm_speaker_out, bufferSpeaker, pcm_frames_to_bytes(pcm_speaker_out, outFrameCount));
+        if (ret) {
+            LOG(ERROR) << __func__ << " pcm write failed: ret: " << ret << " "  << pcm_get_error(pcm_speaker_out);
+            usleep(5000);
             continue;
         }
     }
 
     free(bufferSpeaker);
     free(bufferSco);
-    LOG(ERROR) << __func__ << " stop";
+    if (card->outOwner == OWNER_HFP) {
+        card->outOwner = OWNER_NONE;
+    }
+    LOG(INFO) << __func__ << " stop";
     return NULL;
 }
 
@@ -229,15 +355,13 @@ void Bluetooth::startHfp() {
     LOG(DEBUG) << __func__;
     int ret = 0;
 
-    ret = openPcmForDevice(AUDIO_DEVICE_OUT_SPEAKER, PCM_OUT,
-                &pcm_config_speaker, &pcm_speaker_out);
-    if (ret)
-        goto error;
-
-    ret = openPcmForDevice(AUDIO_DEVICE_IN_BUILTIN_MIC, PCM_IN,
-                &pcm_config_speaker, &pcm_mic_in);
-    if (ret)
-        goto error;
+    int ratio = pcm_config_speaker.rate / pcm_config_sco.rate;
+    if (!ratio) {
+        LOG(ERROR) << __func__ << " wrong rates, speaker: " <<
+            pcm_config_speaker.rate << ", sco: " << pcm_config_sco.rate;
+        return;
+    }
+    pcm_config_sco.period_size = pcm_config_speaker.period_size / ratio;
 
     ret = openPcmForDevice(AUDIO_DEVICE_OUT_BLUETOOTH_SCO, PCM_OUT,
                 &pcm_config_sco, &pcm_sco_out);
@@ -248,6 +372,48 @@ void Bluetooth::startHfp() {
                 &pcm_config_sco, &pcm_sco_in);
     if (ret)
         goto error;
+
+    if (pcm_config_sco.rate != pcm_config_speaker.rate) {
+        ret = create_resampler(
+                pcm_config_sco.rate, pcm_config_speaker.rate, pcm_config_sco.channels,
+                RESAMPLER_QUALITY_DEFAULT,
+                NULL,                      /* resampler_buffer_provider */
+                &mDownlinkResampler);
+        if (ret) {
+            LOG(ERROR) << "Resampler initialization failed! Error code " << ret;
+            goto error;
+        }
+        size_t size = pcm_frames_to_bytes(pcm_sco_in, pcm_config_sco.period_size * ratio);
+        mDownlinkResamplerBuffer = (int16_t *)malloc(size);
+        if (!mDownlinkResamplerBuffer) {
+            LOG(ERROR) << "Resampler buffer initialization failed!";
+            goto error;
+        }
+
+        LOG(INFO) << __func__ << ": created downlink resampler from " <<
+            pcm_config_sco.rate << " to " << pcm_config_speaker.rate <<
+            ", channel " << pcm_config_sco.channels << ", buffer size " << size;
+
+        ret = create_resampler(
+                pcm_config_speaker.rate, pcm_config_sco.rate, pcm_config_speaker.channels,
+                RESAMPLER_QUALITY_DEFAULT,
+                NULL,                      /* resampler_buffer_provider */
+                &mUplinkResampler);
+        if (ret) {
+            LOG(ERROR) << "Resampler initialization failed! Error code " << ret;
+            goto error;
+        }
+        size = pcm_config_speaker.period_size / ratio * PCM_CONFIG_SPEAKER_PERIOD_BYTES;
+        mUplinkResamplerBuffer = (int16_t *)malloc(size);
+        if (!mUplinkResamplerBuffer) {
+            LOG(ERROR) << "Resampler buffer initialization failed!";
+            goto error;
+        }
+
+        LOG(INFO) << __func__ << ": created uplink resampler from " <<
+            pcm_config_speaker.rate << " to " << pcm_config_sco.rate <<
+            ", channel " << pcm_config_speaker.channels << ", buffer size " << size;
+    }
 
     pthread_attr_t attr;
     struct sched_param schParam;

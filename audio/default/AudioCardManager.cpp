@@ -64,9 +64,11 @@ struct audio_card* AudioCardManager::getCardForDevice(const ::aidl::android::med
 
     const ::aidl::android::media::audio::common::AudioDeviceAddress& deviceAddress = audioDevice.address;
 
-    if (audioDevice.type.type == AudioDeviceType::OUT_BUS) {
+    if (audioDevice.type.type == AudioDeviceType::OUT_BUS &&
+            audioDevice.type.connection.empty()) {
         LOG(INFO) << __func__ << ": BUS : " << audioDevice.toString();
-        bus_name = ::android::internal::ToString(deviceAddress.get<AudioDeviceAddress::Tag::id>()).c_str();
+        std::string idStr = ::android::internal::ToString(deviceAddress.get<AudioDeviceAddress::Tag::id>());
+        bus_name = idStr.c_str();
         card = getCardForBus(bus_name);
     } else {
         LOG(INFO) << __func__ << ": DEVICE: " << audioDevice.toString();
@@ -148,7 +150,8 @@ void AudioCardManager::scanAvailableCard()
         }
         audio_card->card = card;
         audio_card->card_name = strdup(card_name);
-        audio_card->locked = false;
+        audio_card->inOwner = OWNER_NONE;
+        audio_card->outOwner = OWNER_NONE;
         if (!(strstr(card_name, "cs42888"))) {
             mCards.insert(mCards.begin(), audio_card);
             mMixers.insert(mMixers.begin(), mixer);

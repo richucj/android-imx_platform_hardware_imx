@@ -52,6 +52,7 @@ cc_library_shared {
         "convert.cpp",
         "DecoderDev.cpp",
         "HwDecoder.cpp",
+        "ExternalISPWrapper.cpp"
     ],
 
     cflags: [

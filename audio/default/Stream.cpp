@@ -387,8 +387,20 @@ bool StreamInWorkerLogic::read(size_t clientSize, StreamDescriptor::Reply* reply
 const std::string StreamOutWorkerLogic::kThreadName = "writer";
 
 StreamOutWorkerLogic::Status StreamOutWorkerLogic::cycle() {
-    if (mState == StreamDescriptor::State::DRAINING ||
-        mState == StreamDescriptor::State::TRANSFERRING) {
+    if (mState == StreamDescriptor::State::DRAINING && mContext->getForceDrainToDraining() &&
+        mOnDrainReadyStatus == OnDrainReadyStatus::UNSENT) {
+        std::shared_ptr<IStreamCallback> asyncCallback = mContext->getAsyncCallback();
+        if (asyncCallback != nullptr) {
+            ndk::ScopedAStatus status = asyncCallback->onDrainReady();
+            if (!status.isOk()) {
+                LOG(ERROR) << __func__ << ": error from onDrainReady: " << status;
+            }
+            // This sets the timeout for moving into IDLE on next iterations.
+            switchToTransientState(StreamDescriptor::State::DRAINING);
+            mOnDrainReadyStatus = OnDrainReadyStatus::SENT;
+        }
+    } else if (mState == StreamDescriptor::State::DRAINING ||
+               mState == StreamDescriptor::State::TRANSFERRING) {
         if (auto stateDurationMs = std::chrono::duration_cast<std::chrono::milliseconds>(
                     std::chrono::steady_clock::now() - mTransientStateStart);
             stateDurationMs >= mTransientStateDelayMs) {
@@ -401,9 +413,12 @@ StreamOutWorkerLogic::Status StreamOutWorkerLogic::cycle() {
                 // drain or transfer completion. In the stub, we switch unconditionally.
                 if (mState == StreamDescriptor::State::DRAINING) {
                     mState = StreamDescriptor::State::IDLE;
-                    ndk::ScopedAStatus status = asyncCallback->onDrainReady();
-                    if (!status.isOk()) {
-                        LOG(ERROR) << __func__ << ": error from onDrainReady: " << status;
+                    if (mOnDrainReadyStatus != OnDrainReadyStatus::SENT) {
+                        ndk::ScopedAStatus status = asyncCallback->onDrainReady();
+                        if (!status.isOk()) {
+                            LOG(ERROR) << __func__ << ": error from onDrainReady: " << status;
+                        }
+                        mOnDrainReadyStatus = OnDrainReadyStatus::SENT;
                     }
                 } else {
                     mState = StreamDescriptor::State::ACTIVE;
@@ -542,6 +557,10 @@ StreamOutWorkerLogic::Status StreamOutWorkerLogic::cycle() {
                             mState = StreamDescriptor::State::IDLE;
                         } else {
                             switchToTransientState(StreamDescriptor::State::DRAINING);
+                            mOnDrainReadyStatus =
+                                    mode == StreamDescriptor::DrainMode::DRAIN_EARLY_NOTIFY
+                                            ? OnDrainReadyStatus::UNSENT
+                                            : OnDrainReadyStatus::IGNORE;
                         }
                     } else {
                         LOG(ERROR) << __func__ << ": drain failed: " << status;
@@ -858,6 +877,11 @@ ndk::ScopedAStatus StreamCommonImpl::setConnectedDevices(
     mWorker->setIsConnected(!devices.empty());
     mConnectedDevices = devices;
     return ndk::ScopedAStatus::ok();
+}
+
+ndk::ScopedAStatus StreamCommonImpl::setGain(float gain) {
+    LOG(DEBUG) << __func__ << ": gain " << gain;
+    return ndk::ScopedAStatus::fromExceptionCode(EX_UNSUPPORTED_OPERATION);
 }
 
 ndk::ScopedAStatus StreamCommonImpl::bluetoothParametersUpdated() {

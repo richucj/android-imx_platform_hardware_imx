@@ -1,6 +1,6 @@
 /*
  * Copyright (C) 2012-2016 Freescale Semiconductor, Inc.
- * Copyright 2017-2020 NXP
+ * Copyright 2017-2020, 2025 NXP
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -133,7 +133,7 @@ public:
     ~JpegBuilder();
 
     status_t encodeImage(JpegParams *mainJpeg, JpegParams *thumbNail, char *hw_jpeg_enc,
-                         CameraMetadata &meta);
+                         CameraMetadata &meta, bool debug = false);
     size_t getImageSize() { return mRequestSize; }
     status_t buildImage(ImxStreamBuffer *streamBuf, char *hw_jpeg_enc);
     void reset();
@@ -165,6 +165,7 @@ private:
 
     CameraMetadata *mMeta;
     uint32_t mRequestSize;
+    bool mDebug;
 };
 }; // namespace android
 

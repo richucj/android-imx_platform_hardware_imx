@@ -225,6 +225,7 @@ bool ExternalCameraDeviceSession::initialize() {
     mOutputThread->setMjpegCopy(mMjpgCopy);
     mOutputThread->setExifMakeModel(mExifMake, mExifModel);
     mOutputThread->setBlitEngine(mCfg.blitEngine);
+    mOutputThread->m_IspWrapper = std::make_unique<ExternalISPWrapper>(mV4l2Fd.get());
 
     status_t status = initDefaultRequests();
     if (status != OK) {
@@ -1310,6 +1311,12 @@ int ExternalCameraDeviceSession::configureV4l2StreamLocked(const SupportedV4L2Fo
     }
 
     ALOGI("%s: start V4L2 streaming %dx%d@%ffps", __FUNCTION__, v4l2Fmt.width, v4l2Fmt.height, fps);
+
+    // When restart stream, recover to awb/ae/af
+    mOutputThread->m_IspWrapper->processAWB(ANDROID_CONTROL_AWB_MODE_AUTO, true);
+    mOutputThread->m_IspWrapper->processAeMode(ANDROID_CONTROL_AE_MODE_ON, true);
+    mOutputThread->m_IspWrapper->processAfMode(ANDROID_CONTROL_AF_MODE_AUTO, true);
+
     mV4l2StreamingFmt = v4l2Fmt;
     mV4l2Streaming = true;
     mOutputThread->mDecedFrames = 0; // new streaming start, source changed
@@ -3464,6 +3471,9 @@ bool ExternalCameraDeviceSession::OutputThread::threadLoop() {
             return onDeviceError("%s: failed to send buffer request!", __FUNCTION__);
         }
     }
+
+    // ISP process based on meta
+    m_IspWrapper->process(req->setting);
 
     std::unique_lock<std::mutex> lk(mBufferLock);
     // Convert input V4L2 frame to YU12 of the same size

@@ -1,5 +1,6 @@
 //
 // Copyright 2016 The Android Open Source Project
+// Copyright 2024-2025 NXP
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -17,17 +18,15 @@
 #pragma once
 
 #include <hidl/HidlSupport.h>
+
 #include "BluetoothHci.h"
 #include "async_fd_watcher.h"
-#include "bt_vendor_lib.h"
-#include "hci_packetizer.h"
 #include "bluetooth_address.h"
+#include "bt_vendor_lib.h"
 #include "hci_internals.h"
-
-
+#include "hci_packetizer.h"
 
 namespace aidl::android::hardware::bluetooth::impl {
-
 
 using InitializeCompleteCallback = std::function<void(bool success)>;
 using PacketReadCallback = std::function<void(const std::vector<uint8_t>&)>;
@@ -39,9 +38,10 @@ class FirmwareStartupTimer;
 class VendorInterface {
  public:
   static bool Initialize(InitializeCompleteCallback initialize_complete_cb,
-                        PacketReadCallback cmd_cb,PacketReadCallback acl_cb, 
-                        PacketReadCallback sco_cb,PacketReadCallback event_cb, 
-                        PacketReadCallback iso_cb,DisconnectCallback disconnect_cb);
+                         PacketReadCallback cmd_cb, PacketReadCallback acl_cb,
+                         PacketReadCallback sco_cb, PacketReadCallback event_cb,
+                         PacketReadCallback iso_cb,
+                         DisconnectCallback disconnect_cb);
   static void Shutdown();
   static VendorInterface* get();
 
@@ -53,23 +53,21 @@ class VendorInterface {
   virtual ~VendorInterface() = default;
 
   bool Open(InitializeCompleteCallback initialize_complete_cb,
-                        PacketReadCallback cmd_cb,PacketReadCallback acl_cb, 
-                        PacketReadCallback sco_cb,PacketReadCallback event_cb, 
-                        PacketReadCallback iso_cb,DisconnectCallback disconnect_cb);
+            PacketReadCallback cmd_cb, PacketReadCallback acl_cb,
+            PacketReadCallback sco_cb, PacketReadCallback event_cb,
+            PacketReadCallback iso_cb, DisconnectCallback disconnect_cb);
   void Close();
 
   void OnTimeout();
 
   void HandleIncomingEvent(const std::vector<uint8_t>& hci_packet);
 
-  void LocalconfigHciandFw(H4Protocol *h4_hci);
+  void LocalconfigHciandFw(H4Protocol* h4_hci);
 
   void* lib_handle_ = nullptr;
   bt_vendor_interface_t* lib_interface_ = nullptr;
-  //async::AsyncFdWatcher fd_watcher_;
   AsyncFdWatcher fd_watcher_;
   InitializeCompleteCallback initialize_complete_cb_;
-  //hci::HciProtocol* hci_ = nullptr;
   H4Protocol* hci_ = nullptr;
 
   PacketReadCallback event_cb_;

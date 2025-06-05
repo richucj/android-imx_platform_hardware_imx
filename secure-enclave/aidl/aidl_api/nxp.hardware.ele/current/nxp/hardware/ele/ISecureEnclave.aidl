@@ -38,7 +38,7 @@ interface ISecureEnclave {
   void eleDeleteKey(in int keyId, in int flags);
   void eleGetKeyAttr(in int keyId, out nxp.hardware.ele.ISecureEnclave.KeyAttribute keyAttr);
   int eleCipherOperation(in int keyId, in byte[] iv, in int flags, in int algo, in byte[] input, out byte[] output);
-  int eleCipherAEOperation(in int keyId, in byte[] iv, in int flags, in int algo, in byte[] aad, in byte[] input, out byte[] output);
+  int eleCipherAeadOperation(in int keyId, in byte[] iv, out byte[] iv_out, in int flags, in int algo, inout byte[] tag, in byte[] aad, in byte[] input, out byte[] output);
   int eleSignGenerate(in int keyId, in byte[] message, out byte[] signature, in int flags, in int signScheme, in int saltLen);
   void eleSignVerify(in byte[] key, in byte[] message, in byte[] signature, in int keySecuritySize, in int keyType, in int flags, in int signScheme, in int saltLength);
   int eleMacOperation(in int keyId, in byte[] payload, inout byte[] mac, in int macSize, in int flag, in int algorithm);

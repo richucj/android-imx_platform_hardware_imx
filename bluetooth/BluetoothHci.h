@@ -1,5 +1,6 @@
 /*
  * Copyright 2022 The Android Open Source Project
+ * Copyright 2024-2025 NXP
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -24,7 +25,6 @@
 
 #include "async_fd_watcher.h"
 #include "h4_protocol.h"
-#include "net_bluetooth_mgmt.h"
 
 namespace aidl::android::hardware::bluetooth::impl {
 
@@ -54,7 +54,6 @@ class BluetoothHci : public BnBluetoothHci {
   static BluetoothHci* get();
 
  private:
-  int mFd{-1};
   std::shared_ptr<IBluetoothHciCallbacks> mCb = nullptr;
 
   std::shared_ptr<::android::hardware::bluetooth::hci::H4Protocol> mH4;
@@ -63,16 +62,10 @@ class BluetoothHci : public BnBluetoothHci {
 
   std::string mDevPath;
 
-  ::android::hardware::bluetooth::async::AsyncFdWatcher mFdWatcher;
-
   int getFdFromDevPath();
   [[nodiscard]] ndk::ScopedAStatus send(
       ::android::hardware::bluetooth::hci::PacketType type,
-            const std::vector<uint8_t>& packet);
-  std::unique_ptr<NetBluetoothMgmt> management_{};
-
-  // Send a reset command and discard all packets until a reset is received.
-  void reset();
+      const std::vector<uint8_t>& packet);
 
   // Don't close twice or open before close is complete
   std::mutex mStateMutex;

@@ -20,7 +20,7 @@
 #include <utils/Timers.h>
 
 #include "CameraDeviceHWLImpl.h"
-#ifdef ISIMX8
+#ifdef IMX8MP
 #include "ISPCameraDeviceHWLImpl.h"
 #endif
 #define ARRAY_SIZE(a) (sizeof(a) / sizeof(a[0]))
@@ -241,7 +241,7 @@ status_t CameraMetadata::createMetadata(CameraDeviceHwlImpl *pDev,
         // "full" level device must support ANDROID_SYNC_MAX_LATENCY_PER_FRAME_CONTROL.
         static const int32_t maxLatency = ANDROID_SYNC_MAX_LATENCY_PER_FRAME_CONTROL;
         m_static_meta->Set(ANDROID_SYNC_MAX_LATENCY, &maxLatency, 1);
-#ifdef ISIMX8
+#ifdef IMX8MP
         const uint8_t color_arrange = ((ISPCameraDeviceHwlImpl *)pDev)->m_color_arrange;
         m_static_meta->Set(ANDROID_SENSOR_INFO_COLOR_FILTER_ARRANGEMENT, &color_arrange, 1);
 #endif

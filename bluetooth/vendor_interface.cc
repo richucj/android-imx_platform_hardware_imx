@@ -1,5 +1,6 @@
 //
 // Copyright 2016 The Android Open Source Project
+// Copyright 2024-2025 NXP
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -18,15 +19,14 @@
 
 #define LOG_TAG "android.hardware.bluetooth.service.default"
 #include <cutils/properties.h>
-#include <utils/Log.h>
-
 #include <dlfcn.h>
 #include <fcntl.h>
+#include <utils/Log.h>
+
 #include <iostream>
 
 #include "bluetooth_address.h"
 #include "h4_protocol.h"
-
 
 #ifdef BT_FUZZER
 static const char* VENDOR_LIBRARY_NAME = "libbt-vendor-fuzz.so";
@@ -41,7 +41,6 @@ static const int INVALID_FD = -1;
 static const uint8_t HCI_COMMAND_COMPLETE_EVENT = 0x0E;
 
 namespace {
-
 
 using aidl::android::hardware::bluetooth::impl::VendorInterface;
 using namespace aidl::android::hardware::bluetooth::impl;
@@ -84,13 +83,13 @@ bool internal_command_event_match(const std::vector<uint8_t>& packet) {
 
   uint16_t opcode = packet[opcode_offset] | (packet[opcode_offset + 1] << 8);
 
-  ALOGD(" %s internal_command.opcode = %04X opcode = %04x", __func__,
+  ALOGV(" %s internal_command.opcode = %04X opcode = %04x", __func__,
         internal_command.opcode, opcode);
   return opcode == internal_command.opcode;
 }
 
 uint8_t transmit_cb(uint16_t opcode, void* buffer, tINT_CMD_CBACK callback) {
-  ALOGD("%s opcode: 0x%04x, ptr: %p, cb: %p", __func__, opcode, buffer,
+  ALOGV("%s opcode: 0x%04x, ptr: %p, cb: %p", __func__, opcode, buffer,
         callback);
 
   internal_command.cb = callback;
@@ -164,16 +163,18 @@ class FirmwareStartupTimer {
   std::chrono::steady_clock::time_point start_time_;
 };
 
-bool VendorInterface::Initialize(InitializeCompleteCallback initialize_complete_cb,
-                        PacketReadCallback cmd_cb,PacketReadCallback acl_cb, 
-                        PacketReadCallback sco_cb,PacketReadCallback event_cb, 
-                        PacketReadCallback iso_cb,DisconnectCallback disconnect_cb) {
+bool VendorInterface::Initialize(
+    InitializeCompleteCallback initialize_complete_cb,
+    PacketReadCallback cmd_cb, PacketReadCallback acl_cb,
+    PacketReadCallback sco_cb, PacketReadCallback event_cb,
+    PacketReadCallback iso_cb, DisconnectCallback disconnect_cb) {
   if (g_vendor_interface) {
     ALOGE("%s: No previous Shutdown()?", __func__);
     return false;
   }
   g_vendor_interface = new VendorInterface();
-  return g_vendor_interface->Open(initialize_complete_cb, cmd_cb, acl_cb, sco_cb,event_cb, iso_cb,disconnect_cb);
+  return g_vendor_interface->Open(initialize_complete_cb, cmd_cb, acl_cb,
+                                  sco_cb, event_cb, iso_cb, disconnect_cb);
 }
 
 void VendorInterface::Shutdown() {
@@ -187,20 +188,22 @@ void VendorInterface::Shutdown() {
 VendorInterface* VendorInterface::get() { return g_vendor_interface; }
 
 bool VendorInterface::Open(InitializeCompleteCallback initialize_complete_cb,
-                        PacketReadCallback cmd_cb,PacketReadCallback acl_cb, 
-                        PacketReadCallback sco_cb,PacketReadCallback event_cb, 
-                        PacketReadCallback iso_cb,DisconnectCallback disconnect_cb) {
+                           PacketReadCallback cmd_cb, PacketReadCallback acl_cb,
+                           PacketReadCallback sco_cb,
+                           PacketReadCallback event_cb,
+                           PacketReadCallback iso_cb,
+                           DisconnectCallback disconnect_cb) {
   initialize_complete_cb_ = initialize_complete_cb;
 
   // Initialize vendor interface
-  
+
   lib_handle_ = dlopen(VENDOR_LIBRARY_NAME, RTLD_NOW);
   if (!lib_handle_) {
     ALOGE("%s unable to open %s (%s)", __func__, VENDOR_LIBRARY_NAME,
           dlerror());
     return false;
   }
-  
+
   lib_interface_ = reinterpret_cast<bt_vendor_interface_t*>(
       dlsym(lib_handle_, VENDOR_LIBRARY_SYMBOL_NAME));
   if (!lib_interface_) {
@@ -208,7 +211,7 @@ bool VendorInterface::Open(InitializeCompleteCallback initialize_complete_cb,
           VENDOR_LIBRARY_SYMBOL_NAME, VENDOR_LIBRARY_NAME, dlerror());
     return false;
   }
-  
+
   // Get the local BD address
 
   uint8_t local_bda[BluetoothAddress::kBytes];
@@ -242,20 +245,19 @@ bool VendorInterface::Open(InitializeCompleteCallback initialize_complete_cb,
       return false;
     }
   }
-  
-  event_cb_ = event_cb;
-  PacketReadCallback intercept_events = [this](const std::vector<uint8_t>& event) {
-    HandleIncomingEvent(event);
-  };
 
+  event_cb_ = event_cb;
+  PacketReadCallback intercept_events =
+      [this](const std::vector<uint8_t>& event) { HandleIncomingEvent(event); };
 
   if (fd_count == 1) {
     H4Protocol* h4_hci =
-        new H4Protocol(fd_list[0], cmd_cb, acl_cb, sco_cb, intercept_events, iso_cb, disconnect_cb);
+        new H4Protocol(fd_list[0], cmd_cb, acl_cb, sco_cb, intercept_events,
+                       iso_cb, disconnect_cb);
     fd_watcher_.WatchFdForNonBlockingReads(
         fd_list[0], [h4_hci](int) { h4_hci->OnDataReady(); });
     hci_ = h4_hci;
-  } 
+  }
 
   // Initially, the power management is off.
   lpm_wake_deasserted = true;
@@ -266,7 +268,6 @@ bool VendorInterface::Open(InitializeCompleteCallback initialize_complete_cb,
 
   return true;
 }
-
 
 void VendorInterface::Close() {
   // These callbacks may send HCI events (vendor-dependent), so make sure to
@@ -304,7 +305,8 @@ void VendorInterface::Close() {
   }
 }
 
-size_t VendorInterface::Send(PacketType type, const uint8_t* data, size_t length) {
+size_t VendorInterface::Send(PacketType type, const uint8_t* data,
+                             size_t length) {
   std::unique_lock<std::mutex> lock(wakeup_mutex_);
   recent_activity_flag = true;
 
@@ -360,20 +362,18 @@ void VendorInterface::OnTimeout() {
   recent_activity_flag = false;
 }
 
-void VendorInterface::HandleIncomingEvent(const std::vector<uint8_t>& hci_packet) {
-  ALOGD("%s: line %d internal_command.cb %p", __func__, __LINE__, internal_command.cb);
+void VendorInterface::HandleIncomingEvent(
+    const std::vector<uint8_t>& hci_packet) {
   if (internal_command.cb != nullptr &&
       internal_command_event_match(hci_packet)) {
-    
-    HC_BT_HDR* bt_hdr = WrapPacketAndCopy(static_cast<uint16_t>(PacketType::EVENT), hci_packet);
+    HC_BT_HDR* bt_hdr =
+        WrapPacketAndCopy(static_cast<uint16_t>(PacketType::EVENT), hci_packet);
 
     // The callbacks can send new commands, so don't zero after calling.
     tINT_CMD_CBACK saved_cb = internal_command.cb;
     internal_command.cb = nullptr;
-    ALOGD(" %s: line %d last handle callback %p", __func__, __LINE__,saved_cb);
     saved_cb(bt_hdr);
   } else {
-    ALOGD(" %s: line %d libbt handle event", __func__, __LINE__);
     event_cb_(hci_packet);
   }
 }

@@ -1,0 +1,28 @@
+// Copyright 2025 NXP
+// SPDX-License-Identifier: BSD-3-Clause
+
+cc_library {
+    name: "libsmw_imx",
+    vendor: true,
+    srcs: [
+        "./*.cpp",
+        "psa/*.cpp",
+    ],
+    export_include_dirs: [
+        "include"
+    ],
+    local_include_dirs: [
+        "include"
+    ],
+    cflags: [
+        "-Wall",
+        "-Werror",
+    ],
+
+    shared_libs: [
+        "liblog",
+    ],
+    static_libs: [
+        "libsecureenclave",
+    ],
+}

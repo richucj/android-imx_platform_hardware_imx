@@ -1,5 +1,5 @@
 /*
- *  Copyright 2020 NXP.
+ *  Copyright 2020, 2025 NXP.
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -65,6 +65,8 @@ public:
     virtual int32_t onPrepareLocked(uint32_t format __unused, uint8_t sceneMode __unused) {
         return 0;
     }
+
+    bool isStart() { return mbStart; }
 
 protected:
     virtual int32_t postConfigureLocked(uint32_t format, uint32_t width, uint32_t height,

@@ -15,13 +15,12 @@
  */
 
 #define LOG_TAG "ImxSecureEnclaveOperation"
+// #define ELE_DEBUG 1
 
 #include <EleOperation.h>
 #include <fcntl.h>
 
-static const char hsm_mu_path[] = "/dev/hsm1_ch0";
-static const char hsm_mu_nvm_path[] = "/dev/hsm1_ch1";
-static const char hsm_mu_secondary_path[] = "/dev/hsm1_ch2";
+static const char hsm_mu_path[] = "/dev/hsm0_ch0";
 
 #define SIZE_MSG(msg) sizeMsg(sizeof(msg))
 #define ROUND_UP(x, alignment) ((x + alignment - 1) & ~(alignment - 1))
@@ -111,6 +110,27 @@ uint32_t EleOperation::receiveMuMsg(void *msg, uint32_t respLen) {
     }
 
     return ret;
+}
+
+ErrorType EleOperation::sendAndReceiveMuMsg(void *req, uint32_t reqLen, void *resp, uint32_t respLen) {
+    std::mutex lock;
+    std::unique_lock<std::mutex> stateLock(lock);
+    struct ele_ioctl_cmd_snd_rcv_rsp_info send_and_receive_rsp_info = { 0 };
+    int ret = 0;
+
+    send_and_receive_rsp_info.tx_buf = (uint32_t *)req;
+    send_and_receive_rsp_info.tx_buf_sz = reqLen;
+    send_and_receive_rsp_info.rx_buf = (uint32_t *)resp;
+    send_and_receive_rsp_info.rx_buf_sz = respLen;
+
+    ret = ioctl(this->fd, ELE_IOCTL_CMD_SEND_RCV_RSP, &send_and_receive_rsp_info);
+    if (ret < 0) {
+        /* Send or receive mu message failed */
+        ALOGE("ELE send/receive mu message failed! error: %d", errno);
+        return ELE_COMMUNICATION_ERROR;
+    }
+
+    return ELE_NO_ERROR;
 }
 
 ErrorType EleOperation::receiveNVMRequest(struct mu_msg *cmd, uint32_t *cmdLen, uint32_t *cmdID) {
@@ -217,24 +237,13 @@ uint32_t EleOperation::retrivePhyAddress(uint8_t *src, uint32_t size, uint32_t f
 
 ErrorType EleOperation::eleOpenDeviceNode() {
     int error;
-    const char *path = nullptr;
+    /* Switch the hsm service by default */
+    const char *path = hsm_mu_path;
 
     /* Make sure we are not opening without close. */
     if (fd >= 0) {
         ALOGE("Open another ele device without closing the previous one!");
         return ELE_GENERAL_ERROR;
-    }
-
-    /* Select the correct device node according to the MU type */
-    if (mu_type == MU_CHANNEL_PLAT_HSM)
-        path = hsm_mu_path;
-    else if (mu_type == MU_CHANNEL_PLAT_HSM_NVM)
-        path = hsm_mu_nvm_path;
-    else if (mu_type == MU_CHANNEL_PLAT_HSM_SECONDARY) {
-        path = hsm_mu_secondary_path;
-    } else {
-        ALOGE("Invalid MU device type!");
-        return ELE_INVALID_MU_TYPE;
     }
 
     ALOGI("Opening ELE MU path: %s.", path);
@@ -253,15 +262,6 @@ ErrorType EleOperation::eleOpenDeviceNode() {
         return ELE_COMMUNICATION_ERROR;
     }
 
-    /* NVM: Configure the device to accept incoming commands. */
-    if ((mu_type == MU_CHANNEL_PLAT_HSM_NVM) &&
-        TEMP_FAILURE_RETRY(ioctl(fd, ELE_MU_IOCTL_ENABLE_CMD_RCV))) {
-        ALOGE("Failed to configure for NVM, err = %d.", error);
-        close(fd);
-        fd = -1;
-        return ELE_COMMUNICATION_ERROR;
-    }
-
     return ELE_NO_ERROR;
 }
 
@@ -273,10 +273,24 @@ ErrorType EleOperation::eleCloseDeviceNode() {
     return ELE_NO_ERROR;
 }
 
+ErrorType EleOperation::setChannelAsNVM(void) {
+    /* NVM: Configure the device to accept incoming commands. */
+    if ((mu_type == MU_CHANNEL_PLAT_HSM_NVM) &&
+        TEMP_FAILURE_RETRY(ioctl(fd, ELE_MU_IOCTL_ENABLE_CMD_RCV))) {
+        ALOGE("Failed to configure for NVM!");
+        close(fd);
+        fd = -1;
+        return ELE_COMMUNICATION_ERROR;
+    }
+
+    return ELE_NO_ERROR;
+}
+
 ErrorType EleOperation::eleSendAndReciveMsg(struct mu_msg *msg, uint32_t req_len,
                                             uint32_t *respLen) {
     struct mu_rsp *rsp;
     uint32_t crc = 0;
+    ErrorType error = ELE_NO_ERROR;
 
     /* valid "fd" means ele mu device node ready */
     if (fd < 0) {
@@ -289,13 +303,19 @@ ErrorType EleOperation::eleSendAndReciveMsg(struct mu_msg *msg, uint32_t req_len
         return ELE_INVALID_MESSAGE;
     }
 
-    /* Send the request */
-    if (sendMuMsg((void *)msg, req_len) != ELE_NO_ERROR)
-        return ELE_COMMUNICATION_ERROR;
+#ifdef ELE_DEBUG
+    dumpMessage(msg);
+#endif
 
-    /* Read the response */
-    if (receiveMuMsg((void *)msg, *respLen) != *respLen)
-        return ELE_COMMUNICATION_ERROR;
+    /* Send the request & read the response */
+    error = sendAndReceiveMuMsg((void *)msg, req_len, (void *)msg, *respLen);
+
+#ifdef ELE_DEBUG
+    dumpMessage(msg);
+#endif
+
+    if (error != ELE_NO_ERROR)
+        return error;
 
     /* Check response crc */
     if (msg->header.size > STORAGE_NB_WORDS_MAX_NO_CRC) {
@@ -391,6 +411,47 @@ ErrorType EleOperation::eleCloseSession() {
     return ELE_NO_ERROR;
 }
 
+ErrorType EleOperation::eleGetDeviceInfo(device_info *info) {
+    struct get_info_msg_cmd *get_info_args;
+    struct get_info_msg_rsp *get_info_resp;
+    struct mu_msg msg;
+    ErrorType error;
+    uint32_t req_len, resp_len;
+
+    /* check the session handle before opening keystore */
+    if (session_handle == 0) {
+        ALOGE("ELE session is not yet opened!");
+        return ELE_GENERAL_ERROR;
+    }
+
+    /* construct the message command */
+    memset(&msg, 0, sizeof(msg));
+    req_len = SIZE_MSG(struct get_info_msg_cmd);
+    get_info_args = (struct get_info_msg_cmd *)(msg.data.u8);
+    get_info_args->session_handle = session_handle;
+
+    buildMsgHeader(&msg, SESSION_GET_INFO, req_len, mu_info.cmd_tag);
+
+    resp_len = SIZE_MSG(struct get_info_msg_rsp);
+    error = eleSendAndReciveMsg(&msg, req_len, &resp_len);
+    if (error != ELE_NO_ERROR) {
+        ALOGE("Failed to retrieve device info from ELE.");
+        return error;
+    }
+
+    get_info_resp = (struct get_info_msg_rsp *)(msg.data.u8);
+    info->user_sab_id = get_info_resp->user_sab_id;
+    info->uid_w0 = get_info_resp->uid_w0;
+    info->uid_w1 = get_info_resp->uid_w1;
+    info->uid_w2 = get_info_resp->uid_w2;
+    info->uid_w3 = get_info_resp->uid_w3;
+    info->monotonic_counter = get_info_resp->monotonic_counter;
+    info->lifecycle = get_info_resp->lifecycle;
+    info->fips_mode = get_info_resp->fips_mode;
+
+    return ELE_NO_ERROR;
+}
+
 ErrorType EleOperation::eleOpenKeyStore(uint32_t keyStoreId, uint32_t nonce, uint8_t op,
                                         uint32_t *keyStoreHandler) {
     struct key_store_open_msg_cmd *open_keystore_args;
@@ -465,6 +526,56 @@ ErrorType EleOperation::eleCloseKeyStore(uint32_t keyStoreHandler) {
     }
 
     return ELE_NO_ERROR;
+}
+
+ErrorType EleOperation::elePubkeyExport(uint32_t keyStoreHandler, pubkey_export *pubkeyExportArgs) {
+    struct pubkey_recover_msg_cmd *pubkey_export_args;
+    struct pubkey_recover_msg_rsp *pubkey_export_resp;
+    struct mu_msg msg;
+    ErrorType error;
+    uint32_t req_len, resp_len;
+
+    /* check the keystore handle */
+    if (keyStoreHandler == 0) {
+        ALOGE("Invalid keystore handle");
+        return ELE_GENERAL_ERROR;
+    }
+
+    /* Check other input parameters */
+    if (pubkeyExportArgs->key_id == 0 || pubkeyExportArgs->out_key == NULL ||
+        pubkeyExportArgs->out_key_size == 0) {
+        ALOGE("Invalid input parameters!");
+        return ELE_INVALID_ARGS;
+    }
+
+    /* construct the message command */
+    memset(&msg, 0, sizeof(msg));
+    req_len = SIZE_MSG(struct pubkey_recover_msg_cmd);
+    pubkey_export_args = (struct pubkey_recover_msg_cmd *)(msg.data.u8);
+    pubkey_export_args->key_store_handle = keyStoreHandler;
+    pubkey_export_args->key_id = pubkeyExportArgs->key_id;
+    pubkey_export_args->out_key_lsb =
+            retrivePhyAddress(pubkeyExportArgs->out_key, pubkeyExportArgs->out_key_size,
+                              ELE_MU_IO_FLAGS_IS_OUTPUT);
+    pubkey_export_args->out_key_size = pubkeyExportArgs->out_key_size;
+
+    buildMsgHeader(&msg, KEY_STORE_PUBKEY_EXPORT, req_len, mu_info.cmd_tag);
+
+    /* add the CRC */
+    addCRC(&msg);
+
+    resp_len = SIZE_MSG(struct pubkey_recover_msg_rsp);
+    error = eleSendAndReciveMsg(&msg, req_len, &resp_len);
+    pubkey_export_resp = (struct pubkey_recover_msg_rsp *)(msg.data.u8);
+    if (error != ELE_NO_ERROR) {
+        ALOGE("Failed to export public key!");
+        if (error == ELE_COMMAND_OUTPUT_TOO_SMALL) {
+            ALOGE("Public key buffer is too small!");
+        }
+    }
+
+    pubkeyExportArgs->out_key_size = pubkey_export_resp->out_key_size;
+    return error;
 }
 
 ErrorType EleOperation::eleOpenStorage(uint32_t *nvmStorageHandle) {
@@ -687,6 +798,62 @@ ErrorType EleOperation::eleGenerateKey(uint32_t keyMgtHandle, uint32_t *keyId,
     return ELE_NO_ERROR;
 }
 
+ErrorType EleOperation::eleImportKey(uint32_t keyMgtHandle, import_key_attr *importKeyAttr,
+                                     uint32_t *keyId) {
+    struct import_key_msg_cmd *import_key_args;
+    struct import_key_msg_rsp *import_key_resp;
+    struct mu_msg msg;
+    ErrorType error;
+    uint32_t req_len, resp_len;
+
+    if (!keyId || !importKeyAttr || !importKeyAttr->input_addr || !importKeyAttr->input_size) {
+        ALOGE("Invalid input parameters!");
+        return ELE_INVALID_MESSAGE;
+    }
+
+    /* check the key management handle before generating key */
+    if (keyMgtHandle == 0) {
+        ALOGE("Invalid key management handler!");
+        return ELE_GENERAL_ERROR;
+    }
+
+    /* construct the message command */
+    memset(&msg, 0, sizeof(msg));
+    req_len = SIZE_MSG(struct import_key_msg_cmd);
+    import_key_args = (struct import_key_msg_cmd *)(msg.data.u8);
+    import_key_args->key_mgt_handle = keyMgtHandle;
+    import_key_args->flags = importKeyAttr->flags;
+    import_key_args->input_addr =
+            retrivePhyAddress(importKeyAttr->input_addr, importKeyAttr->input_size,
+                              ELE_MU_IO_FLAGS_IS_INPUT);
+    import_key_args->input_size = importKeyAttr->input_size;
+    if (importKeyAttr->flags & IMPORT_SET_KEY_GROUP)
+        import_key_args->key_group = importKeyAttr->key_group;
+
+    buildMsgHeader(&msg, KEY_IMPORT_KEY_REQ, req_len, mu_info.cmd_tag);
+
+    /* add the CRC */
+    addCRC(&msg);
+
+    resp_len = SIZE_MSG(struct import_key_msg_rsp);
+    error = eleSendAndReciveMsg(&msg, req_len, &resp_len);
+    if (error != ELE_NO_ERROR) {
+        ALOGE("Failed to import key!");
+        return error;
+    }
+
+    import_key_resp = (struct import_key_msg_rsp *)(msg.data.u8);
+    if (import_key_resp->key_id == 0) {
+        ALOGE("Invalid key id for imported key!");
+        return ELE_GENERAL_ERROR;
+    }
+
+    *keyId = import_key_resp->key_id;
+    ALOGI("ELE key imported as ID: 0x%x", *keyId);
+
+    return ELE_NO_ERROR;
+}
+
 ErrorType EleOperation::eleDeleteKey(uint32_t keyMgtHandle, uint32_t keyId, uint8_t flags) {
     struct del_key_msg_cmd *del_key_args;
     struct mu_msg msg;
@@ -833,6 +1000,7 @@ ErrorType EleOperation::eleCloseCipher(uint32_t cipherHandle) {
     return ELE_NO_ERROR;
 }
 
+/* Only support opaque key */
 ErrorType EleOperation::eleCipherOperation(uint32_t cipherHandle,
                                            cipher_operation_attr *cipherAttr) {
     struct cipher_msg_cmd *cipher_op_args;
@@ -854,6 +1022,11 @@ ErrorType EleOperation::eleCipherOperation(uint32_t cipherHandle,
     if (!cipherAttr->input_addr || !cipherAttr->input_size || !cipherAttr->output_addr ||
         !cipherAttr->output_size) {
         ALOGE("Invalid cipher input/output parameters!");
+        return ELE_INVALID_MESSAGE;
+    }
+
+    if (cipherAttr->flags & CIPHER_FLAGS_PLAINTEXT_KEY) {
+        ALOGE("Only support opaque key!");
         return ELE_INVALID_MESSAGE;
     }
 
@@ -897,95 +1070,137 @@ ErrorType EleOperation::eleCipherOperation(uint32_t cipherHandle,
     return ELE_NO_ERROR;
 }
 
-ErrorType EleOperation::eleCipherAEOperation(uint32_t cipherHandle,
-                                             cipher_ae_operation_attr *cipherAEAttr) {
-    struct cipher_ae_msg_cmd *cipher_ae_op_args;
-    struct cipher_ae_msg_rsp *cipher_ae_op_resp;
+/* Only support opaque key */
+ErrorType EleOperation::eleCipherAeadOperation(uint32_t cipherHandle,
+                                             cipher_aead_operation_attr *cipherAeadAttr) {
+    struct cipher_aead_msg_cmd *cipher_aead_op_args;
+    struct cipher_aead_msg_rsp *cipher_aead_op_resp;
     struct mu_msg msg;
     ErrorType error;
     uint32_t req_len, resp_len;
 
     /* check the input parameters */
-    if (!cipherHandle || !cipherAEAttr || !(cipherAEAttr->key_id)) {
-        ALOGE("Invalid cipher ae handler or attributes!");
+    if (!cipherHandle || !cipherAeadAttr || !(cipherAeadAttr->key_id)) {
+        ALOGE("Invalid cipher aead handler or attributes!");
         return ELE_INVALID_MESSAGE;
     }
 
-    if (cipherAEAttr->flags & CIPHER_ONE_GO_FLAGS_FULL_IV) {
-        if (cipherAEAttr->iv_size != 0) {
-            ALOGE("The iv size should be 0 when CIPHER_ONE_GO_FLAGS_FULL_IV is set!");
+    /* only support opaque key */
+    if (cipherAeadAttr->flags & AEAD_FLAGS_PLAINTEXT_KEY) {
+        ALOGE("Only support opaque key!");
+        return ELE_INVALID_MESSAGE;
+    }
+
+    if (cipherAeadAttr->flags & (AEAD_FLAGS_ONE_SHOT | AEAD_FLAGS_MULTI_INIT)) {
+        /* check if input iv would be supplied by user or randomly generated by ele */
+        if ((cipherAeadAttr->flags & AEAD_FLAGS_FULL_IV) && (cipherAeadAttr->iv_size != 0)) {
+            ALOGE("The iv size should be 0 when AEAD_FLAGS_FULL_IV is set!");
             return ELE_INVALID_MESSAGE;
-        }
-    } else if (cipherAEAttr->flags & CIPHER_ONE_GO_FLAGS_COUNTER_IV) {
-        if (cipherAEAttr->iv_size != 4) {
-            ALOGE("The iv size should be 4 when CIPHER_ONE_GO_FLAGS_COUNTER_IV is set!");
+        } else if ((cipherAeadAttr->flags & AEAD_FLAGS_COUNTER_IV) &&
+                   (cipherAeadAttr->iv_size != 4 || !cipherAeadAttr->iv_in_addr)) {
+            ALOGE("The iv size should be 4 when AEAD_FLAGS_COUNTER_IV is set!");
             return ELE_INVALID_MESSAGE;
-        }
-    } else {
-        if (cipherAEAttr->iv_size != 12) {
+        } else if (cipherAeadAttr->iv_size != 12 || !cipherAeadAttr->iv_in_addr) {
             ALOGE("The iv size should be 12 when supplied by user!");
             return ELE_INVALID_MESSAGE;
         }
+        /* output the iv if it's randomly generated */
+        if (cipherAeadAttr->flags & (AEAD_FLAGS_FULL_IV | AEAD_FLAGS_COUNTER_IV)) {
+            if (!cipherAeadAttr->iv_out_addr) {
+                ALOGE("Invalid cipher aead output iv parameters!");
+                return ELE_INVALID_MESSAGE;
+            }
+        }
     }
 
-    if (!cipherAEAttr->input_addr || !cipherAEAttr->input_size || !cipherAEAttr->output_addr ||
-        !cipherAEAttr->output_size || !cipherAEAttr->aad_addr || !cipherAEAttr->aad_size) {
-        ALOGE("Invalid cipher input/output parameters!");
-        return ELE_INVALID_MESSAGE;
+    /* check tag */
+    if (cipherAeadAttr->flags &
+        (AEAD_FLAGS_MULTI_FINAL | AEAD_FLAGS_MULTI_FINAL_VERIFY | AEAD_FLAGS_ONE_SHOT)) {
+        if (!cipherAeadAttr->tag_addr || cipherAeadAttr->tag_size < 16) {
+            ALOGE("Invalid aead tag parameter!");
+            return ELE_INVALID_MESSAGE;
+        }
     }
 
-    if ((cipherAEAttr->flags & CIPHER_ONE_GO_FLAGS_ENCRYPT) &&
-        (cipherAEAttr->output_size < cipherAEAttr->input_size + AEAD_TAG_LENGTH)) {
-        ALOGE("ELE AEAD Output buffer is too small!");
-        return ELE_INVALID_MESSAGE;
+    /* check aad */
+    if (cipherAeadAttr->flags & (AEAD_FLAGS_ONE_SHOT | AEAD_FLAGS_MULTI_UPDATE_AAD)) {
+        if (!cipherAeadAttr->aad_addr || !cipherAeadAttr->aad_size) {
+            ALOGE("Invalid aead aad parameter!");
+            return ELE_INVALID_MESSAGE;
+        }
     }
 
-    if ((cipherAEAttr->flags & CIPHER_ONE_GO_FLAGS_DECRYPT) &&
-        (cipherAEAttr->output_size < cipherAEAttr->input_size - AEAD_TAG_LENGTH)) {
-        ALOGE("ELE AEAD Output buffer is too small!");
+    if (!cipherAeadAttr->input_addr || !cipherAeadAttr->input_size ||
+        !cipherAeadAttr->output_addr || !cipherAeadAttr->output_size) {
+        ALOGE("Invalid aead input/output parameters!");
         return ELE_INVALID_MESSAGE;
     }
 
     /* construct the message command */
     memset(&msg, 0, sizeof(msg));
-    req_len = SIZE_MSG(struct cipher_ae_msg_cmd);
-    cipher_ae_op_args = (struct cipher_ae_msg_cmd *)(msg.data.u8);
-    cipher_ae_op_args->cipher_hdl = cipherHandle;
-    cipher_ae_op_args->key_id = cipherAEAttr->key_id;
-    if (cipherAEAttr->iv_size != 0) {
-        cipher_ae_op_args->iv_addr = retrivePhyAddress(cipherAEAttr->iv_addr, cipherAEAttr->iv_size,
-                                                       ELE_MU_IO_FLAGS_IS_INPUT);
-        cipher_ae_op_args->iv_size = cipherAEAttr->iv_size;
+    req_len = SIZE_MSG(struct cipher_aead_msg_cmd);
+    cipher_aead_op_args = (struct cipher_aead_msg_cmd *)(msg.data.u8);
+    cipher_aead_op_args->cipher_hdl = cipherHandle;
+    cipher_aead_op_args->algo = cipherAeadAttr->algo;
+    cipher_aead_op_args->flags = cipherAeadAttr->flags;
+    if (cipherAeadAttr->iv_size != 0) {
+        cipher_aead_op_args->iv_in_addr =
+                retrivePhyAddress(cipherAeadAttr->iv_in_addr, cipherAeadAttr->iv_size,
+                                  ELE_MU_IO_FLAGS_IS_INPUT);
+        cipher_aead_op_args->iv_size = cipherAeadAttr->iv_size;
     }
-    cipher_ae_op_args->flags = cipherAEAttr->flags;
-    cipher_ae_op_args->algo = cipherAEAttr->algo;
-    cipher_ae_op_args->aad_addr = retrivePhyAddress(cipherAEAttr->aad_addr, cipherAEAttr->aad_size,
-                                                    ELE_MU_IO_FLAGS_IS_INPUT);
-    cipher_ae_op_args->aad_size = cipherAEAttr->aad_size;
-    cipher_ae_op_args->input_addr =
-            retrivePhyAddress(cipherAEAttr->input_addr, cipherAEAttr->input_size,
+    if (cipherAeadAttr->iv_out_addr) {
+        cipher_aead_op_args->iv_out_addr =
+                retrivePhyAddress(cipherAeadAttr->iv_out_addr, ELE_AEAD_IV_OUTPUT_LEN,
+                                  ELE_MU_IO_FLAGS_IS_OUTPUT);
+    }
+    cipher_aead_op_args->key_id = cipherAeadAttr->key_id;
+    if (cipherAeadAttr->tag_addr) {
+        cipher_aead_op_args->tag_addr =
+                retrivePhyAddress(cipherAeadAttr->tag_addr, cipherAeadAttr->tag_size,
+                                  ELE_MU_IO_FLAGS_IS_IN_OUT);
+        cipher_aead_op_args->tag_size = cipherAeadAttr->tag_size;
+    }
+    if (cipherAeadAttr->aad_addr) {
+        cipher_aead_op_args->aad_addr =
+                retrivePhyAddress(cipherAeadAttr->aad_addr, cipherAeadAttr->aad_size,
+                                  ELE_MU_IO_FLAGS_IS_INPUT);
+        cipher_aead_op_args->aad_size = cipherAeadAttr->aad_size;
+    }
+    cipher_aead_op_args->input_addr =
+            retrivePhyAddress(cipherAeadAttr->input_addr, cipherAeadAttr->input_size,
                               ELE_MU_IO_FLAGS_IS_INPUT);
-    cipher_ae_op_args->input_size = cipherAEAttr->input_size;
-    cipher_ae_op_args->output_addr =
-            retrivePhyAddress(cipherAEAttr->output_addr, cipherAEAttr->output_size,
+    cipher_aead_op_args->input_size = cipherAeadAttr->input_size;
+    cipher_aead_op_args->output_addr =
+            retrivePhyAddress(cipherAeadAttr->output_addr, cipherAeadAttr->output_size,
                               ELE_MU_IO_FLAGS_IS_OUTPUT);
-    cipher_ae_op_args->output_size = cipherAEAttr->output_size;
+    cipher_aead_op_args->output_size = cipherAeadAttr->output_size;
 
-    buildMsgHeader(&msg, KEY_CIPHER_AE_OPERATION_REQ, req_len, mu_info.cmd_tag);
+    buildMsgHeader(&msg, KEY_CIPHER_AEAD_OPERATION_REQ, req_len, mu_info.cmd_tag);
 
     /* add the CRC */
     addCRC(&msg);
 
-    resp_len = SIZE_MSG(struct cipher_ae_msg_rsp);
+    resp_len = SIZE_MSG(struct cipher_aead_msg_rsp);
     error = eleSendAndReciveMsg(&msg, req_len, &resp_len);
+    cipher_aead_op_resp = (struct cipher_aead_msg_rsp *)(msg.data.u8);
     if (error != ELE_NO_ERROR) {
-        ALOGE("Failed to do cipher ae operation!");
+        ALOGE("Failed to do cipher aead operation!");
+        if (error == ELE_COMMAND_OUTPUT_TOO_SMALL) {
+            ALOGE("Output buffer is too small! Expect: %d bytes.",
+                  cipher_aead_op_resp->output_size);
+            cipherAeadAttr->output_size = cipher_aead_op_resp->output_size;
+        }
+
         return error;
     }
 
-    cipher_ae_op_resp = (struct cipher_ae_msg_rsp *)(msg.data.u8);
     /* return the actual output size */
-    cipherAEAttr->output_size = cipher_ae_op_resp->output_size;
+    cipherAeadAttr->output_size = cipher_aead_op_resp->output_size;
+    if (cipher_aead_op_resp->verify_status == ELE_SIGNATURE_VERIFY_FAILURE) {
+        ALOGE("Invalid aead verify status!");
+        return ELE_VERIFICATION_FAILURE;
+    }
 
     return ELE_NO_ERROR;
 }
@@ -1386,6 +1601,238 @@ ErrorType EleOperation::eleMacOperation(uint32_t macHandle, mac_operation_attr *
             ALOGE("Invalid mac verification status!");
             return ELE_VERIFICATION_FAILURE;
         }
+    }
+
+    return ELE_NO_ERROR;
+}
+
+ErrorType EleOperation::eleDataStorageOpen(uint32_t keyStoreHandler, uint32_t *dataStorageHandle) {
+    struct data_storage_open_msg_cmd *data_storage_open_args;
+    struct data_storage_open_msg_rsp *data_storage_open_resp;
+    struct mu_msg msg;
+    ErrorType error;
+    uint32_t req_len, resp_len;
+
+    /* check the key store handle before opening data storage session */
+    if (keyStoreHandler == 0 || !dataStorageHandle) {
+        ALOGE("Invalid keystore handle or null data storage handle pointer!");
+        return ELE_GENERAL_ERROR;
+    }
+
+    /* construct the message command */
+    memset(&msg, 0, sizeof(msg));
+    req_len = SIZE_MSG(struct data_storage_open_msg_cmd);
+    data_storage_open_args = (struct data_storage_open_msg_cmd *)(msg.data.u8);
+    /* The msbi and msbo are set to 0 by default */
+    data_storage_open_args->key_store_handle = keyStoreHandler;
+
+    buildMsgHeader(&msg, DATA_STORAGE_OPEN_REQ, req_len, mu_info.cmd_tag);
+
+    /* add the CRC */
+    addCRC(&msg);
+
+    resp_len = SIZE_MSG(struct data_storage_open_msg_rsp);
+    error = eleSendAndReciveMsg(&msg, req_len, &resp_len);
+    if (error != ELE_NO_ERROR) {
+        ALOGE("Failed to open data storage session!");
+        return error;
+    }
+
+    data_storage_open_resp = (struct data_storage_open_msg_rsp *)(msg.data.u8);
+    if (data_storage_open_resp->data_storage_hdl == 0) {
+        ALOGE("Invalid data storage session handle: 0");
+        return ELE_INVALID_MESSAGE;
+    }
+    *dataStorageHandle = data_storage_open_resp->data_storage_hdl;
+    ALOGI("ELE data storage session opened, handle: 0x%x", *dataStorageHandle);
+
+    return ELE_NO_ERROR;
+}
+
+ErrorType EleOperation::eleDataStorageClose(uint32_t dataStorageHandle) {
+    struct data_storage_close_msg_cmd *data_storage_close_args;
+    struct mu_msg msg;
+    ErrorType error;
+    uint32_t req_len, resp_len;
+
+    /* check the data storage handle before closing */
+    if (dataStorageHandle == 0) {
+        ALOGE("Invalid data storage session handler!");
+        return ELE_GENERAL_ERROR;
+    }
+
+    /* construct the message command */
+    memset(&msg, 0, sizeof(msg));
+    req_len = SIZE_MSG(struct data_storage_close_msg_cmd);
+    data_storage_close_args = (struct data_storage_close_msg_cmd *)(msg.data.u8);
+    data_storage_close_args->data_storage_hdl = dataStorageHandle;
+
+    buildMsgHeader(&msg, DATA_STORAGE_CLOSE_REQ, req_len, mu_info.cmd_tag);
+
+    resp_len = SIZE_MSG(struct data_storage_close_msg_rsp);
+    error = eleSendAndReciveMsg(&msg, req_len, &resp_len);
+    if (error != ELE_NO_ERROR) {
+        ALOGE("Failed to close ELE data storage session(0x%x)!", dataStorageHandle);
+        return error;
+    }
+
+    return ELE_NO_ERROR;
+}
+
+ErrorType EleOperation::eleDataStorage(uint32_t dataStorageHandle,
+                                       data_storage_attr *dataStorageAttr) {
+    struct data_storage_msg_cmd *data_storage_args;
+    struct data_storage_msg_rsp *data_storage_resp;
+    struct mu_msg msg;
+    ErrorType error;
+    uint32_t req_len, resp_len;
+
+    /* check the input parameters */
+    if (!dataStorageHandle || !dataStorageAttr) {
+        ALOGE("Invalid data storage handler or attributes!");
+        return ELE_INVALID_MESSAGE;
+    }
+    /* "data_id" is not checked because it can be "0" in EL2GO case */
+    if (!dataStorageAttr->data_lsb_addr || !dataStorageAttr->data_size) {
+        ALOGE("Invalid data storage input parameters!");
+        return ELE_INVALID_MESSAGE;
+    }
+
+    /* construct the message command */
+    memset(&msg, 0, sizeof(msg));
+    req_len = SIZE_MSG(struct data_storage_msg_cmd);
+    data_storage_args = (struct data_storage_msg_cmd *)(msg.data.u8);
+    data_storage_args->data_storage_hdl = dataStorageHandle;
+    data_storage_args->flags = dataStorageAttr->flags;
+    data_storage_args->data_id = dataStorageAttr->data_id;
+    if (dataStorageAttr->flags & ELE_DATA_STORAGE_STORE) {
+        data_storage_args->data_lsb_addr =
+                retrivePhyAddress(dataStorageAttr->data_lsb_addr, dataStorageAttr->data_size,
+                                  ELE_MU_IO_FLAGS_IS_INPUT);
+    } else {
+        data_storage_args->data_lsb_addr =
+                retrivePhyAddress(dataStorageAttr->data_lsb_addr, dataStorageAttr->data_size,
+                                  ELE_MU_IO_FLAGS_IS_OUTPUT);
+    }
+    data_storage_args->data_size = dataStorageAttr->data_size;
+
+    buildMsgHeader(&msg, DATA_STORAGE_REQ, req_len, mu_info.cmd_tag);
+
+    /* add the CRC */
+    addCRC(&msg);
+
+    resp_len = SIZE_MSG(struct data_storage_msg_rsp);
+    data_storage_resp = (struct data_storage_msg_rsp *)(msg.data.u8);
+    error = eleSendAndReciveMsg(&msg, req_len, &resp_len);
+    if (error != ELE_NO_ERROR) {
+        ALOGE("Failed to do data storage operation!");
+        if (error == ELE_COMMAND_OUTPUT_TOO_SMALL) {
+            ALOGE("Data size is not expected: %d!", dataStorageAttr->data_size);
+            dataStorageAttr->data_size = data_storage_resp->data_size;
+        }
+        return error;
+    }
+
+    dataStorageAttr->data_size = data_storage_resp->data_size;
+    ALOGI("data storage operation succeed. data_id: 0x%x", dataStorageAttr->data_id);
+
+    return ELE_NO_ERROR;
+}
+
+ErrorType EleOperation::eleDataEncStorage(uint32_t dataStorageHandle,
+                                          data_enc_storage_attr *dataEncStorageAttr,
+                                          uint32_t *storedSize) {
+    struct data_enc_storage_msg_cmd *data_enc_storage_args;
+    struct data_enc_storage_msg_rsp *data_enc_storage_resp;
+    struct mu_msg msg;
+    ErrorType error;
+    uint32_t req_len, resp_len;
+
+    /* check the input parameters */
+    if (!dataStorageHandle || !dataEncStorageAttr) {
+        ALOGE("Invalid encrypted data storage handler or attributes!");
+        return ELE_INVALID_MESSAGE;
+    }
+    if (!dataEncStorageAttr->data_id || !dataEncStorageAttr->data_addr ||
+        !dataEncStorageAttr->data_size || !storedSize) {
+        ALOGE("Invalid encrypted data storage input parameters!");
+        return ELE_INVALID_MESSAGE;
+    }
+
+    /* construct the message command */
+    memset(&msg, 0, sizeof(msg));
+    req_len = SIZE_MSG(struct data_enc_storage_msg_cmd);
+    data_enc_storage_args = (struct data_enc_storage_msg_cmd *)(msg.data.u8);
+    data_enc_storage_args->data_storage_hdl = dataStorageHandle;
+    data_enc_storage_args->data_id = dataEncStorageAttr->data_id;
+    data_enc_storage_args->data_addr =
+            retrivePhyAddress(dataEncStorageAttr->data_addr, dataEncStorageAttr->data_size,
+                              ELE_MU_IO_FLAGS_IS_INPUT);
+    data_enc_storage_args->data_size = dataEncStorageAttr->data_size;
+    data_enc_storage_args->enc_algo = dataEncStorageAttr->enc_algo;
+    data_enc_storage_args->enc_key_id = dataEncStorageAttr->enc_key_id;
+    data_enc_storage_args->sign_algo = dataEncStorageAttr->sign_algo;
+    data_enc_storage_args->sign_key_id = dataEncStorageAttr->sign_key_id;
+    if (dataEncStorageAttr->iv_addr != NULL) {
+        data_enc_storage_args->iv_addr =
+                retrivePhyAddress(dataEncStorageAttr->iv_addr, dataEncStorageAttr->iv_size,
+                                  ELE_MU_IO_FLAGS_IS_INPUT);
+        data_enc_storage_args->iv_size = dataEncStorageAttr->iv_size;
+    } else {
+        data_enc_storage_args->iv_addr = 0;
+        data_enc_storage_args->iv_size = 0;
+    }
+    data_enc_storage_args->flags = dataEncStorageAttr->flags;
+    data_enc_storage_args->lifecycle = dataEncStorageAttr->lifecycle;
+
+    buildMsgHeader(&msg, DATA_ENC_STORAGE_REQ, req_len, mu_info.cmd_tag);
+
+    /* add the CRC */
+    addCRC(&msg);
+
+    resp_len = SIZE_MSG(struct data_enc_storage_msg_rsp);
+    data_enc_storage_resp = (struct data_enc_storage_msg_rsp *)(msg.data.u8);
+    error = eleSendAndReciveMsg(&msg, req_len, &resp_len);
+    if (error != ELE_NO_ERROR) {
+        ALOGE("Failed to do data enc storage operation! Error: 0x%x", error);
+        *storedSize = 0;
+        return error;
+    }
+
+    /* size of signed TLV stored, in bytes */
+    *storedSize = data_enc_storage_resp->data_size;
+    ALOGI("encrypted data storage operation succeed. data_id: 0x%x, stored size: %d",
+          dataEncStorageAttr->data_id, *storedSize);
+
+    return ELE_NO_ERROR;
+}
+
+ErrorType EleOperation::eleDataStorageDelete(uint32_t dataStorageHandle, uint32_t dataId) {
+    struct data_storage_delete_msg_cmd *data_storage_delete_args;
+    struct mu_msg msg;
+    ErrorType error;
+    uint32_t req_len, resp_len;
+
+    /* check the data storage handle before deleting */
+    if (!dataStorageHandle || !dataId) {
+        ALOGE("Invalid data storage input parameters!");
+        return ELE_GENERAL_ERROR;
+    }
+
+    /* construct the message command */
+    memset(&msg, 0, sizeof(msg));
+    req_len = SIZE_MSG(struct data_storage_delete_msg_cmd);
+    data_storage_delete_args = (struct data_storage_delete_msg_cmd *)(msg.data.u8);
+    data_storage_delete_args->data_storage_hdl = dataStorageHandle;
+    data_storage_delete_args->data_id = dataId;
+
+    buildMsgHeader(&msg, DATA_STORAGE_DELETE_REQ, req_len, mu_info.cmd_tag);
+
+    resp_len = SIZE_MSG(struct data_storage_delete_msg_rsp);
+    error = eleSendAndReciveMsg(&msg, req_len, &resp_len);
+    if (error != ELE_NO_ERROR) {
+        ALOGE("Failed to delete data storage! id: 0x%x, error: 0x%x", dataId, error);
+        return error;
     }
 
     return ELE_NO_ERROR;
@@ -1857,6 +2304,81 @@ ErrorType EleOperation::eleHandleChunkGetDone(struct mu_msg *cmd, uint32_t cmdLe
     return error;
 }
 
+ErrorType EleOperation::eleHandleChunkDelete(struct mu_msg *cmd, uint32_t cmdLen,
+                                             struct mu_msg *resp, uint32_t *respLen,
+                                             uint32_t rspMsgInfo, struct nvm_context *nvmCtx) {
+    storage_chunk_delete_msg_cmd *req;
+    storage_chunk_delete_msg_rsp *rsp;
+    ErrorType error = ELE_NO_ERROR;
+    char *file_name = nullptr;
+    struct nvm_blob_id *blob_id;
+
+    req = (storage_chunk_delete_msg_cmd *)(cmd->data.u8);
+    rsp = (storage_chunk_delete_msg_rsp *)(resp->data.u8);
+    nvmCtx->next_command = STORAGE_NVM_LAST_CMD;
+    rsp->rsp_code = ELE_COMMAND_GENERAL_ERROR;
+
+    do {
+        if (rspMsgInfo != ELE_COMMAND_SUCCEED) {
+            rsp->rsp_code = rspMsgInfo;
+            error = ELE_INVALID_MESSAGE;
+            break;
+        }
+
+        if (cmdLen != SIZE_MSG(storage_chunk_delete_msg_cmd)) {
+            ALOGE("The cmd length doesn't match expected!");
+            error = ELE_INVALID_MESSAGE;
+            break;
+        }
+
+        /* TODO remove this because the ELE doesn't return correct storage handle
+        if (req->nvm_storage_handle != nvmCtx->nvm_handle) {
+            ALOGE("The nvm handle doesn't match expected!");
+            error = ELE_INVALID_MESSAGE;
+            break;
+        }
+        */
+
+        /* construct the chunk file name */
+        file_name = (char *)malloc(NVM_MAX_FILE_NAME_LEN);
+        if (!file_name) {
+            ALOGE("Failed to allocate memory!");
+            error = ELE_MEMORY_FAILURE;
+            break;
+        }
+        memset(file_name, '\0', NVM_MAX_FILE_NAME_LEN);
+        blob_id = &(req->blob_id);
+        if (snprintf(file_name, NVM_MAX_FILE_NAME_LEN, "%s%0*x%0*x%0*x", nvmCtx->nvm_chunk_path,
+                     (int)(sizeof(blob_id->ext) * 2), blob_id->ext, (int)(sizeof(blob_id->id) * 2),
+                     blob_id->id, (int)(sizeof(blob_id->metadata) * 2), blob_id->metadata) == -1) {
+            ALOGE("Failed to construct the file name!");
+            error = ELE_GENERAL_ERROR;
+            break;
+        }
+        ALOGI("Ready to delete chunk file:%s.", file_name);
+
+        /* Delete the chunk file */
+        if (remove(file_name) != 0) {
+            if (errno == ENOENT) {
+                ALOGE("Chunk file not found: %s!", file_name);
+                rsp->rsp_code = ELE_COMMAND_INVALID_ID;
+            }
+            ALOGE("Failed to delete chunk file: %s! error: %d", file_name, errno);
+            error = ELE_GENERAL_ERROR;
+            break;
+        }
+        ALOGI("Chunk file file:%s deleted.", file_name);
+
+        rsp->rsp_code = ELE_COMMAND_SUCCEED;
+    } while (false);
+
+    *respLen = SIZE_MSG(storage_chunk_delete_msg_rsp);
+    if (file_name)
+        free(file_name);
+
+    return error;
+}
+
 ErrorType EleOperation::eleHandleNVMRequest(struct nvm_context *nvmCtx) {
     struct mu_msg cmd, resp;
     uint32_t cmd_len = sizeof(cmd);
@@ -1879,8 +2401,9 @@ ErrorType EleOperation::eleHandleNVMRequest(struct nvm_context *nvmCtx) {
         }
 
         /* Check the command, return for invalid command */
-        if (cmd.header.cmd < STORAGE_OPEN_REQ || cmd.header.cmd > STORAGE_CHUNK_GET_DONE_REQ) {
-            ALOGE("The nvm request command received from ELE is out of range!");
+        if (cmd.header.cmd < STORAGE_OPEN_REQ || cmd.header.cmd >= STORAGE_NVM_LAST_CMD) {
+            ALOGE("The nvm request command received(0x%x) from ELE is out of range!",
+                  cmd.header.cmd);
             error = ELE_NO_ERROR;
             break;
         }
@@ -1922,6 +2445,9 @@ ErrorType EleOperation::eleHandleNVMRequest(struct nvm_context *nvmCtx) {
                 error = eleHandleChunkGetDone(&cmd, cmd_len, &resp, &resp_len, rsp_msg_info,
                                               nvmCtx);
                 break;
+            case STORAGE_CHUNK_DELETE_REQ:
+                error = eleHandleChunkDelete(&cmd, cmd_len, &resp, &resp_len, rsp_msg_info, nvmCtx);
+                break;
             default:
                 ALOGE(" Unsupported command (%04x)!", cmd_id);
                 error = ELE_INVALID_ARGS;
@@ -1931,7 +2457,7 @@ ErrorType EleOperation::eleHandleNVMRequest(struct nvm_context *nvmCtx) {
              * Something is wrong with the cmd or response, we don't break
              * because we need to send the failure response back to ELE.
              */
-            ALOGE("Warning: command (%04x) failed!", cmd_id);
+            ALOGE("Warning: command (0x%04x) failed!", cmd_id);
         }
 
         /* Check the response length */

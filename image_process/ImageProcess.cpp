@@ -205,7 +205,7 @@ ImageProcess::ImageProcess()
     if (mCLHandle != NULL) {
         ALOGW("opencl g2d device is used!\n");
     }
-
+    mOclBufferType = OCL_MEM_TYPE_GPU;
     memset(path, 0, sizeof(path));
     getModule(path, IMX_OCL_CONVERTER);
     mImxOclCvtModule = dlopen(path, RTLD_NOW);
@@ -230,6 +230,10 @@ ImageProcess::ImageProcess()
             ALOGW("%s: m_ocl_open failed, ret %d", __func__, ret);
         }
         ALOGI("%s: mHOcl %p", __func__, mHOcl);
+        char socType[128] = {0};
+        property_get("ro.boot.soc_type", socType, "");
+        if (!strncmp(socType, "imx9", 4))
+            mOclBufferType = OCL_MEM_TYPE_DEVICE;
     }
 }
 
@@ -339,7 +343,7 @@ int ImageProcess::ConvertImage(ImxImageBuffer &dstBuf, ImxImageBuffer &srcBuf, I
             char socType[128] = {0};
             property_get("ro.boot.soc_type", socType, "");
             if (strstr(socType, "imx8mp")) {
-                engine = ENG_CPU;
+                engine = ENG_OCLCVT;
             }
         }
     }
@@ -767,6 +771,9 @@ int ImageProcess::ConvertImageByG2D(ImxImageBuffer &dstBuf, ImxImageBuffer &srcB
                                    ImxEngine engine) {
     int ret = 0;
 
+    if (mG2dHandle == NULL)
+        return BAD_VALUE;
+
     if (mBlitEngine && (engine == ENG_G2D) && mbVIVG2D) {
         LockG2dAddr(srcBuf);
         LockG2dAddr(dstBuf);
@@ -1120,16 +1127,32 @@ void ImageProcess::ImxImageBufferToOclBuffer(ImxImageBuffer &imxImgBuf, OCL_BUFF
         return;
     }
 
-    oclBuf.mem_type = OCL_MEM_TYPE_DEVICE;
+    oclBuf.mem_type = mOclBufferType;
     oclBuf.plane_num = plane_info.plane_num;
-
     int offset = 0;
-    for (int i = 0; i < oclBuf.plane_num; i++) {
-        oclBuf.planes[i].fd = imxImgBuf.mFd;
-        oclBuf.planes[i].offset = offset;
-        oclBuf.planes[i].vaddr = (long long)imxImgBuf.mVirtAddr + (long long)offset;
-        oclBuf.planes[i].size = plane_info.plane_size[i];
-        offset += oclBuf.planes[i].size;
+
+    if(mOclBufferType == OCL_MEM_TYPE_GPU){
+
+        for (int i = 0; i < oclBuf.plane_num; i++) {
+            oclBuf.planes[i].paddr = (long long)imxImgBuf.mPhyAddr + (long long)offset;
+            oclBuf.planes[i].size = plane_info.plane_size[i];
+            offset += oclBuf.planes[i].size;
+        }
+    }else if(mOclBufferType == OCL_MEM_TYPE_DEVICE) {
+
+        for (int i = 0; i < oclBuf.plane_num; i++) {
+            oclBuf.planes[i].fd = (long long)imxImgBuf.mFd;
+            oclBuf.planes[i].offset = (long long)offset;
+            oclBuf.planes[i].size = plane_info.plane_size[i] + offset;
+            offset += oclBuf.planes[i].size;
+        }
+    }else{
+
+        for (int i = 0; i < oclBuf.plane_num; i++) {
+            oclBuf.planes[i].vaddr = (long long)imxImgBuf.mVirtAddr + offset;
+            oclBuf.planes[i].size = plane_info.plane_size[i];
+            offset += oclBuf.planes[i].size;
+        }
     }
 
     return;
@@ -1144,6 +1167,9 @@ static void HalPixelFormatToOclPixelFormat(uint32_t &halPixelFormat,
             break;
         case HAL_PIXEL_FORMAT_YCbCr_422_I:
             oclPixelFormat = OCL_FORMAT_YUYV;
+            break;
+        case HAL_PIXEL_FORMAT_YCbCr_422_SP:
+            oclPixelFormat = OCL_FORMAT_NV16;
             break;
         default:
             ALOGW("==xx %s: unsupported halPixelFormat %d, set oclPixelFormat to OCL_FORMAT_YUYV",
@@ -1162,13 +1188,13 @@ static void ImxImageBufferToOclFormat(ImxImageBuffer &imxImgBuf, OCL_FORMAT &ocl
 
     oclFormat.format = oclPixelFormat;
     oclFormat.width = imxImgBuf.mWidth;
-    oclFormat.height = imxImgBuf.mHeight;
+    oclFormat.height = imxImgBuf.mHeightSpan;
     oclFormat.stride = imxImgBuf.mStride;
-    oclFormat.sliceheight = imxImgBuf.mHeight;
+    oclFormat.sliceheight = imxImgBuf.mHeightSpan;
     oclFormat.left = 0;
     oclFormat.top = 0;
     oclFormat.right = imxImgBuf.mWidth;
-    oclFormat.bottom = imxImgBuf.mHeight;
+    oclFormat.bottom = imxImgBuf.mHeightSpan;
     oclFormat.colorspace = OCL_COLORSPACE_BT709;
 
     return;
@@ -1178,7 +1204,6 @@ int ImageProcess::ConvertImageByOclCvt(ImxImageBuffer &dstBuf, ImxImageBuffer &s
     int ret = 0;
 
     if (mHOcl == NULL) {
-        ALOGE("%s: mHOcl is NULL", __func__);
         return BAD_VALUE;
     }
 
@@ -1189,6 +1214,7 @@ int ImageProcess::ConvertImageByOclCvt(ImxImageBuffer &dstBuf, ImxImageBuffer &s
     memset(&input_format, 0, sizeof(input_format));
     memset(&output_format, 0, sizeof(output_format));
 
+    Mutex::Autolock _l(mOclCvtLock);
     ImxImageBufferToOclFormat(srcBuf, input_format);
     ImxImageBufferToOclFormat(dstBuf, output_format);
 
@@ -1222,13 +1248,13 @@ int ImageProcess::ConvertImageByOclCvt(ImxImageBuffer &dstBuf, ImxImageBuffer &s
 
     OCL_RUN_TIME time;
     ret = m_ocl_getParam(mHOcl, OCL_PARAM_INDEX_RUN_TIME, &time);
-    if (ret == 0)
-        ALOGV("%s: m_ocl_convert, src: res %dx%d, fmt %d, dst: res %dx%d, fmt %d, run_time=%d, kernel_time=%d\n",
-              __func__, input_format.width, input_format.height, input_format.format,
+    if (mDebug)
+        ALOGI("%s: m_ocl_convert, ret %d, src: res %dx%d, fmt %d, dst: res %dx%d, fmt %d, run_time: %d us, kernel_time: %d us\n",
+              __func__, ret, input_format.width, input_format.height, input_format.format,
               output_format.width, output_format.height, output_format.format, time.run_time,
               time.kernel_time);
 
-    return 0;
+    return ret;
 }
 
 void ImageProcess::convertYUYVtoNV12SP(uint8_t *inputBuffer, uint8_t *outputBuffer, int width,
@@ -1297,13 +1323,29 @@ int ImageProcess::resizeWrapper(ImxImageBuffer &srcBuf, ImxImageBuffer &dstBuf, 
         return BAD_VALUE;
     }
 
-    if ((engine != ENG_G2D) && (engine != ENG_DPU))
-        goto cpu_resize;
+    if ((engine == ENG_G2D) || (engine == ENG_DPU))
+        goto g2d_resize;
 
+    if ((engine == ENG_G3D) || (engine == ENG_OCLCVT))
+        goto g3d_resize;
+
+    goto cpu_resize;
+
+g2d_resize:
     ret = ConvertImageByG2D(dstBuf, srcBuf, engine);
+    if (mDebug)
+        ALOGI("%s: resize format 0x%x, res %dx%d to %dx%d by g2d, ret %d", __func__, srcBuf.mFormat,
+              srcBuf.mWidth, srcBuf.mHeight, dstBuf.mWidth, dstBuf.mHeight, ret);
     if (ret == 0) {
-        ALOGV("%s: resize format 0x%x, res %dx%d to %dx%d by g2d ok", __func__, srcBuf.mFormat,
-              srcBuf.mWidth, srcBuf.mHeight, dstBuf.mWidth, dstBuf.mHeight);
+        return 0;
+    }
+
+g3d_resize:
+    ret = ConvertImageByOclCvt(dstBuf, srcBuf);
+    if (mDebug)
+        ALOGI("%s: resize format 0x%x, res %dx%d to %dx%d by oclcvt, ret %d", __func__,
+              srcBuf.mFormat, srcBuf.mWidth, srcBuf.mHeight, dstBuf.mWidth, dstBuf.mHeight, ret);
+    if (ret == 0) {
         return 0;
     }
 
@@ -1323,8 +1365,9 @@ cpu_resize:
     } else
         ALOGE("%s: resize by ENG_CPU, unsupported format 0x%x", __func__, srcBuf.mFormat);
 
-    ALOGV("%s: resize format 0x%x, res %dx%d to %dx%d by cpu, ret %d", __func__, srcBuf.mFormat,
-          srcBuf.mWidth, srcBuf.mHeight, dstBuf.mWidth, dstBuf.mHeight, ret);
+    if (mDebug)
+        ALOGI("%s: resize format 0x%x, res %dx%d to %dx%d by cpu, ret %d", __func__, srcBuf.mFormat,
+              srcBuf.mWidth, srcBuf.mHeight, dstBuf.mWidth, dstBuf.mHeight, ret);
 
     return ret;
 }

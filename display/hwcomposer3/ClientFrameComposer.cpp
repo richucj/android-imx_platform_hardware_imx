@@ -425,8 +425,10 @@ HWC3::Error ClientFrameComposer::validateDisplay(Display* display, DisplayChange
         }
     }
 
-    if (!mG2dComposer->isValid() || (!mustDeviceComposition && !deviceComposition) ||
-        (display->getColorTransformHint() != common::ColorTransform::IDENTITY)) {
+    if (!mG2dComposer->isValid() ||
+        (!mustDeviceComposition &&
+         (!deviceComposition ||
+          display->getColorTransformHint() != common::ColorTransform::IDENTITY))) {
         /* currently Device Composer(G2D/DPU) cannot process color transform */
         for (auto& layer : layersForComposition) {
             const auto layerId = layer->getId();
@@ -543,7 +545,20 @@ HWC3::Error ClientFrameComposer::presentDisplay(
             ALOGE("%s: display:%d failed to get composer target", __FUNCTION__, displayId);
             return error;
         }
+#ifdef DEBUG_DUMP_G2D_CONSUMPTION
+        nsecs_t composeStart = systemTime(CLOCK_MONOTONIC);
+#endif
         auto [ret, composeFence] = mG2dComposer->composeLayers(layersForComposition, renderTarget);
+#ifdef DEBUG_DUMP_G2D_CONSUMPTION
+        nsecs_t composeEnd = systemTime(CLOCK_MONOTONIC);
+        totalCostTime += composeEnd - composeStart;
+        composeCount++;
+        if (composeCount >= 60) {
+            ALOGI("%s: average g2d cost time:%3.3f ms", __FUNCTION__, totalCostTime / (composeCount * 1000000.0));
+            totalCostTime = 0;
+            composeCount = 0;
+        }
+#endif
         if (ret) {
             fbInFence = std::move(composeFence);
             if (CC_UNLIKELY(atrace_is_tag_enabled(ATRACE_TAG_GRAPHICS) && fbInFence.ok())) {

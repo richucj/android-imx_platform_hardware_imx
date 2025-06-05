@@ -115,6 +115,10 @@ bool gralloc_driver::allocate_from_gpu_gralloc(int32_t pixel_format, uint64_t us
            GRALLOC_USAGE_HW_VIDEO_ENCODER)))
         gpu_gralloc = true;
 
+    /* VSI GPU gralloc cannot allocate RGBA_10101010 format buffer */
+    if (pixel_format == static_cast<int32_t>(PixelFormat::RGBA_10101010))
+        gpu_gralloc = false;
+
     // The tiled framebuffer for imx8mq should allocate from GPU gralloc
     if ((usage & GRALLOC_USAGE_HW_FB) && (flags & NXP_GRALLOC_FLAGS_TILED_FRAMEBUFFER))
         gpu_gralloc = true;

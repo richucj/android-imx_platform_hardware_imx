@@ -62,6 +62,13 @@ struct route_setting {
     char *strval;
 };
 
+enum card_owner {
+    OWNER_NONE = 0,
+    OWNER_HFP = 1,
+    OWNER_PRIMARY = 2,
+    OWNER_DIRECT = 3,
+};
+
 struct audio_card {
     char *driver_name;
     char *card_name;
@@ -91,7 +98,9 @@ struct audio_card {
     unsigned int out_period_count;
     unsigned int in_period_size;
     unsigned int in_period_count;
-    bool locked;
+    unsigned int outOwner;
+    unsigned int inOwner;
+    std::mutex mLock;
 };
 
 }  // namespace aidl::android::hardware::audio::core

@@ -1,5 +1,6 @@
 /*
  * Copyright 2022 The Android Open Source Project
+ * Copyright 2024-2025 NXP
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -20,21 +21,18 @@
 
 #include <cutils/properties.h>
 #include <fcntl.h>
+#include <hidl/HidlSupport.h>
+#include <hidl/HidlTransportSupport.h>
 #include <netdb.h>
 #include <netinet/in.h>
 #include <poll.h>
 #include <string.h>
 #include <sys/uio.h>
 #include <termios.h>
-#include <hidl/HidlSupport.h>
-#include <hidl/HidlTransportSupport.h>
+
 #include <iostream>
 
 #include "log/log.h"
-
-// TODO: Remove custom logging defines from PDL packets.
-#undef LOG_INFO
-#undef LOG_DEBUG
 #include "vendor_interface.h"
 
 namespace {
@@ -138,80 +136,15 @@ int BluetoothHci::getFdFromDevPath() {
   return fd;
 }
 
-void BluetoothHci::reset() {
-  // Send a reset command and wait until the command complete comes back.
-
-  std::vector<uint8_t> reset = {0x03, 0x0c, 0x00};
-
-  auto resetPromise = std::make_shared<std::promise<void>>();
-  auto resetFuture = resetPromise->get_future();
-
-  mH4 = std::make_shared<H4Protocol>(
-      mFd,
-      [](const std::vector<uint8_t>& raw_command) {
-        ALOGI("Discarding %d bytes with command type",
-              static_cast<int>(raw_command.size()));
-      },
-      [](const std::vector<uint8_t>& raw_acl) {
-        ALOGI("Discarding %d bytes with acl type",
-              static_cast<int>(raw_acl.size()));
-      },
-      [](const std::vector<uint8_t>& raw_sco) {
-        ALOGI("Discarding %d bytes with sco type",
-              static_cast<int>(raw_sco.size()));
-      },
-      [resetPromise](const std::vector<uint8_t>& raw_event) {
-        std::vector<uint8_t> reset_complete = {0x0e, 0x04, 0x01,
-                                               0x03, 0x0c, 0x00};
-        bool valid = raw_event.size() == 6 &&
-                     raw_event[0] == reset_complete[0] &&
-                     raw_event[1] == reset_complete[1] &&
-                     raw_event[3] == reset_complete[3] &&
-                     raw_event[4] == reset_complete[4] &&
-                     raw_event[5] == reset_complete[5];
-        if (valid) {
-          resetPromise->set_value();
-        } else {
-          ALOGI("Discarding %d bytes with event type",
-                static_cast<int>(raw_event.size()));
-        }
-      },
-      [](const std::vector<uint8_t>& raw_iso) {
-        ALOGI("Discarding %d bytes with iso type",
-              static_cast<int>(raw_iso.size()));
-      },
-      [this]() {
-        ALOGI("HCI socket device disconnected while waiting for reset");
-        mFdWatcher.StopWatchingFileDescriptors();
-      });
-  mFdWatcher.WatchFdForNonBlockingReads(mFd,
-                                        [this](int) { mH4->OnDataReady(); });
-
-  ndk::ScopedAStatus result = send(PacketType::COMMAND, reset);
-  if (!result.isOk()) {
-    ALOGE("Error sending reset command");
-  }
-  auto status = resetFuture.wait_for(std::chrono::seconds(1));
-  mFdWatcher.StopWatchingFileDescriptors();
-  if (status == std::future_status::ready) {
-    ALOGI("HCI Reset successful");
-  } else {
-    ALOGE("HCI Reset Response not received in one second");
-  }
-
-  resetPromise.reset();
-}
-
 ndk::ScopedAStatus BluetoothHci::initialize(
     const std::shared_ptr<IBluetoothHciCallbacks>& cb) {
-  ALOGI(__func__);
-  ALOGD("foo:****AIDL Test***** %s",__func__);
+  ALOGI("Initializing Bluetooth HCI via AIDL");
 
   if (cb == nullptr) {
     ALOGE("cb == nullptr! -> Unable to call initializationComplete(ERR)");
     return ndk::ScopedAStatus::fromServiceSpecificError(STATUS_BAD_VALUE);
   }
-  ALOGD("%s line %d mstat %d",__func__, __LINE__, mState);
+
   HalState old_state = HalState::READY;
   {
     std::lock_guard<std::mutex> guard(mStateMutex);
@@ -221,20 +154,20 @@ ndk::ScopedAStatus BluetoothHci::initialize(
       mState = HalState::INITIALIZING;
     }
   }
-  ALOGD("%s line %d old_state %d",__func__, __LINE__, old_state);
+
   if (old_state != HalState::READY) {
     ALOGE("initialize: Unexpected State %d", static_cast<int>(old_state));
     close();
     cb->initializationComplete(Status::ALREADY_INITIALIZED);
     return ndk::ScopedAStatus::ok();
   }
- 
+
   bool rc = VendorInterface::Initialize(
       [cb](bool status) {
         cb->initializationComplete(
             status ? Status::SUCCESS : Status::HARDWARE_INITIALIZATION_ERROR);
       },
-      [](const std::vector<uint8_t>& ) {
+      [](const std::vector<uint8_t>&) {
         LOG_ALWAYS_FATAL("Unexpected command!");
       },
       [cb](const std::vector<uint8_t>& raw_acl) {
@@ -251,11 +184,14 @@ ndk::ScopedAStatus BluetoothHci::initialize(
       },
       [this]() {
         ALOGI("HCI socket device disconnected");
-        mFdWatcher.StopWatchingFileDescriptors();
-      }
-  );
-  if(!rc ){
-    ALOGE("new AIDL init vendor failed");
+      });
+  if (!rc) {
+    ALOGE("VendorInterface::Initialize failed");
+    VendorInterface::Shutdown();
+    {
+      std::lock_guard<std::mutex> guard(mStateMutex);
+      mState = HalState::READY;
+    }
     return ndk::ScopedAStatus::fromServiceSpecificError(STATUS_BAD_VALUE);
   }
 
@@ -265,13 +201,13 @@ ndk::ScopedAStatus BluetoothHci::initialize(
     mState = HalState::ONE_CLIENT;
   }
 
-  ALOGD(" %s line %d mstat %d",__func__, __LINE__, mState);
-  ALOGE(" %s: line %d initialized success", __func__, __LINE__);
+  ALOGI("%s:Bluetooth HCI initialized successfully, state = %d", __func__,
+        static_cast<int>(mState));
   return ndk::ScopedAStatus::ok();
 }
 
 ndk::ScopedAStatus BluetoothHci::close() {
-  ALOGI(__func__);
+  ALOGI("%s:Bluetooth HCI close sequence initiated via AIDL", __func__);
   {
     std::lock_guard<std::mutex> guard(mStateMutex);
     if (mState != HalState::ONE_CLIENT) {
@@ -280,13 +216,13 @@ ndk::ScopedAStatus BluetoothHci::close() {
     }
     mState = HalState::CLOSING;
   }
-  ALOGD(" %s line %d mstat %d",__func__, __LINE__, mState);
+  ALOGI("%s: HalState set moving to CLOSING", __func__);
   VendorInterface::Shutdown();
   {
     std::lock_guard<std::mutex> guard(mStateMutex);
     mState = HalState::READY;
   }
-  ALOGD(" %s line %d mstat %d",__func__, __LINE__, mState);
+  ALOGI("%s: Shutdown complete, HalState moving to READY", __func__);
   return ndk::ScopedAStatus::ok();
 }
 
@@ -311,7 +247,7 @@ ndk::ScopedAStatus BluetoothHci::sendIsoData(
 }
 
 ndk::ScopedAStatus BluetoothHci::send(PacketType type,
-    const std::vector<uint8_t>& data) {
+                                      const std::vector<uint8_t>& data) {
   VendorInterface::get()->Send(type, data.data(), data.size());
   return ndk::ScopedAStatus::ok();
 }

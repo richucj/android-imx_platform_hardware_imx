@@ -1,6 +1,6 @@
 /*
  * Copyright (C) 2022 The Android Open Source Project
- * Copyright 2023-2024 NXP.
+ * Copyright 2023-2025 NXP.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -35,6 +35,7 @@
 #include <deque>
 #include <list>
 
+#include "ExternalISPWrapper.h"
 #include "HwDecoder.h"
 #include "ImageProcess.h"
 
@@ -210,6 +211,7 @@ public:
         HwDecoder* mDecoder;
         uint64_t mDecedFrames = 0;
         int initVpuThread();
+        std::unique_ptr<ExternalISPWrapper> m_IspWrapper;
 
     protected:
         static const int kFlushWaitTimeoutSec = 3; // 3 sec

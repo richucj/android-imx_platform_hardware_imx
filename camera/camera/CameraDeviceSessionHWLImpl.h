@@ -1,5 +1,5 @@
 /*
- *  Copyright 2020-2024 NXP.
+ *  Copyright 2020-2025 NXP.
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -225,6 +225,8 @@ private:
     VideoStream *GetVideoStreamByPhysicalId(uint32_t physical_id);
     PipelineInfo *GetPipelineInfo(uint32_t id);
 
+    int StartStreamOnMaxConfiguredResolution(HwlPipelineRequest *hwReq);
+
 private:
     class WorkThread : public Thread {
     public:
@@ -304,6 +306,7 @@ public:
     int32_t getRawV4l2Format() { return m_raw_v4l2_format; }
     uint32_t cameraId() { return camera_id_; }
     sp<ImgProcThread> &getImgProcThread() { return mImgProcThread; }
+    struct viv_caps_supports const &getCaps() { return caps_supports; }
 
 public:
     bool mDebug;
@@ -374,6 +377,10 @@ private:
 
     uint64_t mInQueRequestIdx = 0;
     uint64_t mDeQueRequestIdx = 0;
+
+    bool m_bConfigV4L2ByIntent = false;
+    uint32_t maxStreamWidth = 0;
+    uint32_t maxStreamHeight = 0;
 
 public:
     int32_t m_raw_v4l2_format = -1;

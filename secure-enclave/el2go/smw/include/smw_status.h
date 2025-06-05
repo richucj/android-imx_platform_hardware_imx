@@ -1,0 +1,276 @@
+/* SPDX-License-Identifier: BSD-3-Clause */
+/*
+ * Copyright 2020-2024 NXP
+ */
+
+#ifndef __SMW_STATUS_H__
+#define __SMW_STATUS_H__
+
+/**
+ * enum smw_status_code - Security Middleware status codes
+ *
+ * @SMW_STATUS_OK: Function returned successfully.
+ * @SMW_STATUS_UNKNOWN_NAME: Generic status code indicating that one of the
+ * name arguments is not valid.
+ * @SMW_STATUS_UNKNOWN_ID: One of the identifier arguments is not valid.
+ * @SMW_STATUS_ALLOC_FAILURE: Internal allocation failure.
+ * @SMW_STATUS_INVALID_PARAM: Generic status code indicating that one of the
+ * argument parameter is not valid.
+ * @SMW_STATUS_VERSION_NOT_SUPPORTED: Argument version not compatible.
+ * @SMW_STATUS_SUBSYSTEM_LOAD_FAILURE: Load of the Secure Subsystem failed.
+ * @SMW_STATUS_SUBSYSTEM_UNLOAD_FAILURE: Unload of the Secure Subsystem failed.
+ * @SMW_STATUS_SUBSYSTEM_FAILURE: Secure Subsystem operation general failure.
+ * @SMW_STATUS_SUBSYSTEM_NOT_CONFIGURED: Secure Subsystem is not configured in the
+ * user configuration.
+ * @SMW_STATUS_OPERATION_NOT_SUPPORTED: Operation is not supported by the Secure Subsystem.
+ * @SMW_STATUS_OPERATION_NOT_CONFIGURED: Operation is not configured in the user configuration.
+ * @SMW_STATUS_OPERATION_FAILURE: Operation general failure. Error returned before calling the
+ * Secure Subsystem.
+ * @SMW_STATUS_NO_KEY_BUFFER: No Key buffer is set in the Key descriptor structure.
+ * @SMW_STATUS_OUTPUT_TOO_SHORT: Output buffer is too small. Output size field is updated with
+ * the expected size.
+ * @SMW_STATUS_SUBSYSTEM_OUT_OF_MEMORY: Subsystem memory allocation failure.
+ * @SMW_STATUS_SUBSYSTEM_STORAGE_NO_SPACE: Not enough space in the secure subsystem to handle
+ * the requested operation.
+ * @SMW_STATUS_SUBSYSTEM_STORAGE_ERROR: Generic secure subsystem storage error.
+ * @SMW_STATUS_SUBSYSTEM_CORRUPT_OBJECT: An object stored in the secure subsystem is corrupted.
+ * @SMW_STATUS_SUBSYSTEM_LOADED: Secure Subsystem is loaded.
+ * @SMW_STATUS_SUBSYSTEM_NOT_LOADED: Secure Subsystem is not loaded.
+ * @SMW_STATUS_KEY_INVALID: Key used for the operation is not valid.
+ * @SMW_STATUS_INVALID_LIFECYCLE: Device lifecycle not valid, or object not
+ * accessible in current device lifecycle.
+ * @SMW_STATUS_INVALID_IV_SIZE: IV size used for the operation is not valid
+ * @SMW_STATUS_UNKNOWN_MODE_NAME: Mode name provided by the user or set in the
+ * user configuration is not recognized by SMW.
+ * @SMW_STATUS_UNKNOWN_OP_TYPE_NAME: Operation type name provided by the user or
+ * set in the user configuration is not recognized by SMW.
+ * @SMW_STATUS_UNKNOWN_SUBSYSTEM_NAME: Secure Subsystem name provided by the user or
+ * set in the user configuration is not recognized by SMW.
+ * @SMW_STATUS_UNKNOWN_ALGO_NAME: Algorithm name provided by the user or set in
+ * the user configuration is not recognized by SMW.
+ * @SMW_STATUS_UNKNOWN_SIGN_ALGO_NAME: Signature algo name provided by the user
+ * or set in the user configuration is not recognized by SMW.
+ * @SMW_STATUS_UNKNOWN_SIGN_TYPE_NAME: Signature type name provided by the user
+ * or set in the user configuration is not recognized by SMW.
+ * @SMW_STATUS_OEM_SRKH_NOT_FUSED: Device OEM SRKH is not fused.
+ *
+ * @SMW_STATUS_OPS_INVALID: OSAL operations structure is invalid.
+ * @SMW_STATUS_MUTEX_INIT_FAILURE: Mutex initialization has failed.
+ * @SMW_STATUS_MUTEX_DESTROY_FAILURE: Mutex destruction has failed.
+ * @SMW_STATUS_LIBRARY_ALREADY_INIT: Library is already initialized.
+ * @SMW_STATUS_MUTEX_LOCK_FAILURE: Mutex lock has failed.
+ * @SMW_STATUS_MUTEX_UNLOCK_FAILURE: Mutex unlock has failed.
+ * @SMW_STATUS_INVALID_LIBRARY_CONTEXT: Library context is not valid.
+ * @SMW_STATUS_INVALID_CONFIG_DATABASE: Configuration database is not valid.
+ *
+ * @SMW_STATUS_INVALID_VERSION: The version of the configuration file is not supported.
+ * @SMW_STATUS_INVALID_BUFFER: The configuration file passed by OSAL to the library is not valid.
+ * @SMW_STATUS_EOF: The configuration file is syntactically too short.
+ * @SMW_STATUS_SYNTAX_ERROR: The configuration file is syntactically wrong.
+ * @SMW_STATUS_TOO_LARGE_NUMBER: The configuration file defines a too big numeral value.
+ * @SMW_STATUS_INVALID_TAG: Tag is invalid.
+ * @SMW_STATUS_RANGE_DUPLICATE: Size range is defined more than once for a given algorithm.
+ * @SMW_STATUS_ALGO_NOT_CONFIGURED: Size range is defined but the corresponding algorithm is not
+ * configured.
+ * @SMW_STATUS_CONFIG_ALREADY_LOADED: User configuration is already loaded. To load another one,
+ * the Unload configuration API must be called first.
+ * @SMW_STATUS_NO_CONFIG_LOADED: No user configuration is loaded.
+ * @SMW_STATUS_LOAD_METHOD_DUPLICATE: The load/unload method is defined more than once.
+ * @SMW_STATUS_UNKNOWN_CONFIG_OP_NAME: Operation name set in the configuration
+ * file is not recognized by SMW.
+ * @SMW_STATUS_UNKNOWN_LOAD_METHOD_NAME: String value of the load/unload method
+ * set in the configuration file is not recognized by SMW.
+ *
+ * @SMW_STATUS_SIGNATURE_INVALID: The Signature is not valid.
+ * @SMW_STATUS_SIGNATURE_LEN_INVALID: The Signature length is not valid.
+ *
+ * @SMW_STATUS_OBJ_DB_INIT: Initialization error of the object database.
+ * @SMW_STATUS_OBJ_DB_CREATE: Object database creation error.
+ * @SMW_STATUS_OBJ_DB_UPDATE: Object database update error.
+ * @SMW_STATUS_OBJ_DB_DELETE: Object database delete error.
+ * @SMW_STATUS_OBJ_DB_GET_INFO: Object database get information error.
+ * @SMW_STATUS_OBJ_DB_FIND: Object database find object error.
+ *
+ * @SMW_STATUS_KEY_POLICY_WARNING_IGNORED: At least one element of the key policy is ignored.
+ * @SMW_STATUS_UNKNOWN_KEY_OP_NAME: Key operation name provided by the user or
+ * set in the user configuration is not recognized by SMW.
+ * @SMW_STATUS_UNKNOWN_KEY_TYPE_NAME: Key type name provided by the user or set
+ * in the user configuration is not recognized by SMW.
+ * @SMW_STATUS_UNKNOWN_FORMAT_NAME: Key format name provided by the user is not
+ * recognized by SMW.
+ * @SMW_STATUS_UNKNOWN_KDF_NAME: Key derivation function name provided by the
+ * user or set in the user configuration is not recognized by SMW.
+ * @SMW_STATUS_UNKNOWN_TLS12_KEA_NAME: TLS 1.2 Key exchange algorithm name
+ * provided by the user is not recognized by SMW.
+ * @SMW_STATUS_UNKNOWN_TLS12_ENC_NAME: TLS 1.2 encryption algorithm name
+ * provided by the user is not recognized by SMW.
+ * @SMW_STATUS_CONFIGURATION_FAILURE: Library configuration failure.
+ * @SMW_STATUS_UNKNOWN_KEY_PRIVACY_NAME: Key privacy name set in the object database is not
+ * recognized by SMW.
+ *
+ * Status code classification:
+ ** Common return codes
+ *
+ *	- SMW_STATUS_OK
+ *	- SMW_STATUS_UNKNOWN_NAME
+ *	- SMW_STATUS_UNKNOWN_ID
+ *	- SMW_STATUS_ALLOC_FAILURE
+ *	- SMW_STATUS_INVALID_PARAM
+ *	- SMW_STATUS_VERSION_NOT_SUPPORTED
+ *	- SMW_STATUS_SUBSYSTEM_LOAD_FAILURE
+ *	- SMW_STATUS_SUBSYSTEM_UNLOAD_FAILURE
+ *	- SMW_STATUS_SUBSYSTEM_FAILURE
+ *	- SMW_STATUS_SUBSYSTEM_NOT_CONFIGURED
+ *	- SMW_STATUS_OPERATION_NOT_SUPPORTED
+ *	- SMW_STATUS_OPERATION_NOT_CONFIGURED
+ *	- SMW_STATUS_OPERATION_FAILURE
+ *	- SMW_STATUS_NO_KEY_BUFFER
+ *	- SMW_STATUS_OUTPUT_TOO_SHORT
+ *	- SMW_STATUS_SUBSYSTEM_OUT_OF_MEMORY
+ *	- SMW_STATUS_SUBSYSTEM_STORAGE_NO_SPACE
+ *	- SMW_STATUS_SUBSYSTEM_STORAGE_ERROR
+ *	- SMW_STATUS_SUBSYSTEM_CORRUPT_OBJECT
+ *	- SMW_STATUS_SUBSYSTEM_LOADED
+ *	- SMW_STATUS_SUBSYSTEM_NOT_LOADED
+ *	- SMW_STATUS_KEY_INVALID
+ *	- SMW_STATUS_INVALID_LIFECYCLE
+ *	- SMW_STATUS_INVALID_IV_SIZE
+ *	- SMW_STATUS_UNKNOWN_MODE_NAME
+ *	- SMW_STATUS_UNKNOWN_OP_TYPE_NAME
+ *	- SMW_STATUS_UNKNOWN_SUBSYSTEM_NAME
+ *	- SMW_STATUS_UNKNOWN_ALGO_NAME
+ *	- SMW_STATUS_UNKNOWN_SIGN_ALGO_NAME
+ *	- SMW_STATUS_UNKNOWN_SIGN_TYPE_NAME
+ *
+ ** Specific return codes - Library initialization
+ *
+ *	- SMW_STATUS_OPS_INVALID
+ *	- SMW_STATUS_MUTEX_INIT_FAILURE
+ *	- SMW_STATUS_MUTEX_DESTROY_FAILURE
+ *	- SMW_STATUS_LIBRARY_ALREADY_INIT
+ *	- SMW_STATUS_MUTEX_LOCK_FAILURE
+ *	- SMW_STATUS_MUTEX_UNLOCK_FAILURE
+ *	- SMW_STATUS_INVALID_LIBRARY_CONTEXT
+ *	- SMW_STATUS_INVALID_CONFIG_DATABASE
+ *	- SMW_STATUS_CONFIGURATION_FAILURE
+ *
+ ** Specific return codes - Configuration file
+ *
+ *	- SMW_STATUS_INVALID_VERSION
+ *	- SMW_STATUS_INVALID_BUFFER
+ *	- SMW_STATUS_EOF
+ *	- SMW_STATUS_SYNTAX_ERROR
+ *	- SMW_STATUS_TOO_LARGE_NUMBER
+ *	- SMW_STATUS_INVALID_TAG
+ *	- SMW_STATUS_RANGE_DUPLICATE
+ *	- SMW_STATUS_ALGO_NOT_CONFIGURED
+ *	- SMW_STATUS_CONFIG_ALREADY_LOADED
+ *	- SMW_STATUS_NO_CONFIG_LOADED
+ *	- SMW_STATUS_LOAD_METHOD_DUPLICATE
+ *	- SMW_STATUS_UNKNOWN_CONFIG_OP_NAME
+ *	- SMW_STATUS_UNKNOWN_LOAD_METHOD_NAME
+ *
+ ** Specific return codes - Signature
+ *
+ *	- SMW_STATUS_SIGNATURE_INVALID
+ *	- SMW_STATUS_SIGNATURE_LEN_INVALID
+ *
+ ** Specific return codes - Object database
+ *
+ *	- SMW_STATUS_ERROR_OBJ_DB_INIT
+ *	- SMW_STATUS_ERROR_OBJ_DB_CREATE
+ *	- SMW_STATUS_ERROR_OBJ_DB_UPDATE
+ *	- SMW_STATUS_ERROR_OBJ_DB_DELETE
+ *	- SMW_STATUS_ERROR_OBJ_DB_GET_INFO
+ *  - SMW_STATUS_ERROR_OBJ_DB_FIND
+ *
+ ** Specific return codes - Key manager
+ *
+ *	- SMW_STATUS_KEY_POLICY_WARNING_IGNORED
+ *	- SMW_STATUS_UNKNOWN_KEY_OP_NAME
+ *	- SMW_STATUS_UNKNOWN_KEY_TYPE_NAME
+ *	- SMW_STATUS_UNKNOWN_FORMAT_NAME
+ *	- SMW_STATUS_UNKNOWN_KDF_NAME
+ *	- SMW_STATUS_UNKNOWN_TLS12_KEA_NAME
+ *	- SMW_STATUS_UNKNOWN_TLS12_ENC_NAME
+ *	- SMW_STATUS_UNKNOWN_KEY_PRIVACY_NAME
+ *
+ ** Specific return codes - Device manager
+ *
+ *	- SMW_STATUS_OEM_SRKH_NOT_FUSED
+ */
+
+/* Status codes */
+enum smw_status_code {
+    SMW_STATUS_OK = 0,
+    SMW_STATUS_INVALID_VERSION,
+    SMW_STATUS_INVALID_BUFFER,
+    SMW_STATUS_EOF,
+    SMW_STATUS_SYNTAX_ERROR,
+    SMW_STATUS_UNKNOWN_NAME, /* 5 */
+    SMW_STATUS_UNKNOWN_ID,
+    SMW_STATUS_TOO_LARGE_NUMBER,
+    SMW_STATUS_ALLOC_FAILURE,
+    SMW_STATUS_INVALID_PARAM,
+    SMW_STATUS_VERSION_NOT_SUPPORTED, /* 10 */
+    SMW_STATUS_SUBSYSTEM_LOAD_FAILURE,
+    SMW_STATUS_SUBSYSTEM_UNLOAD_FAILURE,
+    SMW_STATUS_SUBSYSTEM_FAILURE,
+    SMW_STATUS_SUBSYSTEM_NOT_CONFIGURED,
+    SMW_STATUS_OPERATION_NOT_SUPPORTED, /* 15 */
+    SMW_STATUS_OPERATION_NOT_CONFIGURED,
+    SMW_STATUS_OPERATION_FAILURE,
+    SMW_STATUS_SIGNATURE_INVALID,
+    SMW_STATUS_NO_KEY_BUFFER,
+    SMW_STATUS_OUTPUT_TOO_SHORT, /* 20 */
+    SMW_STATUS_SIGNATURE_LEN_INVALID,
+    SMW_STATUS_OPS_INVALID,
+    SMW_STATUS_MUTEX_INIT_FAILURE,
+    SMW_STATUS_MUTEX_DESTROY_FAILURE,
+    SMW_STATUS_INVALID_TAG, /* 25 */
+    SMW_STATUS_RANGE_DUPLICATE,
+    SMW_STATUS_ALGO_NOT_CONFIGURED,
+    SMW_STATUS_CONFIG_ALREADY_LOADED,
+    SMW_STATUS_NO_CONFIG_LOADED,
+    SMW_STATUS_SUBSYSTEM_OUT_OF_MEMORY, /* 30 */
+    SMW_STATUS_SUBSYSTEM_STORAGE_NO_SPACE,
+    SMW_STATUS_SUBSYSTEM_STORAGE_ERROR,
+    SMW_STATUS_SUBSYSTEM_CORRUPT_OBJECT,
+    SMW_STATUS_LOAD_METHOD_DUPLICATE,
+    SMW_STATUS_LIBRARY_ALREADY_INIT, /* 35 */
+    SMW_STATUS_SUBSYSTEM_LOADED,
+    SMW_STATUS_SUBSYSTEM_NOT_LOADED,
+    SMW_STATUS_OBJ_DB_INIT,
+    SMW_STATUS_OBJ_DB_CREATE,
+    SMW_STATUS_OBJ_DB_UPDATE, /* 40 */
+    SMW_STATUS_OBJ_DB_DELETE,
+    SMW_STATUS_OBJ_DB_GET_INFO,
+    SMW_STATUS_KEY_POLICY_WARNING_IGNORED,
+    SMW_STATUS_KEY_INVALID,
+    SMW_STATUS_MUTEX_LOCK_FAILURE, /* 45 */
+    SMW_STATUS_MUTEX_UNLOCK_FAILURE,
+    SMW_STATUS_INVALID_LIBRARY_CONTEXT,
+    SMW_STATUS_INVALID_CONFIG_DATABASE,
+    SMW_STATUS_INVALID_LIFECYCLE,
+    SMW_STATUS_UNKNOWN_MODE_NAME, /* 50 */
+    SMW_STATUS_UNKNOWN_OP_TYPE_NAME,
+    SMW_STATUS_UNKNOWN_SUBSYSTEM_NAME,
+    SMW_STATUS_UNKNOWN_ALGO_NAME,
+    SMW_STATUS_UNKNOWN_SIGN_ALGO_NAME,
+    SMW_STATUS_UNKNOWN_SIGN_TYPE_NAME, /* 55 */
+    SMW_STATUS_UNKNOWN_CONFIG_OP_NAME,
+    SMW_STATUS_UNKNOWN_LOAD_METHOD_NAME,
+    SMW_STATUS_UNKNOWN_KEY_OP_NAME,
+    SMW_STATUS_UNKNOWN_KEY_TYPE_NAME,
+    SMW_STATUS_UNKNOWN_FORMAT_NAME, /* 60 */
+    SMW_STATUS_UNKNOWN_KDF_NAME,
+    SMW_STATUS_UNKNOWN_TLS12_KEA_NAME,
+    SMW_STATUS_UNKNOWN_TLS12_ENC_NAME,
+    SMW_STATUS_OEM_SRKH_NOT_FUSED, /* 65 */
+    SMW_STATUS_CONFIGURATION_FAILURE,
+    SMW_STATUS_INVALID_IV_SIZE,
+    SMW_STATUS_UNKNOWN_KEY_PRIVACY_NAME,
+    SMW_STATUS_OBJ_DB_FIND,
+};
+
+#endif /* __SMW_STATUS_H__ */

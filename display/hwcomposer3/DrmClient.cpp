@@ -620,8 +620,8 @@ HWC3::Error DrmClient::checkOverlayLimitation(uint32_t displayId, Layer* layer) 
     }
 #endif
 #ifdef OVERLAY_LIMITATION_DPU
-    if ((srcW != w) || (srcH != h)) {
-        // DPU of imx95 don't support scaling(TODO: support down-scaling in later B0 chip)
+    if ((srcW > w) || (srcH > h)) {
+        // DPU of imx95 B0 don't support down-scaling
         DEBUG_LOG("%s: layer %" PRId64 " scaling(src: %d x %d, dst: %d x %d) check failed",
                   __FUNCTION__, layer->getId(), srcW, srcH, w, h);
         return HWC3::Error::Unsupported;

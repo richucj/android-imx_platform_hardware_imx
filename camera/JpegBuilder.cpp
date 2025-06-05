@@ -1,6 +1,6 @@
 /*
  * Copyright (C) 2012-2016 Freescale Semiconductor, Inc.
- * Copyright 2017-2020 NXP
+ * Copyright 2017-2020, 2025 NXP
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -216,12 +216,13 @@ void JpegBuilder::setMetadata(CameraMetadata *meta) {
 }
 
 status_t JpegBuilder::encodeImage(JpegParams *mainJpeg, JpegParams *thumbNail, char *hw_jpeg_enc,
-                                  CameraMetadata &meta) {
+                                  CameraMetadata &meta, bool debug) {
     status_t ret = NO_ERROR;
 
     if (mainJpeg == NULL)
         return BAD_VALUE;
 
+    mDebug = debug;
     mMainInput = mainJpeg;
     mThumbnailInput = thumbNail;
 
@@ -305,7 +306,7 @@ status_t JpegBuilder::encodeJpeg(JpegParams *input, char *hw_jpeg_enc, const voi
     res = encoder->encode(input->src, input->srcPhy, input->src_size, input->src_fd,
                           input->src_handle, input->in_width, input->in_height, input->quality,
                           input->dst, input->dst_size, input->out_width, input->out_height,
-                          app1Buffer, app1Size);
+                          app1Buffer, app1Size, mDebug);
 
     delete encoder;
     if (res > 0) {

@@ -149,11 +149,25 @@ const format_info_t formats[] = {
                 .is_yuv = false,
         },
         {
+                .id = static_cast<int32_t>(PixelFormat::R_8),
+                .fourcc = DRM_FORMAT_R8,
+                .modifier = DRM_FORMAT_MOD_LINEAR,
+                .is_rgb = false,
+                .is_yuv = false,
+        },
+        {
                 .id = static_cast<int32_t>(PixelFormat::IMPLEMENTATION_DEFINED),
                 .fourcc = DRM_FORMAT_NV12,
                 .modifier = DRM_FORMAT_MOD_LINEAR,
                 .is_rgb = false,
                 .is_yuv = true,
+        },
+        {
+                .id = static_cast<int32_t>(PixelFormat::RGBA_10101010),
+                .fourcc = DRM_FORMAT_AXBXGXRX106106106106,
+                .modifier = DRM_FORMAT_MOD_LINEAR,
+                .is_rgb = true,
+                .is_yuv = false,
         },
 
         /* Following are NXP i.MX defined sepcific foramt in include/graphics_ext.h */
@@ -369,7 +383,7 @@ const struct format_info_t* getPixleFormatInfo(int32_t pixel_format) {
             return &format;
     }
 
-    ALOGE("%s: Cannot support pixel format:%" PRIx32, __func__, pixel_format);
+    ALOGE("%s: Cannot support pixel format:0x%" PRIx32, __func__, pixel_format);
     return nullptr;
 }
 
@@ -404,9 +418,11 @@ int convertToHalDescriptor(const BufferDescriptorInfoV4& descriptor,
         ALOGE("%s layerCount=%d > 1 is unsupported", __func__, descriptor.layerCount);
         return -1;
     }
+
+    std::string pixelFormatString = getPixelFormatString(outDescriptor->pixel_format);
+    std::string usageString = getUsageString(descriptor.usage);
     auto info = getPixleFormatInfo(outDescriptor->pixel_format);
     if (!info) {
-        std::string pixelFormatString = getPixelFormatString(outDescriptor->pixel_format);
         ALOGE("%s Unsupported format %s", __func__, pixelFormatString.c_str());
         return -1;
     } else {
@@ -415,8 +431,14 @@ int convertToHalDescriptor(const BufferDescriptorInfoV4& descriptor,
     }
 
     if (convertToBufferFlags(descriptor.usage, &outDescriptor->flags)) {
-        std::string usageString = getUsageString(descriptor.usage);
         ALOGE("%s Unsupported usage flags %s", __func__, usageString.c_str());
+        return -1;
+    }
+
+    if (info->id == static_cast<int32_t>(PixelFormat::R_8) &&
+        !(descriptor.usage & GRALLOC_USAGE_PRIVATE_3)) {
+        ALOGE("%s: Don't support %s format without PRIVATE_3 usage:%s", __func__,
+              pixelFormatString.c_str(), usageString.c_str());
         return -1;
     }
     return 0;

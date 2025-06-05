@@ -38,8 +38,13 @@
 #include <algorithm>
 #include <utils/Mutex.h>
 #include <android-base/file.h>
+#include <filesystem>
+#include <android-base/properties.h>
+#include <cutils/properties.h>
 
 #define TRUSTY_DEVICE_NAME "/dev/trusty-ipc-dev0"
+using android::base::unique_fd;
+using std::string;
 
 constexpr const char kTrustyDefaultDeviceName[] = "/dev/trusty-ipc-dev0";
 static const char* dev_name = kTrustyDefaultDeviceName;
@@ -144,12 +149,13 @@ static unique_fd read_file(const char* file_name, off64_t* out_file_size) {
     return dmabuf_fd;
 }
 
-static ssize_t send_load_message(int tipc_fd, int package_fd, off64_t package_size) {
+static ssize_t send_load_message(int tipc_fd, int package_fd, off64_t package_size, bool secure) {
     struct firmware_loader_header hdr = {
             .cmd = FIRMWARE_LOADER_CMD_LOAD_FIRMWARE,
     };
     struct firmware_loader_load_firmware_req req = {
             .package_size = static_cast<uint64_t>(package_size),
+            .secure = secure,
     };
     struct iovec tx[2] = {{&hdr, sizeof(hdr)}, {&req, sizeof(req)}};
     struct trusty_shm shm = {
@@ -180,6 +186,9 @@ static ssize_t read_response(int tipc_fd) {
     switch (resp.error) {
         case FIRMWARE_LOADER_NO_ERROR:
             break;
+        case FIRMWARE_LOADER_ERR_NONE_KEY:
+            ALOGE("there is no firmware key, try to load clear firmware");
+            break;
         case FIRMWARE_LOADER_ERR_UNKNOWN_CMD:
             ALOGE("Error: unknown command");
             break;
@@ -190,14 +199,49 @@ static ssize_t read_response(int tipc_fd) {
     return static_cast<ssize_t>(resp.error);
 }
 
+ssize_t load_clear_firmware_package(int tipc_fd, std::string firmware_name) {
+    ssize_t rc = 0;
+    off64_t firmware_size;
+
+    // try to load clear fw
+    std::filesystem::path p(firmware_name);
+    std::string desired_extension = ".signed";
+    if (p.has_filename() && p.extension() == desired_extension) {
+        std::filesystem::path parent_dir = p.parent_path();
+        std::filesystem::path stem = p.stem();
+        std::filesystem::path new_path = parent_dir / stem;
+        firmware_name = new_path.string();
+    }
+    ALOGD("load clear fw name=%s", firmware_name.c_str());
+    unique_fd clear_firmware_fd = read_file(firmware_name.c_str(), &firmware_size);
+    if (!clear_firmware_fd.ok()) {
+        rc = -1;
+        return rc;
+    }
+    rc = send_load_message(tipc_fd, clear_firmware_fd, firmware_size, false);
+    if (rc < 0) {
+        ALOGE("Failed to send clear firmware package: %zd", rc);
+        return rc;
+    }
+
+    rc = read_response(tipc_fd);
+    if (rc != FIRMWARE_LOADER_NO_ERROR) {
+        ALOGE("load clear firmware failed rc=%zd", rc);
+    }
+    return rc;
+}
+
 ssize_t load_firmware_package(const char* firmware_file_name) {
 
     Mutex::Autolock autoLock(mLoadLock);
     ssize_t rc = 0;
     int tipc_fd = -1;
     off64_t firmware_size;
+    std::string name(firmware_file_name);
+    std::string storage_property;
 
-    unique_fd firmware_fd = read_file(firmware_file_name, &firmware_size);
+    ALOGD("load fw name=%s", name.c_str());
+    unique_fd firmware_fd = read_file(name.c_str(), &firmware_size);
     if (!firmware_fd.ok()) {
         rc = -1;
         goto err_read_file;
@@ -206,18 +250,34 @@ ssize_t load_firmware_package(const char* firmware_file_name) {
     tipc_fd = tipc_connect(TRUSTY_DEVICE_NAME, FIRMWARE_LOADER_PORT);
     if (tipc_fd < 0) {
         ALOGE("Failed to connect to firmware loader: %s", strerror(-tipc_fd));
-        ALOGE("Failed to connect to firmware loader: %s", strerror(-tipc_fd));
         rc = tipc_fd;
         goto err_tipc_connect;
     }
 
-    rc = send_load_message(tipc_fd, firmware_fd, firmware_size);
-    if (rc < 0) {
-        ALOGE("Failed to send firmware package: %zd", rc);
-        goto err_send;
-    }
+    storage_property = ::android::base::GetProperty("vendor.storageproxyd", "");
+    if (storage_property == "trusty") {
+        // try to load secure firmware
+        rc = send_load_message(tipc_fd, firmware_fd, firmware_size, true);
+        if (rc < 0) {
+            ALOGE("Failed to send secure firmware package: %zd", rc);
+            goto err_send;
+        }
 
-    rc = read_response(tipc_fd);
+        rc = read_response(tipc_fd);
+        if (rc != FIRMWARE_LOADER_NO_ERROR) {
+            ALOGE("load secure firmware failed rc=%zd", rc);
+            if (rc == FIRMWARE_LOADER_ERR_NONE_KEY) {
+                ALOGI("try to load clear firmware");
+                rc = load_clear_firmware_package(tipc_fd, name);
+            }
+        } else {
+            ALOGI("load secure firmware success");
+        }
+    } else {
+        // try to load clear firmware directly
+        ALOGI("secure storage is not ready, try to load clear vpu firmware for vpu");
+        rc = load_clear_firmware_package(tipc_fd, name);
+    }
 
 err_send:
     tipc_close(tipc_fd);

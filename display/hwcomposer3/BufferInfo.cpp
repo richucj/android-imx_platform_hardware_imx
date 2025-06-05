@@ -92,4 +92,39 @@ int getInfoFromHandle(buffer_handle_t handle, HandleInfo *info) {
     return 0;
 }
 
+int getPhysFromHandle(buffer_handle_t handle, uint64_t *outPhys) {
+    if (outPhys == nullptr) {
+        ALOGE("%s: output pointer of phys in NULL", __FUNCTION__);
+        return -1;
+    }
+
+    if ((static_cast<const private_handle_t *>(handle))->magic == private_handle_t::sMagic) {
+        const imported_handle *memHandle = static_cast<const imported_handle *>(handle);
+        *outPhys = memHandle->phys;
+    } else if (gralloc_handle_t(handle)->magic == gralloc_handle::sMagic) {
+        gralloc_handle_t memHandle = (gralloc_handle_t)handle;
+        *outPhys = memHandle->phys;
+    } else {
+        ALOGE("%s: Cannot recognize buffer handle", __FUNCTION__);
+        return -1;
+    }
+
+    return 0;
+}
+
+int setPhysToHandle(buffer_handle_t handle, uint64_t phys) {
+    if ((static_cast<const private_handle_t *>(handle))->magic == private_handle_t::sMagic) {
+        const imported_handle *memHandle = static_cast<const imported_handle *>(handle);
+        const_cast<imported_handle *>(memHandle)->phys = phys;
+    } else if (gralloc_handle_t(handle)->magic == gralloc_handle::sMagic) {
+        const gralloc_handle *memHandle = static_cast<const gralloc_handle *>(handle);
+        const_cast<gralloc_handle *>(memHandle)->phys = phys;
+    } else {
+        ALOGE("%s: Cannot recognize buffer handle", __FUNCTION__);
+        return -1;
+    }
+
+    return 0;
+}
+
 } // namespace aidl::android::hardware::graphics::composer3::impl

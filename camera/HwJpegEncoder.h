@@ -1,5 +1,5 @@
 /*
- *  Copyright 2020 NXP.
+ *  Copyright 2020, 2025 NXP.
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -33,7 +33,7 @@ public:
 
     int encode(void *inYuv, void *inYuvPhy, int inSize, int inFd, buffer_handle_t inHandle,
                int inWidth, int inHeight, int quality, void *outBuf, int outSize, int outWidth,
-               int outHeight, const void *app1Buffer, size_t app1Size);
+               int outHeight, const void *app1Buffer, size_t app1Size, bool debug = false);
 
     int mFormat;
 

@@ -40,6 +40,7 @@
 #include <cutils/properties.h>
 #include <hardware/hdmi_cec.h>
 
+static bool mDebug = false;
 typedef struct hdmicec_context
 {
     hdmi_cec_device_t device; /* must be first */
@@ -191,6 +192,13 @@ static int hdmicec_send_message(const struct hdmi_cec_device *dev, const cec_mes
 
     memcpy(&cec_msg.msg[1], msg->body, msg->length);
     cec_msg.len = msg->length + 1;
+
+    if (mDebug) {
+        ALOGI("%s: ===== CEC_TRANSMIT msg.len = %u\n", __func__, cec_msg.len);
+        for (uint32_t i = 0; i < cec_msg.len; i++) {
+            ALOGI("%s: ===== CEC_TRANSMIT msg[%u]=0x%x\n", __func__, i, cec_msg.msg[i]);
+        }
+    }
 
     ret = ioctl(ctx->cec_fd, CEC_TRANSMIT, &cec_msg);
     if (ret) {
@@ -411,6 +419,13 @@ static void *event_thread(void *arg)
                 continue;
             }
 
+            if (mDebug) {
+                ALOGI("%s: ===== CEC_RECEIVE msg.len = %u\n", __func__, msg.len);
+                for (uint32_t i = 0; i < msg.len; i++) {
+                    ALOGI("%s: ===== CEC_RECEIVE msg[%u]=0x%x\n", __func__, i, msg.msg[i]);
+                }
+            }
+
             if (msg.rx_status != CEC_RX_STATUS_OK) {
                 ALOGD("%s: rx_status=%d\n", __func__, msg.rx_status);
                 continue;
@@ -549,6 +564,10 @@ static int cec_init(struct hdmicec_context *ctx)
         return ret;
 
     pthread_mutex_init(&ctx->options_lock, NULL);
+
+    char value[PROPERTY_VALUE_MAX];
+    property_get("vendor.rw.hdmicec.test", value, "");
+    mDebug = (strcmp(value, "debug") == 0) ? true : false;
 
     ALOGD("%s: initialized CEC controller\n", __func__);
 

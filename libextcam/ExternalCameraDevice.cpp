@@ -1,6 +1,6 @@
 /*
  * Copyright (C) 2022 The Android Open Source Project
- * Copyright 2023 NXP.
+ * Copyright 2023, 2025 NXP
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -384,11 +384,25 @@ status_t ExternalCameraDevice::initDefaultCharsKeys(
     const uint8_t videoStabilizationMode = ANDROID_CONTROL_VIDEO_STABILIZATION_MODE_OFF;
     UPDATE(ANDROID_CONTROL_AVAILABLE_VIDEO_STABILIZATION_MODES, &videoStabilizationMode, 1);
 
-    const uint8_t awbAvailableMode = ANDROID_CONTROL_AWB_MODE_AUTO;
-    UPDATE(ANDROID_CONTROL_AWB_AVAILABLE_MODES, &awbAvailableMode, 1);
+    const uint8_t awbAvailableModes[] = {ANDROID_CONTROL_AWB_MODE_OFF,
+                                         ANDROID_CONTROL_AWB_MODE_AUTO,
+                                         ANDROID_CONTROL_AWB_MODE_INCANDESCENT,
+                                         ANDROID_CONTROL_AWB_MODE_FLUORESCENT,
+                                         ANDROID_CONTROL_AWB_MODE_WARM_FLUORESCENT,
+                                         ANDROID_CONTROL_AWB_MODE_DAYLIGHT,
+                                         ANDROID_CONTROL_AWB_MODE_CLOUDY_DAYLIGHT,
+                                         ANDROID_CONTROL_AWB_MODE_TWILIGHT,
+                                         ANDROID_CONTROL_AWB_MODE_SHADE};
+    UPDATE(ANDROID_CONTROL_AWB_AVAILABLE_MODES, awbAvailableModes, ARRAY_SIZE(awbAvailableModes));
 
-    const uint8_t aeAvailableMode = ANDROID_CONTROL_AE_MODE_ON;
-    UPDATE(ANDROID_CONTROL_AE_AVAILABLE_MODES, &aeAvailableMode, 1);
+    const uint8_t aeAvailableModes[] = {ANDROID_CONTROL_AE_MODE_OFF, ANDROID_CONTROL_AE_MODE_ON};
+    UPDATE(ANDROID_CONTROL_AE_AVAILABLE_MODES, aeAvailableModes, ARRAY_SIZE(aeAvailableModes));
+
+    // hard code for c930c
+    // V4L2_CID_EXPOSURE_ABSOLUTE(0x009a0902): minimum: 3, maximum: 2047, step: 1
+    int64_t exposureTimeRange[2] = {3, 2047};
+    UPDATE(ANDROID_SENSOR_INFO_EXPOSURE_TIME_RANGE, exposureTimeRange,
+           ARRAY_SIZE(exposureTimeRange));
 
     const uint8_t availableFffect = ANDROID_CONTROL_EFFECT_MODE_OFF;
     UPDATE(ANDROID_CONTROL_AVAILABLE_EFFECTS, &availableFffect, 1);
@@ -428,6 +442,9 @@ status_t ExternalCameraDevice::initDefaultCharsKeys(
 
     const uint8_t facing = ANDROID_LENS_FACING_EXTERNAL;
     UPDATE(ANDROID_LENS_FACING, &facing, 1);
+
+    const float focusDistance = 0.0f;
+    UPDATE(ANDROID_LENS_FOCUS_DISTANCE, &focusDistance, 1);
 
     // android.noiseReduction
     const uint8_t noiseReductionMode = ANDROID_NOISE_REDUCTION_MODE_OFF;
@@ -534,6 +551,7 @@ status_t ExternalCameraDevice::initDefaultCharsKeys(
                                             ANDROID_JPEG_THUMBNAIL_QUALITY,
                                             ANDROID_JPEG_THUMBNAIL_SIZE,
                                             ANDROID_LENS_OPTICAL_STABILIZATION_MODE,
+                                            ANDROID_LENS_FOCUS_DISTANCE,
                                             ANDROID_NOISE_REDUCTION_MODE,
                                             ANDROID_SCALER_CROP_REGION,
                                             ANDROID_SENSOR_TEST_PATTERN_MODE,

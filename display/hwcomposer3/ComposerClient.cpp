@@ -25,6 +25,7 @@
 
 namespace aidl::android::hardware::graphics::composer3::impl {
 namespace {
+std::atomic<int64_t> sPrivateLayerId{0x100000000};
 
 #define GET_DISPLAY_OR_RETURN_ERROR()                                        \
     std::shared_ptr<Display> display = getDisplay(hwcId);                    \
@@ -163,6 +164,7 @@ HWC3::Error ComposerClient::init() {
     }
 
     mCapabilities.push_back(Capability::LAYER_LIFECYCLE_BATCH_COMMAND);
+    mBatchCommandSupported = true;
 
     DEBUG_LOG("%s initialized!", __FUNCTION__);
     return HWC3::Error::None;
@@ -175,6 +177,14 @@ ndk::ScopedAStatus ComposerClient::createLayer(int64_t hwcId, int32_t bufferSlot
     GET_DISPLAY_OR_RETURN_ERROR();
 
     int64_t getLayerId = 0; // 0 means not preset layer Id
+    if (mBatchCommandSupported) {
+        /* When enable LAYER_LIFECYCLE_BATCH_COMMAND, createLayer() of surfaceflinger will not call
+           this function. It should be from other service. So the layer id will increase from
+           sPrivateLayerId to avoid conflict with surfaceflinger.
+         */
+        getLayerId = sPrivateLayerId++;
+    }
+
     HWC3::Error error = display->createLayer(&getLayerId);
     if (error != HWC3::Error::None) {
         ALOGE("%s: hwc display:%" PRIu64 " failed to create layer", __FUNCTION__, hwcId);
@@ -698,6 +708,32 @@ ndk::ScopedAStatus ComposerClient::notifyExpectedPresent(
     return ToBinderStatus(display->notifyExpectedPresent(expectedPresentTime, frameIntervalNs));
 }
 
+ndk::ScopedAStatus ComposerClient::getMaxLayerPictureProfiles(int64_t hwcId, int32_t*) {
+    DEBUG_LOG("%s", __FUNCTION__);
+
+    GET_DISPLAY_OR_RETURN_ERROR();
+
+    return ToBinderStatus(HWC3::Error::Unsupported);
+}
+
+ndk::ScopedAStatus ComposerClient::startHdcpNegotiation(
+        int64_t hwcId, const aidl::android::hardware::drm::HdcpLevels& /*levels*/) {
+    DEBUG_LOG("%s", __FUNCTION__);
+
+    GET_DISPLAY_OR_RETURN_ERROR();
+
+    return ToBinderStatus(HWC3::Error::Unsupported);
+}
+
+ndk::ScopedAStatus ComposerClient::getLuts(int64_t hwcId, const std::vector<Buffer>&,
+        std::vector<Luts>*) {
+    DEBUG_LOG("%s", __FUNCTION__);
+
+    GET_DISPLAY_OR_RETURN_ERROR();
+
+    return ToBinderStatus(HWC3::Error::Unsupported);
+}
+
 ndk::SpAIBinder ComposerClient::createBinder() {
     auto binder = BnComposerClient::createBinder();
     AIBinder_setInheritRt(binder.get(), true);
@@ -879,6 +915,7 @@ void ComposerClient::executeLayerCommand(CommandResultWriter& commandResults, Di
                            BlockingRegion);
     DISPATCH_LAYER_COMMAND(layerCommand, commandResults, display, layer, bufferSlotsToClear,
                            BufferSlotsToClear);
+    DISPATCH_LAYER_COMMAND(layerCommand, commandResults, display, layer, luts, Luts);
 }
 
 void ComposerClient::executeDisplayCommandSetColorTransform(CommandResultWriter& commandResults,
@@ -1357,6 +1394,13 @@ void ComposerClient::executeLayerCommandSetLayerBufferSlotsToClear(
             return;
         }
     }
+}
+
+void ComposerClient::executeLayerCommandSetLayerLuts(CommandResultWriter& /*commandResults*/,
+                                                     Display& /*display*/, Layer* /*layer*/,
+                                                     const Luts& /*luts*/) {
+    DEBUG_LOG("%s", __FUNCTION__);
+    // TODO(b/358188835)
 }
 
 std::shared_ptr<Display> ComposerClient::getDisplay(int64_t hwcId) {

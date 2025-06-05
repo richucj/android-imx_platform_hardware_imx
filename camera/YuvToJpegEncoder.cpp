@@ -1,7 +1,7 @@
 /*
  * Copyright (C) 2008 The Android Open Source Project
  * Copyright (C) 2012-2016 Freescale Semiconductor, Inc.
- * Copyright 2017-2023 NXP
+ * Copyright 2017-2023, 2025 NXP
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -267,7 +267,7 @@ failure:
 }
 
 int vpu_encode(void *inYuv, void *inYuvPhy, int Width, int Height, int /*quality*/, int color,
-               void *outBuf, int outSize, int colorFormat) {
+               void *outBuf, int outSize, int colorFormat, bool debug = false) {
     VpuEncRetCode ret;
     int size = 0;
     VpuVersionInfo ver;
@@ -453,12 +453,17 @@ YuvToJpegEncoder *YuvToJpegEncoder::create(int format) {
 }
 
 YuvToJpegEncoder::YuvToJpegEncoder(int format)
-      : fNumPlanes(1), color(1), mColorFormat(0), mPixelFormat(format), supportVpu(false) {}
+      : fNumPlanes(1),
+        color(1),
+        mColorFormat(0),
+        mPixelFormat(format),
+        supportVpu(false),
+        mDebug(false) {}
 
 int YuvToJpegEncoder::encode(void *inYuv, void *inYuvPhy, int inSize, int inFd,
                              buffer_handle_t inHandle, int inWidth, int inHeight, int quality,
                              void *outBuf, int outSize, int outWidth, int outHeight,
-                             const void *app1Buffer, size_t app1Size) {
+                             const void *app1Buffer, size_t app1Size, bool debug) {
 #ifdef BOARD_HAVE_VPU
     // use vpu to encode
     if ((inWidth == outWidth) && (inHeight == outHeight) && supportVpu) {
@@ -469,6 +474,7 @@ int YuvToJpegEncoder::encode(void *inYuv, void *inYuvPhy, int inSize, int inFd,
     }
 #endif
 
+    mDebug = debug;
     jpeg_compress_struct cinfo;
     jpegBuilder_error_mgr sk_err;
     jpegBuilder_destination_mgr dest_mgr((uint8_t *)outBuf, outSize);
@@ -502,7 +508,7 @@ int YuvToJpegEncoder::encode(void *inYuv, void *inYuvPhy, int inSize, int inFd,
         // The 3rd para is pass to handleFrameByG2D to judge whether need lock g2d address.
         // Pass G2D is ok. For CPU, handleFrameByG2D will just return and use soft resize.
         // BTW: DPU is used HwJpegEncoder for 8q.
-        handleFrame(*resizeBuf, srcBuf, ENG_NOTCARE);
+        handleFrame(*resizeBuf, srcBuf, ENG_NOTCARE, debug);
 
         inYuv = (void *)resizeBuf->mVirtAddr;
     }
@@ -521,7 +527,12 @@ int YuvToJpegEncoder::encode(void *inYuv, void *inYuvPhy, int inSize, int inFd,
         jpeg_write_marker(&cinfo, JPEG_APP0 + 1, static_cast<const JOCTET *>(app1Buffer), app1Size);
     }
 
+    if (mDebug)
+        ALOGI("%s: before compress", __func__);
     compress(&cinfo, (uint8_t *)inYuv);
+    if (mDebug)
+        ALOGI("%s: after compress", __func__);
+
     jpeg_finish_compress(&cinfo);
     jpeg_destroy_compress(&cinfo);
 
@@ -583,6 +594,10 @@ void Yuv420SpToJpegEncoder::compress(jpeg_compress_struct *cinfo, uint8_t *yuv) 
     uint8_t *vRows = new uint8_t[8 * (width >> 1)];
     int processLines = DEINTERLEAVE_LINES_ONE_TIME;
 
+    int scanCount = 0;
+    if (mDebug)
+        ALOGI("%s: before scan line", __func__);
+
     // process 16 lines of Y and 8 lines of U/V each time.
     while (cinfo->next_scanline < cinfo->image_height) {
         if (cinfo->next_scanline + DEINTERLEAVE_LINES_ONE_TIME > cinfo->image_height)
@@ -603,7 +618,12 @@ void Yuv420SpToJpegEncoder::compress(jpeg_compress_struct *cinfo, uint8_t *yuv) 
             }
         }
         jpeg_write_raw_data(cinfo, planes, 16);
+        scanCount++;
     }
+
+    if (mDebug)
+        ALOGI("%s: after scan line, count %d", __func__, scanCount);
+
     delete[] uRows;
     delete[] vRows;
 }
@@ -670,6 +690,10 @@ void Yuv422IToJpegEncoder::compress(jpeg_compress_struct *cinfo, uint8_t *yuv) {
 
     uint8_t *yuvOffset = yuv;
 
+    int scanCount = 0;
+    if (mDebug)
+        ALOGI("%s: before scan line", __func__);
+
     // process 16 lines of Y and 16 lines of U/V each time.
     while (cinfo->next_scanline < cinfo->image_height) {
         if (cinfo->next_scanline + DEINTERLEAVE_LINES_ONE_TIME > cinfo->image_height)
@@ -689,7 +713,12 @@ void Yuv422IToJpegEncoder::compress(jpeg_compress_struct *cinfo, uint8_t *yuv) {
         }
 
         jpeg_write_raw_data(cinfo, planes, 16);
+        scanCount++;
     }
+
+    if (mDebug)
+        ALOGI("%s: after scan line, count %d", __func__, scanCount);
+
     delete[] yRows;
     delete[] uRows;
     delete[] vRows;
@@ -751,6 +780,10 @@ void Yuv422SpToJpegEncoder::compress(jpeg_compress_struct *cinfo, uint8_t *yuv) 
     uint8_t *yuvOffset = yuv;
     int processLines = DEINTERLEAVE_LINES_ONE_TIME;
 
+    int scanCount = 0;
+    if (mDebug)
+        ALOGI("%s: before scan line", __func__);
+
     // process 16 lines of Y and 16 lines of U/V each time.
     while (cinfo->next_scanline < cinfo->image_height) {
         if (cinfo->next_scanline + DEINTERLEAVE_LINES_ONE_TIME > cinfo->image_height)
@@ -771,6 +804,10 @@ void Yuv422SpToJpegEncoder::compress(jpeg_compress_struct *cinfo, uint8_t *yuv) 
 
         jpeg_write_raw_data(cinfo, planes, 16);
     }
+
+    if (mDebug)
+        ALOGI("%s: after scan line, count %d", __func__, scanCount);
+
     delete[] yRows;
     delete[] uRows;
     delete[] vRows;

@@ -21,6 +21,7 @@
 #include <utils/Mutex.h>
 #include <cutils/native_handle.h>
 #include "ImageUtils.h"
+#include <vector>
 
 namespace fsl {
 
@@ -125,6 +126,7 @@ private:
     Mutex mCLLock;
 
     bool mbVIVG2D;
+    OCL_MEMORY_TYPE mOclBufferType;
 
     void* mImxOclCvtModule;
     OCL_HANDLE mHOcl;
@@ -133,6 +135,7 @@ private:
     ocl_getParam m_ocl_getParam;
     ocl_convert m_ocl_convert;
     ocl_close m_ocl_close;
+    Mutex mOclCvtLock;
 };
 
 } // namespace fsl

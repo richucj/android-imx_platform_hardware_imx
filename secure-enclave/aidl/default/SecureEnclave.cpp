@@ -317,6 +317,14 @@ ErrorType SecureEnclave::eleCloseSessionKeystore(uint32_t keyStoreHandler) {
     }
 
     do {
+        if (in_flags &
+            (CIPHER_FLAGS_MULTI_INIT | CIPHER_FLAGS_MULTI_UPDATE | CIPHER_FLAGS_MULTI_FINAL |
+             CIPHER_FLAGS_MULTI_ABORT | CIPHER_FLAGS_MULTI_GET_CTX)) {
+            ALOGE("Only support one-shot operation mode!");
+            error = ELE_INVALID_ARGS;
+            break;
+        }
+
         /* Open session and keystore */
         error = eleOpenSessionKeystore(&keyStoreHandler);
         if (error != ELE_NO_ERROR) {
@@ -365,14 +373,15 @@ ErrorType SecureEnclave::eleCloseSessionKeystore(uint32_t keyStoreHandler) {
     }
 }
 
-::ndk::ScopedAStatus SecureEnclave::eleCipherAEOperation(
-        int32_t in_keyId, const std::vector<uint8_t>& in_iv, int32_t in_flags, int32_t in_algo,
+::ndk::ScopedAStatus SecureEnclave::eleCipherAeadOperation(
+        int32_t in_keyId, const std::vector<uint8_t>& in_iv, std::vector<uint8_t>* out_iv_out,
+        int32_t in_flags, int32_t in_algo, std::vector<uint8_t>* in_tag,
         const std::vector<uint8_t>& in_aad, const std::vector<uint8_t>& in_input,
         std::vector<uint8_t>* out_output, int32_t* _aidl_return) {
     ErrorType error = ELE_NO_ERROR;
     uint32_t keyStoreHandler = 0;
     uint32_t cipherHandle = 0;
-    cipher_ae_operation_attr cipherAEOperationAttr;
+    cipher_aead_operation_attr cipherAeadOperationAttr;
 
     error = checkDevice();
     if (error != ELE_NO_ERROR) {
@@ -381,6 +390,16 @@ ErrorType SecureEnclave::eleCloseSessionKeystore(uint32_t keyStoreHandler) {
     }
 
     do {
+        if (in_flags &
+            (AEAD_FLAGS_MULTI_INIT | AEAD_FLAGS_MULTI_UPDATE_AAD | AEAD_FLAGS_MULTI_UPDATE_DATA |
+             AEAD_FLAGS_MULTI_FINAL | AEAD_FLAGS_MULTI_FINAL_VERIFY | AEAD_FLAGS_MULTI_ABORT |
+             AEAD_FLAGS_MULTI_GET_CTX)) {
+            ALOGE("Only support one-shot operation mode!");
+            error = ELE_INVALID_ARGS;
+            break;
+        }
+        in_flags |= AEAD_FLAGS_ONE_SHOT;
+
         /* Open session and keystore */
         error = eleOpenSessionKeystore(&keyStoreHandler);
         if (error != ELE_NO_ERROR) {
@@ -396,19 +415,22 @@ ErrorType SecureEnclave::eleCloseSessionKeystore(uint32_t keyStoreHandler) {
         }
 
         /* Perform authenticated cipher operation */
-        memset(&cipherAEOperationAttr, 0, sizeof(cipher_ae_operation_attr));
-        cipherAEOperationAttr.key_id = in_keyId;
-        cipherAEOperationAttr.iv_addr = (uint8_t*)(in_iv.data());
-        cipherAEOperationAttr.iv_size = in_iv.size();
-        cipherAEOperationAttr.flags = in_flags;
-        cipherAEOperationAttr.algo = in_algo;
-        cipherAEOperationAttr.aad_addr = (uint8_t*)(in_aad.data());
-        cipherAEOperationAttr.aad_size = in_aad.size();
-        cipherAEOperationAttr.input_addr = (uint8_t*)(in_input.data());
-        cipherAEOperationAttr.input_size = in_input.size();
-        cipherAEOperationAttr.output_addr = out_output->data();
-        cipherAEOperationAttr.output_size = out_output->size();
-        error = eleOps->eleCipherAEOperation(cipherHandle, &cipherAEOperationAttr);
+        memset(&cipherAeadOperationAttr, 0, sizeof(cipher_aead_operation_attr));
+        cipherAeadOperationAttr.key_id = in_keyId;
+        cipherAeadOperationAttr.iv_in_addr = (uint8_t*)(in_iv.data());
+        cipherAeadOperationAttr.iv_size = in_iv.size();
+        cipherAeadOperationAttr.iv_out_addr = out_iv_out->data();
+        cipherAeadOperationAttr.flags = in_flags;
+        cipherAeadOperationAttr.tag_addr = in_tag->data();
+        cipherAeadOperationAttr.tag_size = in_tag->size();
+        cipherAeadOperationAttr.algo = in_algo;
+        cipherAeadOperationAttr.aad_addr = (uint8_t*)(in_aad.data());
+        cipherAeadOperationAttr.aad_size = in_aad.size();
+        cipherAeadOperationAttr.input_addr = (uint8_t*)(in_input.data());
+        cipherAeadOperationAttr.input_size = in_input.size();
+        cipherAeadOperationAttr.output_addr = out_output->data();
+        cipherAeadOperationAttr.output_size = out_output->size();
+        error = eleOps->eleCipherAeadOperation(cipherHandle, &cipherAeadOperationAttr);
         if (error != ELE_NO_ERROR) {
             ALOGE("Authenticated cipher operation failed!");
             break;
@@ -422,7 +444,7 @@ ErrorType SecureEnclave::eleCloseSessionKeystore(uint32_t keyStoreHandler) {
     eleCloseSessionKeystore(keyStoreHandler);
 
     /* return the actual output size */
-    *_aidl_return = cipherAEOperationAttr.output_size;
+    *_aidl_return = cipherAeadOperationAttr.output_size;
     if (error != ELE_NO_ERROR) {
         return ndk::ScopedAStatus::fromServiceSpecificError(error);
     } else {

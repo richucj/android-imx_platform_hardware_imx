@@ -20,6 +20,7 @@
 
 #include <aidl/android/hardware/graphics/composer3/BnComposer.h>
 #include <aidl/android/hardware/graphics/composer3/BnComposerClient.h>
+#include <aidl/android/hardware/graphics/composer3/Luts.h>
 #include <android-base/thread_annotations.h>
 
 #include <memory>
@@ -122,11 +123,16 @@ public:
     ndk::ScopedAStatus setRefreshRateChangedCallbackDebugEnabled(int64_t hwcId,
                                                                  bool enabled) override;
     ndk::ScopedAStatus getDisplayConfigurations(
-            int64_t display, int32_t maxFrameIntervalNs,
+            int64_t hwcId, int32_t maxFrameIntervalNs,
             std::vector<DisplayConfiguration>* configs) override;
-    ndk::ScopedAStatus notifyExpectedPresent(int64_t display,
+    ndk::ScopedAStatus notifyExpectedPresent(int64_t hwcId,
                                              const ClockMonotonicTimestamp& expectedPresentTime,
                                              int32_t frameIntervalNs) override;
+    ndk::ScopedAStatus getMaxLayerPictureProfiles(int64_t hwcId, int32_t* outMaxProfiles) override;
+    ndk::ScopedAStatus startHdcpNegotiation(
+            int64_t hwcId, const aidl::android::hardware::drm::HdcpLevels& levels) override;
+    ndk::ScopedAStatus getLuts(int64_t displayId, const std::vector<Buffer>&,
+                               std::vector<Luts>*) override;
 
 protected:
     ndk::SpAIBinder createBinder() override;
@@ -213,6 +219,8 @@ private:
             const std::vector<int32_t>& bufferSlotsToClear);
     void dispatchBatchCreateDestroyLayerCommand(CommandResultWriter& commandResults,
                                                 Display& display, const LayerCommand& layerCmd);
+    void executeLayerCommandSetLayerLuts(CommandResultWriter& commandResults, Display& display,
+                                         Layer* layer, const Luts& luts);
 
     // Returns the display with the given id or nullptr if not found.
     std::shared_ptr<Display> getDisplay(int64_t hwcId);
@@ -245,6 +253,7 @@ private:
     std::unique_ptr<ComposerResources> mResources;
 
     std::vector<Capability> mCapabilities;
+    bool mBatchCommandSupported = false;
 };
 
 } // namespace aidl::android::hardware::graphics::composer3::impl

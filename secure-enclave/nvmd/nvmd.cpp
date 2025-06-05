@@ -69,6 +69,12 @@ static int nvm_manager() {
             break;
         }
 
+        /* Configure NVM */
+        if (ops.setChannelAsNVM() != ELE_NO_ERROR) {
+            ret = GENERAL_FAILURE;
+            break;
+        }
+
         /* Loop to handle all requests from ELE */
         while (true && !daemon_done) {
             /* Main loop */

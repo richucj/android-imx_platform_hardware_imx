@@ -152,6 +152,8 @@ private:
     // the next present to avoid toggling the display on and off.
     DisplayBuffer mPreviousBuffers;
     DisplayBuffer mTempBuffers;
+    ::android::base::unique_fd mCurrentFbFence;
+    ::android::base::unique_fd mPreviousFbFence;
 
     int32_t mActiveConfigId = -1;
     // The display config when boot up or hotplug in, not be changed by SurfaceFlinger

@@ -1,5 +1,5 @@
 /*
- *  Copyright 2020-2023 NXP.
+ *  Copyright 2020-2023, 2025 NXP.
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -42,7 +42,7 @@ HwJpegEncoder::HwJpegEncoder(int format) : YuvToJpegEncoder(format) {
 int HwJpegEncoder::encode(void *inYuv, void *inYuvPhy, int inSize, int inFd,
                           buffer_handle_t inHandle, int inWidth, int inHeight, int quality __unused,
                           void *outBuf, int outSize __unused, int outWidth, int outHeight,
-                          const void *app1Buffer __unused, size_t app1Size __unused) {
+                          const void *app1Buffer __unused, size_t app1Size __unused, bool debug) {
     struct encoder_args encoder_parameter;
 
     struct v4l2_buffer bufferin;
@@ -75,7 +75,7 @@ int HwJpegEncoder::encode(void *inYuv, void *inYuvPhy, int inSize, int inFd,
         srcBuf.buffer = inHandle;
         srcBuf.mStream = new ImxStream(inWidth, inHeight, mPixelFormat, 0, 0);
 
-        handleFrame(*resizeBuf, srcBuf, ENG_NOTCARE);
+        handleFrame(*resizeBuf, srcBuf, ENG_NOTCARE, debug);
         inYuv = (void *)resizeBuf->mVirtAddr;
     }
 

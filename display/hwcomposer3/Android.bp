@@ -87,7 +87,7 @@ soong_config_module_type {
 
 soong_config_string_variable {
     name: "BOARD_SOC_TYPE",
-    values: ["IMX8Q", "IMX8MM", "IMX8MQ", "IMX8MP", "IMX8MN", "IMX8ULP", "IMX93", "IMX95"],
+    values: ["IMX8Q", "IMX8MM", "IMX8MQ", "IMX8MP", "IMX8MN", "IMX8ULP", "IMX93", "IMX943", "IMX95"],
 }
 
 hwc_config_soc_cc_defaults {
@@ -113,6 +113,9 @@ hwc_config_soc_cc_defaults {
             },
             IMX93: {
                 cflags: ["-DFORMAT_WORKAROUND_FOR_PXP"],
+            },
+            IMX943: {
+                cflags: ["-DPXP_LIMITATION_DOWN_SCALE"],
             },
         },
     },

@@ -494,7 +494,7 @@ int32_t CameraDeviceSessionHwlImpl::processJpegBuffer(ImxStreamBuffer *srcBuf,
                                thumbWidth, thumbHeight, srcStream->format());
     }
 
-    ret = mJpegBuilder->encodeImage(mainJpeg, thumbJpeg, mJpegHw, (*meta));
+    ret = mJpegBuilder->encodeImage(mainJpeg, thumbJpeg, mJpegHw, (*meta), mDebug);
     if (ret != NO_ERROR) {
         ALOGE("%s encodeImage failed", __func__);
         goto err_out;

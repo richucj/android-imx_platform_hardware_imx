@@ -1,5 +1,5 @@
 /*
- *  Copyright 2023-2024 NXP.
+ *  Copyright 2023-2025 NXP.
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -941,6 +941,28 @@ uint64_t GetPhyAddrFromBuffer(int bufFd) {
     close(fd_);
 
     return phyAddr;
+}
+
+int SyncBuffer(int bufFd, int operation) {
+    struct dmabuf_imx_sync data;
+    int fd_;
+    fd_ = open("/dev/dmabuf_imx", O_RDONLY | O_CLOEXEC);
+    if (fd_ < 0) {
+        ALOGE("open /dev/dmabuf_imx failed: %s", strerror(errno));
+        return BAD_VALUE;
+    }
+
+    data.dmafd = bufFd;
+    data.operation = operation;
+    if (ioctl(fd_, DMABUF_SYNC, &data) < 0) {
+        ALOGE("%s DMABUF_SYNC failed, operation %d", __func__, operation);
+        close(fd_);
+        return BAD_VALUE;
+    }
+
+    close(fd_);
+
+    return 0;
 }
 
 int UnlockPhyBuffer(buffer_handle_t buffer) {

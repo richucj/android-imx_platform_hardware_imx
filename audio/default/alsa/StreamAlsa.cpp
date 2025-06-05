@@ -1,5 +1,6 @@
 /*
  * Copyright (C) 2023 The Android Open Source Project
+ * Copyright 2024-2025 NXP
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -144,6 +145,7 @@ void StreamAlsa::dump(const void *buffer, size_t bytes, const char *name) {
         if (mDump)
             dump(buffer, bytesToTransfer, kDumpAlsaInputFile);
     } else {
+        alsa::applyGain(buffer, mGain, bytesToTransfer, mConfig.value().format, mConfig->channels);
         for (auto& proxy : mAlsaDeviceProxies) {
             proxy_write_with_retries(proxy.get(), buffer, bytesToTransfer, mReadWriteRetries);
             maxLatency = std::max(maxLatency, proxy_get_latency(proxy.get()));
@@ -195,6 +197,11 @@ void StreamAlsa::dump(const void *buffer, size_t bytes, const char *name) {
 
 void StreamAlsa::shutdown() {
     mAlsaDeviceProxies.clear();
+}
+
+ndk::ScopedAStatus StreamAlsa::setGain(float gain) {
+    mGain = gain;
+    return ndk::ScopedAStatus::ok();
 }
 
 }  // namespace aidl::android::hardware::audio::core

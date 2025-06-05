@@ -18,21 +18,6 @@ soong_namespace {
     ],
 }
 
-cc_library {
-    name: "libdisppower-imx",
-    proprietary: true,
-    srcs: [
-        "InteractionHandler.cpp",
-    ],
-     shared_libs: [
-        "libbase",
-        "libcutils",
-        "liblog",
-        "libperfmgr",
-        "libutils",
-    ],
-}
-
 cc_library_headers {
     name: "imx_power_headers",
     vendor: true,
@@ -46,17 +31,33 @@ cc_binary {
     vintf_fragments: ["android.hardware.power-service.imx.xml"],
     vendor: true,
     shared_libs: [
-        "android.hardware.power-V5-ndk",
+        "android.hardware.power-V6-ndk",
         "libbase",
         "libcutils",
         "liblog",
         "libfmq",
         "libutils",
         "libbinder_ndk",
-        "libdisppower-imx",
         "libperfmgr",
+        "libprocessgroup",
     ],
+
+    static_libs: [
+        "libgmock",
+        "libgtest",
+    ],
+
     srcs: [
+        "SupportManager.cpp",
+        "SessionChannel.cpp",
+        "ChannelGroup.cpp",
+        "ChannelManager.cpp",
+        "BackgroundWorker.cpp",
+        "PowerSessionManager.cpp",
+        "SessionRecords.cpp",
+        "SessionTaskMap.cpp",
+        "SessionValueEntry.cpp",
+        "UClampVoter.cpp",
         "service.cpp",
         "Power.cpp",
         "PowerHintSession.cpp",

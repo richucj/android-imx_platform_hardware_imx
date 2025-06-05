@@ -16,30 +16,42 @@
 
 #pragma once
 
+#include <mutex>
 #include <vector>
 #include <core-impl/AudioCardManager.h>
 #include <audio_utils/resampler.h>
 
+#include <core-impl/AudioCardManager.h>
+#include <android-base/thread_annotations.h>
+
+#include "DriverStubImpl.h"
 #include "StreamAlsa.h"
-#include "StreamSwitcher.h"
+#include "primary/PrimaryMixer.h"
 
 namespace aidl::android::hardware::audio::core {
 
 class StreamPrimary : public StreamAlsa {
   public:
-    StreamPrimary(StreamContext* context, const Metadata& metadata,
-                  const std::vector<::aidl::android::media::audio::common::AudioDevice>& devices);
+    StreamPrimary(StreamContext* context, const Metadata& metadata);
 
+    // Methods of 'DriverInterface'.
+    ::android::status_t init() override;
+    ::android::status_t drain(StreamDescriptor::DrainMode mode) override;
+    ::android::status_t flush() override;
     ::android::status_t pause() override;
-    ::android::status_t start() override;
     ::android::status_t standby() override;
-    void shutdown() override;
+    ::android::status_t start() override;
     ::android::status_t transfer(void* buffer, size_t frameCount, size_t* actualFrameCount,
                                  int32_t* latencyMs) override;
     ::android::status_t refinePosition(StreamDescriptor::Position* position) override;
+    void shutdown() override;
+
+    // Overridden methods of 'StreamCommonImpl', called on a Binder thread.
+    ndk::ScopedAStatus setConnectedDevices(const ConnectedDevices& devices) override;
 
   protected:
     std::vector<alsa::DeviceProfile> getDeviceProfiles() override;
+    bool isStubStream();
 
     const bool mIsAsynchronous;
     int64_t mStartTimeNs = 0;
@@ -55,20 +67,37 @@ class StreamPrimary : public StreamAlsa {
     bool mPrimaryOutput = false;
     bool mDirectOutput = false;
     struct audio_card *mCard = NULL;
-    struct resampler_itfe *mResampler;
-    int16_t *mResamplerBuffer;
+    struct resampler_itfe *mResampler = NULL;
+    int16_t *mResamplerBuffer = NULL;
     std::optional<struct pcm_config> mSavedConfig;
 
     void tryStart();
     void stop();
 
   private:
-    static std::pair<int, int> getCardAndDeviceId(
+    using AlsaDeviceId = std::pair<int, int>;
+
+    static constexpr StreamPrimary::AlsaDeviceId kDefaultCardAndDeviceId{
+            primary::PrimaryMixer::kAlsaCard, primary::PrimaryMixer::kAlsaDevice};
+    static constexpr StreamPrimary::AlsaDeviceId kStubDeviceId{
+            primary::PrimaryMixer::kInvalidAlsaCard, primary::PrimaryMixer::kInvalidAlsaDevice};
+
+    static AlsaDeviceId getCardAndDeviceId(
             const std::vector<::aidl::android::media::audio::common::AudioDevice>& devices);
-    const std::pair<int, int> mCardAndDeviceId;
+    static bool useStubStream(bool isInput,
+                              const ::aidl::android::media::audio::common::AudioDevice& device);
+
+    bool isStubStreamOnWorker() const { return mCurrAlsaDeviceId == kStubDeviceId; }
+
+    DriverStubImpl mStubDriver;
+    mutable std::mutex mLock;
+    AlsaDeviceId mAlsaDeviceId GUARDED_BY(mLock) = kStubDeviceId;
+
+    // Used by the worker thread only.
+    AlsaDeviceId mCurrAlsaDeviceId = kStubDeviceId;
 };
 
-class StreamInPrimary final : public StreamIn, public StreamSwitcher, public StreamInHwGainHelper {
+class StreamInPrimary final : public StreamIn, public StreamPrimary, public StreamInHwGainHelper {
   public:
     friend class ndk::SharedRefBase;
     StreamInPrimary(
@@ -77,14 +106,6 @@ class StreamInPrimary final : public StreamIn, public StreamSwitcher, public Str
             const std::vector<::aidl::android::media::audio::common::MicrophoneInfo>& microphones);
 
   private:
-    static bool useStubStream(const ::aidl::android::media::audio::common::AudioDevice& device);
-
-    DeviceSwitchBehavior switchCurrentStream(
-            const std::vector<::aidl::android::media::audio::common::AudioDevice>& devices)
-            override;
-    std::unique_ptr<StreamCommonInterfaceEx> createNewStream(
-            const std::vector<::aidl::android::media::audio::common::AudioDevice>& devices,
-            StreamContext* context, const Metadata& metadata) override;
     void onClose(StreamDescriptor::State) override { defaultOnClose(); }
 
     ndk::ScopedAStatus getHwGain(std::vector<float>* _aidl_return) override;
@@ -92,7 +113,7 @@ class StreamInPrimary final : public StreamIn, public StreamSwitcher, public Str
 };
 
 class StreamOutPrimary final : public StreamOut,
-                               public StreamSwitcher,
+                               public StreamPrimary,
                                public StreamOutHwVolumeHelper {
   public:
     friend class ndk::SharedRefBase;
@@ -102,22 +123,10 @@ class StreamOutPrimary final : public StreamOut,
                              offloadInfo);
 
   private:
-    static bool useStubStream(const ::aidl::android::media::audio::common::AudioDevice& device);
-
-    DeviceSwitchBehavior switchCurrentStream(
-            const std::vector<::aidl::android::media::audio::common::AudioDevice>& devices)
-            override;
-    std::unique_ptr<StreamCommonInterfaceEx> createNewStream(
-            const std::vector<::aidl::android::media::audio::common::AudioDevice>& devices,
-            StreamContext* context, const Metadata& metadata) override;
     void onClose(StreamDescriptor::State) override { defaultOnClose(); }
 
     ndk::ScopedAStatus getHwVolume(std::vector<float>* _aidl_return) override;
     ndk::ScopedAStatus setHwVolume(const std::vector<float>& in_channelVolumes) override;
-
-    ndk::ScopedAStatus setConnectedDevices(
-            const std::vector<::aidl::android::media::audio::common::AudioDevice>& devices)
-            override;
 };
 
 }  // namespace aidl::android::hardware::audio::core

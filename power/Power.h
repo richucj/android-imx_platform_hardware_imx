@@ -24,7 +24,7 @@
 #include <memory>
 #include <thread>
 
-#include "InteractionHandler.h"
+#include "AdpfTypes.h"
 #include "PowerHintSession.h"
 
 namespace aidl {
@@ -33,7 +33,6 @@ namespace hardware {
 namespace power {
 namespace impl {
 
-using ::InteractionHandler;
 using ::aidl::android::hardware::power::Boost;
 using ::aidl::android::hardware::power::IPowerHintSession;
 using ::aidl::android::hardware::power::Mode;
@@ -49,6 +48,10 @@ public:
     ndk::ScopedAStatus isModeSupported(Mode type, bool* _aidl_return) override;
     ndk::ScopedAStatus setBoost(Boost type, int32_t durationMs) override;
     ndk::ScopedAStatus isBoostSupported(Boost type, bool* _aidl_return) override;
+    ndk::ScopedAStatus getCpuHeadroom(const CpuHeadroomParams& params,
+                                      CpuHeadroomResult* _aidl_return) override;
+    ndk::ScopedAStatus getGpuHeadroom(const GpuHeadroomParams& params,
+                                      GpuHeadroomResult* _aidl_return) override;
     binder_status_t dump(int fd, const char** args, uint32_t numArgs) override;
     ndk::ScopedAStatus createHintSession(int32_t tgid, int32_t uid,
                                          const std::vector<int32_t>& threadIds,
@@ -62,12 +65,18 @@ public:
     ndk::ScopedAStatus getSessionChannel(int32_t tgid, int32_t uid,
                                          ChannelConfig* _aidl_return) override;
     ndk::ScopedAStatus closeSessionChannel(int32_t tgid, int32_t uid) override;
+    ndk::ScopedAStatus getSupportInfo(SupportInfo *_aidl_return);
+    ndk::ScopedAStatus sendCompositionData(const std::vector<CompositionData> &in_data) override;
+    ndk::ScopedAStatus sendCompositionUpdate(const CompositionUpdate &in_update) override;
 
 private:
     HintManager *mHintManager;
-    std::unique_ptr<InteractionHandler> mInteractionHandler;
+    void initSupportStatus();
+    std::atomic<bool> mVRModeOn;
     std::atomic<bool> mSustainedPerfModeOn;
     std::vector<std::shared_ptr<IPowerHintSession>> mPowerHintSessions;
+    int32_t mServiceVersion;
+    SupportInfo mSupportInfo;
 };
 
 } // namespace impl

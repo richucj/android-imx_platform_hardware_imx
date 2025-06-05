@@ -18,7 +18,7 @@
 
 #include <stdint.h>
 
-#define ELE_MU_MSG_SIZE (17)
+#define ELE_MU_MSG_SIZE (32)
 #define NVM_HEADER_SIZE (sizeof(struct nvm_header))
 /* Max number of words without the requirement of CRC */
 #define STORAGE_NB_WORDS_MAX_NO_CRC (4u)
@@ -78,7 +78,6 @@ enum MuType {
     MU_CHANNEL_INVALID = -1,
     MU_CHANNEL_PLAT_HSM,
     MU_CHANNEL_PLAT_HSM_NVM,
-    MU_CHANNEL_PLAT_HSM_SECONDARY,
 };
 
 typedef enum key_type {
@@ -210,17 +209,55 @@ typedef enum key_operation_flag {
     OPERATION_SYNC = (0x1u << 7),
 } key_operation_flag;
 
-typedef enum cipher_operation {
-    CIPHER_ONE_GO_FLAGS_DECRYPT = (0u << 0),
-    CIPHER_ONE_GO_FLAGS_ENCRYPT = (1u << 0),
-    CIPHER_ONE_GO_FLAGS_FULL_IV = (1u << 1),
-    CIPHER_ONE_GO_FLAGS_COUNTER_IV = (1u << 2)
-} cipher_operation;
+typedef enum import_operation_flag {
+    IMPORT_ELE_OPTION = (0u << 0),
+    IMPORT_EL2GO_OPTION = (1u << 0),
+    IMPORT_SET_KEY_GROUP = (1u << 2),
+} import_operation_flag;
 
-typedef enum ele_signature_message_flags {
+typedef enum cipher_operation_flag {
+    CIPHER_FLAGS_DECRYPT = (0u << 0),
+    CIPHER_FLAGS_ENCRYPT = (1u << 0),
+    CIPHER_FLAGS_PLAINTEXT_KEY = (1u << 3),
+    CIPHER_FLAGS_MULTI_INIT = (1u << 8),
+    CIPHER_FLAGS_MULTI_UPDATE = (1u << 10),
+    CIPHER_FLAGS_MULTI_FINAL = (1u << 11),
+    CIPHER_FLAGS_MULTI_ABORT = (1u << 13),
+    CIPHER_FLAGS_MULTI_GET_CTX = (1u << 15),
+} cipher_operation_flag;
+
+typedef enum aead_operation_flag {
+    AEAD_FLAGS_DECRYPT = (0u << 0),
+    AEAD_FLAGS_ENCRYPT = (1u << 0),
+    AEAD_FLAGS_FULL_IV = (1u << 1),
+    AEAD_FLAGS_COUNTER_IV = (1u << 2),
+    AEAD_FLAGS_PLAINTEXT_KEY = (1u << 3),
+    AEAD_FLAGS_ONE_SHOT = (1u << 4),
+    AEAD_FLAGS_MULTI_INIT = (1u << 8),
+    AEAD_FLAGS_MULTI_UPDATE_AAD = (1u << 9),
+    AEAD_FLAGS_MULTI_UPDATE_DATA = (1u << 10),
+    AEAD_FLAGS_MULTI_FINAL = (1u << 11),
+    AEAD_FLAGS_MULTI_FINAL_VERIFY = (1u << 12),
+    AEAD_FLAGS_MULTI_ABORT = (1u << 13),
+    AEAD_FLAGS_MULTI_GET_CTX = (1u << 15),
+} aead_operation_flag;
+
+typedef enum ele_gen_sign_flag {
     ELE_SIGN_FLAGS_DIGEST = (0),
     ELE_SIGN_FLAGS_MESSAGE = (1),
-} ele_gen_sign_flags;
+} ele_gen_sign_flag;
+
+typedef enum ele_data_storage_flag {
+    ELE_DATA_STORAGE_STANDARD_OPTION = (0u << 0),
+    ELE_DATA_STORAGE_EL2GO_OPTION = (1u << 0),
+    ELE_DATA_STORAGE_RETRIEVE = (1u << 0),
+    ELE_DATA_STORAGE_STORE = (1u << 1),
+} ele_data_storage_flag;
+
+typedef enum ele_data_enc_storage_flag {
+    ELE_USE_INTERNAL_RAMDOM_IV = (1u << 0),
+    ELE_DATA_ENC_STORAGE_READ_ONCE = (1u << 1),
+} ele_data_enc_storage_flag;
 
 typedef enum mac_operation {
     MAC_ONE_GO_GENERATION = (1u << 0),
@@ -256,6 +293,19 @@ typedef struct ele_mu_ioctl_shared_mem_cfg {
     uint32_t base_offset;
     uint32_t size;
 } ele_mu_ioctl_shared_mem_cfg;
+
+struct ele_ioctl_cmd_snd_rcv_rsp_info {
+    uint32_t *tx_buf;
+    int tx_buf_sz;
+    uint32_t *rx_buf;
+    int rx_buf_sz;
+};
+
+struct ele_mu_ioctl_signed_message {
+    uint8_t *message;
+    uint32_t msg_size;
+    uint32_t error_code;
+};
 
 struct msg_hdr {
     uint8_t ver;
@@ -444,6 +494,16 @@ typedef struct storage_chunk_exp_msg_rsp {
     uint32_t chunk_blob_addr;
 } storage_chunk_exp_msg_rsp;
 
+typedef struct storage_chunk_delete_msg_cmd {
+    uint32_t nvm_storage_handle;
+    struct nvm_blob_id blob_id;
+    uint32_t crc;
+} storage_chunk_delete_msg_cmd;
+
+typedef struct storage_chunk_delete_msg_rsp {
+    uint32_t rsp_code;
+} storage_chunk_delete_msg_rsp;
+
 typedef struct key_mgt_open_msg_cmd {
     uint32_t key_store_handle;
     uint32_t msbi;
@@ -556,13 +616,18 @@ typedef struct cipher_msg_cmd {
     uint32_t key_id;
     uint32_t iv_addr;
     uint16_t iv_size;
-    uint8_t flags;
-    uint8_t rsv;
+    uint16_t flags;
     uint32_t algo;
     uint32_t input_addr;
     uint32_t output_addr;
     uint32_t input_size;
     uint32_t output_size;
+    uint16_t key_size;
+    uint16_t key_type;
+    uint32_t ctx;
+    uint16_t ctx_size;
+    uint16_t rsv1;
+    uint32_t rsv2;
     uint32_t crc;
 } cipher_msg_cmd;
 
@@ -575,7 +640,7 @@ typedef struct cipher_operation_attr {
     uint32_t key_id;
     uint8_t *iv_addr;
     uint16_t iv_size;
-    uint8_t flags;
+    uint16_t flags;
     uint32_t algo;
     uint8_t *input_addr;
     uint8_t *output_addr;
@@ -583,42 +648,57 @@ typedef struct cipher_operation_attr {
     uint32_t output_size;
 } cipher_operation_attr;
 
-typedef struct cipher_ae_msg_cmd {
+typedef struct cipher_aead_msg_cmd {
     uint32_t cipher_hdl;
-    uint32_t key_id;
-    uint32_t iv_addr;
-    uint16_t iv_size;
-    uint8_t flags;
-    uint8_t rsv;
     uint32_t algo;
+    uint16_t flags;
+    uint16_t iv_size;
+    uint32_t iv_in_addr;
+    uint32_t iv_out_addr;
+    uint32_t key_id;
+    uint32_t tag_addr;
+    uint16_t tag_size;
+    uint16_t key_size;
     uint32_t aad_addr;
-    uint16_t aad_size;
-    uint16_t rsv2;
+    uint32_t aad_size;
     uint32_t input_addr;
-    uint32_t output_addr;
     uint32_t input_size;
+    uint32_t output_addr;
     uint32_t output_size;
+    uint32_t ctx_addr;
+    uint16_t ctx_size;
+    uint16_t key_type;
+    uint32_t rsv;
     uint32_t crc;
-} cipher_ae_msg_cmd;
+} cipher_aead_msg_cmd;
 
-typedef struct cipher_ae_msg_rsp {
+typedef struct cipher_aead_msg_rsp {
     uint32_t rsp_code;
     uint32_t output_size;
-} cipher_ae_msg_rsp;
+    uint32_t verify_status;
+} cipher_aead_msg_rsp;
 
-typedef struct cipher_ae_operation_attr {
-    uint32_t key_id;
-    uint8_t *iv_addr;
-    uint16_t iv_size;
-    uint8_t flags;
+typedef struct cipher_aead_operation_attr {
+    uint32_t cipher_hdl;
     uint32_t algo;
+    uint16_t flags;
+    uint16_t iv_size;
+    uint8_t *iv_in_addr;
+    uint8_t *iv_out_addr;
+    uint32_t key_id;
+    uint8_t *tag_addr;
+    uint16_t tag_size;
+    uint16_t key_size;
     uint8_t *aad_addr;
-    uint16_t aad_size;
+    uint32_t aad_size;
     uint8_t *input_addr;
-    uint8_t *output_addr;
     uint32_t input_size;
+    uint8_t *output_addr;
     uint32_t output_size;
-} cipher_ae_operation_attr;
+    uint8_t *ctx_addr;
+    uint16_t ctx_size;
+    uint16_t key_type;
+} cipher_aead_operation_attr;
 
 typedef struct sign_gen_open_msg_cmd {
     uint32_t key_store_handle;
@@ -784,5 +864,170 @@ typedef struct mac_operation_attr {
     uint8_t flags;
     uint32_t algo;
 } mac_operation_attr;
+
+typedef struct get_info_msg_cmd {
+    uint32_t session_handle;
+} get_info_msg_cmd;
+
+typedef struct get_info_msg_rsp {
+    uint32_t rsp_code;
+    uint32_t user_sab_id;
+    uint32_t uid_w0;
+    uint32_t uid_w1;
+    uint32_t uid_w2;
+    uint32_t uid_w3;
+    uint16_t monotonic_counter;
+    uint16_t lifecycle;
+    uint32_t rsv[2];
+    uint8_t fips_mode;
+    uint8_t rsv1[3];
+    uint32_t crc;
+} get_info_msg_rsp;
+
+typedef struct device_info {
+    uint32_t user_sab_id;
+    uint32_t uid_w0;
+    uint32_t uid_w1;
+    uint32_t uid_w2;
+    uint32_t uid_w3;
+    uint16_t monotonic_counter;
+    uint16_t lifecycle;
+    uint8_t fips_mode;
+} device_info;
+
+typedef struct pubkey_recover_msg_cmd {
+    uint32_t key_store_handle;
+    uint32_t key_id;
+    uint32_t out_key_msb;
+    uint32_t out_key_lsb;
+    uint16_t out_key_size;
+    uint16_t rsv;
+    uint32_t crc;
+} pubkey_recover_msg_cmd;
+
+typedef struct pubkey_export {
+    uint32_t key_id;
+    uint8_t *out_key;
+    uint16_t out_key_size;
+} pubkey_export;
+
+typedef struct pubkey_recover_msg_rsp {
+    uint32_t rsp_code;
+    uint16_t out_key_size;
+    uint16_t rsv;
+} pubkey_recover_msg_rsp;
+
+typedef struct import_key_msg_cmd {
+    uint32_t key_mgt_handle;
+    uint8_t flags;
+    uint8_t rsv0[3];
+    uint32_t input_addr;
+    uint32_t input_size;
+    uint16_t key_group;
+    uint16_t rsv2;
+    uint32_t crc;
+} import_key_msg_cmd;
+
+typedef struct import_key_attr {
+    uint8_t flags;
+    uint8_t *input_addr;
+    uint32_t input_size;
+    uint16_t key_group;
+} import_key_attr;
+
+typedef struct import_key_msg_rsp {
+    uint32_t rsp_code;
+    uint32_t key_id;
+} import_key_msg_rsp;
+
+typedef struct data_storage_open_msg_cmd {
+    uint32_t key_store_handle;
+    uint32_t msbi;
+    uint32_t msbo;
+    uint8_t flags;
+    uint8_t rsv[3];
+    uint32_t crc;
+} data_storage_open_msg_cmd;
+
+typedef struct data_storage_open_msg_rsp {
+    uint32_t rsp_code;
+    uint32_t data_storage_hdl;
+} data_storage_open_msg_rsp;
+
+typedef struct data_storage_close_msg_cmd {
+    uint32_t data_storage_hdl;
+} data_storage_close_msg_cmd;
+
+typedef struct data_storage_close_msg_rsp {
+    uint32_t rsp_code;
+} data_storage_close_msg_rsp;
+
+typedef struct data_storage_msg_cmd {
+    uint32_t data_storage_hdl;
+    uint8_t flags;
+    uint8_t rsv[3];
+    uint32_t data_id;
+    uint32_t data_lsb_addr;
+    uint32_t data_size;
+    uint32_t rsv2;
+    uint32_t crc;
+} data_storage_msg_cmd;
+
+typedef struct data_storage_attr {
+    uint8_t flags;
+    uint32_t data_id;
+    uint8_t *data_lsb_addr;
+    uint32_t data_size;
+} data_storage_attr;
+
+typedef struct data_storage_msg_rsp {
+    uint32_t rsp_code;
+    uint32_t data_size;
+} data_storage_msg_rsp;
+
+typedef struct data_enc_storage_msg_cmd {
+    uint32_t data_storage_hdl;
+    uint32_t data_id;
+    uint32_t data_addr;
+    uint32_t data_size;
+    uint32_t enc_algo;
+    uint32_t enc_key_id;
+    uint32_t sign_algo;
+    uint32_t sign_key_id;
+    uint32_t iv_addr;
+    uint16_t iv_size;
+    uint16_t flags;
+    uint16_t lifecycle;
+    uint16_t rsv;
+    uint32_t crc;
+} data_enc_storage_msg_cmd;
+
+typedef struct data_enc_storage_attr {
+    uint32_t data_id;
+    uint8_t *data_addr;
+    uint32_t data_size;
+    uint32_t enc_algo;
+    uint32_t enc_key_id;
+    uint32_t sign_algo;
+    uint32_t sign_key_id;
+    uint8_t *iv_addr;
+    uint16_t iv_size;
+    uint16_t flags;
+    uint16_t lifecycle;
+} data_enc_storage_attr;
+
+typedef struct data_enc_storage_msg_rsp {
+    uint32_t rsp_code;
+    uint32_t data_size;
+} data_enc_storage_msg_rsp;
+
+typedef struct data_storage_delete_msg_cmd {
+    uint32_t data_storage_hdl;
+    uint32_t data_id;
+} data_storage_delete_msg_cmd;
+
+typedef struct data_storage_delete_msg_rsp {
+    uint32_t rsp_code;
+} data_storage_delete_msg_rsp;
 
 #endif //__ELE_MESSAGE_H__

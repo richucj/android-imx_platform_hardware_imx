@@ -1,5 +1,5 @@
 /*
- *  Copyright 2020-2024 NXP.
+ *  Copyright 2020-2025 NXP.
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -56,17 +56,7 @@ std::unique_ptr<CameraProviderHwlImpl> CameraProviderHwlImpl::Create() {
 
 status_t CameraProviderHwlImpl::Initialize() {
     ALOGI("enter %s", __func__);
-    cameraManager_ = std::make_unique<libcamera::CameraManager>();
 
-    cameraManager_->cameraAdded.connect(this, &CameraProviderHwlImpl::cameraAdded);
-    cameraManager_->cameraRemoved.connect(this, &CameraProviderHwlImpl::cameraRemoved);
-
-    int ret = cameraManager_->start();
-    if (ret) {
-        ALOGE("%s: Failed to start camera manager, ret %d", __func__, ret);
-        cameraManager_.reset();
-        return ret;
-    }
     // check if camera exists.
     for (auto iter = mCameraDef.camera_id_map_.begin(); iter != mCameraDef.camera_id_map_.end();
          ++iter) {
@@ -101,6 +91,21 @@ status_t CameraProviderHwlImpl::Initialize() {
     mCameraCfgParser.Init();
     mCameraDef = mCameraCfgParser.mcamera();
     memset(&mCallback, 0, sizeof(mCallback));
+
+    cameraManager_ = std::make_unique<libcamera::CameraManager>();
+    cameraManager_->cameraAdded.connect(this, &CameraProviderHwlImpl::cameraAdded);
+    cameraManager_->cameraRemoved.connect(this, &CameraProviderHwlImpl::cameraRemoved);
+
+    int ret = cameraManager_->start();
+    if (ret) {
+        ALOGE("%s: Failed to start camera manager, ret %d", __func__, ret);
+        cameraManager_.reset();
+        return ret;
+    }
+
+    // create singleton "ImageProcess" object, so the dlopen, g2d_open/cl_g2d_open
+    // can be done in HW init, save time for CTS.
+    fsl::ImageProcess::getInstance();
 
     return OK;
 }
@@ -175,7 +180,9 @@ status_t CameraProviderHwlImpl::GetVisibleCameraIds(std::vector<std::uint32_t>* 
         return BAD_VALUE;
     }
 
-    camera_ids->push_back(0);
+    for (const auto& it : cameraIdMap_) {
+        camera_ids->push_back(it.first);
+    }
 
     return OK;
 }
@@ -183,27 +190,26 @@ status_t CameraProviderHwlImpl::GetVisibleCameraIds(std::vector<std::uint32_t>* 
 status_t CameraProviderHwlImpl::CreateCameraDeviceHwl(
         uint32_t camera_id, std::unique_ptr<CameraDeviceHwl>* camera_device_hwl) {
     std::shared_ptr<libcamera::Camera> camera = nullptr;
+
     if (camera_device_hwl == nullptr) {
         ALOGE("%s: camera_device_hwl is nullptr.", __func__);
         return BAD_VALUE;
     }
 
-    for (auto& t : cameraIdMap_) {
-        ALOGI("%s: camera_id %d, check camera %p, %s, id %d", __func__, camera_id, t.first.get(),
-              t.first->id().c_str(), t.second);
-        if (t.second == camera_id) {
-            camera = t.first;
-            break;
-        }
-    }
-
-    if (camera == nullptr) {
+    auto iter = cameraIdMap_.find(camera_id);
+    if (iter == cameraIdMap_.end()) {
         ALOGE("%s: no camera for camera_id %d", __func__, camera_id);
         return BAD_VALUE;
     }
 
-    ALOGI("%s: camera_id %u, camera_id_maps size %zu", __func__, camera_id,
-          camera_id_maps[camera_id].size());
+    camera = cameraIdMap_[camera_id];
+    if (camera == NULL) {
+        ALOGE("%s: unexpected, cameraIdMap_[%u] is NULL", __func__, camera_id);
+        return BAD_VALUE;
+    }
+
+    ALOGI("%s: camera_id %u, cameraIdMap_ size %zu", __func__, camera_id, cameraIdMap_.size());
+
     CameraSensorMetadata cam_metadata = mCameraDef.camera_metadata_vec[camera_id];
 
     std::vector<std::shared_ptr<char*>> devPaths;
@@ -309,34 +315,65 @@ status_t CameraProviderHwlImpl::IsConcurrentStreamCombinationSupported(
     return OK;
 }
 
+int32_t CameraProviderHwlImpl::foundCameraId(const char* cameraName) {
+    if (cameraName == NULL)
+        return -1;
+
+    // If only 1 camera, no need use the exact name to distinguish back/front camera,
+    // just return 0. Also no need change the config json.
+    int cameraNumInJson = mCameraDef.camera_id_map_.size();
+    if (cameraNumInJson == 1)
+        return 0;
+
+    int32_t id = -1;
+    for (int32_t index = 0; index < cameraNumInJson; index++) {
+        CameraSensorMetadata& cameaMeta = mCameraDef.camera_metadata_vec[index];
+        ALOGI("%s: cameaMeta.camera_name %s", __func__, cameaMeta.camera_name);
+        if (strstr(cameraName, cameaMeta.camera_name)) {
+            id = index;
+            break;
+        }
+    }
+
+    return id;
+}
+
 void CameraProviderHwlImpl::cameraAdded(std::shared_ptr<libcamera::Camera> camera) {
-    auto iter = cameraIdMap_.find(camera);
-    if (iter != cameraIdMap_.end()) {
-        ALOGW("%s: camera %p, %s already found, id %d", __func__, camera.get(),
-              camera->id().c_str(), iter->second);
+    ALOGI("%s: %s", __func__, camera->id().c_str());
+
+    int32_t cameraId = foundCameraId(camera->id().c_str());
+    if (cameraId == -1) {
+        ALOGW("%s: camera not in config json", __func__);
         return;
     }
 
-    cameraIdMap_[camera] = cameraId_++;
+    cameraIdMap_[static_cast<uint32_t>(cameraId)] = camera;
 
-    ALOGI("%s: camera num %lu", __func__, cameraIdMap_.size());
+    ALOGI("%s: add id %d, camera num %lu", __func__, cameraId, cameraIdMap_.size());
 
     return;
 }
 
 void CameraProviderHwlImpl::cameraRemoved(std::shared_ptr<libcamera::Camera> camera) {
-    unsigned int id;
-    bool isCameraNew = false;
+    ALOGI("%s: %s", __func__, camera->id().c_str());
 
-    auto iter = cameraIdMap_.find(camera);
-    if (iter == cameraIdMap_.end()) {
-        ALOGW("%s: camera %p, %s not found", __func__, camera.get(), camera->id().c_str());
+    int32_t cameraId = -1;
+
+    for (auto& t : cameraIdMap_) {
+        if (t.second.get() == camera.get()) {
+            cameraId = t.first;
+            break;
+        }
+    }
+
+    if (cameraId == -1) {
+        ALOGW("%s: camera not found in cameraIdMap_", __func__);
         return;
     }
 
-    cameraIdMap_.erase(camera);
+    cameraIdMap_.erase(cameraId);
 
-    ALOGI("%s: camera num %lu", __func__, cameraIdMap_.size());
+    ALOGI("%s: erase cameraId %u, camera num %lu", __func__, cameraId, cameraIdMap_.size());
 
     return;
 }

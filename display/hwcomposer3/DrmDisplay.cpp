@@ -18,14 +18,19 @@
 #include "DrmDisplay.h"
 
 #include <drm_fourcc.h>
+#include <gui/TraceUtils.h>
 #include <stdlib.h>
-#include <thread>
+#include <sync/sync.h>
 #include <xf86drm.h>
+
+#include <thread>
 
 #include "BufferInfo.h"
 #include "Common.h"
 #include "Drm.h"
 #include "DrmAtomicRequest.h"
+
+using namespace android;
 
 namespace aidl::android::hardware::graphics::composer3::impl {
 namespace {
@@ -238,6 +243,8 @@ std::tuple<HWC3::Error, std::unique_ptr<DrmAtomicRequest>> DrmDisplay::flushPrim
     }
 
     mTempBuffers.clientTargetDrmBuffer = buffer;
+    if (inSyncFd.get() >= 0)
+        mCurrentFbFence = ::android::base::unique_fd(dup(inSyncFd.get()));
 
     plane->setState(PLANE_STATE_ACTIVE);
     DEBUG_LOG("%s: flush primary plane:%d, fbId=%d", __FUNCTION__, planeId,
@@ -247,6 +254,7 @@ std::tuple<HWC3::Error, std::unique_ptr<DrmAtomicRequest>> DrmDisplay::flushPrim
 
 std::tuple<HWC3::Error, ::android::base::unique_fd> DrmDisplay::commit(
         std::unique_ptr<DrmAtomicRequest> request, ::android::base::borrowed_fd drmFd) {
+    ATRACE_CALL();
     DEBUG_LOG("%s: display:%" PRIu32, __FUNCTION__, mId);
 
     if (request.get() == nullptr) {
@@ -300,6 +308,16 @@ std::tuple<HWC3::Error, ::android::base::unique_fd> DrmDisplay::commit(
         return std::make_tuple(HWC3::Error::NoResources, ::android::base::unique_fd());
     }
 
+    if (mPreviousFbFence.ok()) {
+        ATRACE_FORMAT_INSTANT("Wait previous framebuffer fence");
+        int err = sync_wait(mPreviousFbFence.get(), 200);
+        if (err < 0 && errno == ETIME) {
+            ALOGE("%s: waited on previous framebuffer acquire fence %" PRId32 " for 200 ms",
+                  __FUNCTION__, mPreviousFbFence.get());
+        }
+    }
+    mPreviousFbFence = std::move(mCurrentFbFence);
+
     uint32_t vsyncPeriod = 1000000000UL / mActiveConfig.refreshRateHz;   // convert to nanosecond
 #ifdef FIX_HANG_WHEN_FIRST_PLUG_IN
     if (mPreheatFrameCnt > 0) {
@@ -311,6 +329,7 @@ std::tuple<HWC3::Error, ::android::base::unique_fd> DrmDisplay::commit(
 #ifdef DEBUG_DUMP_REFRESH_RATE
     nsecs_t now = dumpRefreshRateStart();
 #endif
+    ATRACE_FORMAT_INSTANT("Start to commit");
     int ret;
     uint32_t i = 0;
     ret = request->Commit(drmFd);
@@ -452,8 +471,8 @@ uint32_t DrmDisplay::findDrmPlane(const native_handle_t* handle) {
         return 0;
     }
 #ifdef OVERLAY_LIMITATION_DPU
-    if (mOverlayPlaneNum - mPlaneIdPool.size() >= 1) {
-        DEBUG_LOG("%s: already 1 overlay plane used. Not use other overlay plane to avoid display "
+    if (mOverlayPlaneNum - mPlaneIdPool.size() >= 3) {
+        DEBUG_LOG("%s: already 3 overlay plane used. Not use other overlay plane to avoid display "
                   "underrun issue", __FUNCTION__);
         return 0;
     }
@@ -653,6 +672,12 @@ void DrmDisplay::placeholderDisplayConfigs() {
             newConfig.height = 720;
         }
 #endif
+
+        uint32_t width = newConfig.width, height = newConfig.height, type = UI_SCALE_NONE;
+        if (customizeGUIResolution(width, height, &type)) {
+            newConfig.width = width;
+            newConfig.height = height;
+        }
     }
 
     mConfigs->emplace(mStartConfigId, newConfig);

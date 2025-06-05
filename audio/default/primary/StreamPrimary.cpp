@@ -23,15 +23,12 @@
 #include <android-base/parseint.h>
 #include <android-base/properties.h>
 #include <audio_utils/clock.h>
-#include <audio_utils/primitives.h>
-#include <cutils/properties.h>
 #include <error/Result.h>
 #include <error/expected_utils.h>
 
-#include "PrimaryMixer.h"
 #include "core-impl/StreamPrimary.h"
-#include "core-impl/StreamStub.h"
 
+#include <audio_utils/primitives.h>
 #include <cutils/properties.h>
 #include <fstream>
 #include "core-impl/AudioCardManager.h"
@@ -39,8 +36,10 @@ extern "C" {
 #include "alsa_device_profile.h"
 }
 
+#define DEFAULT_PERIOD_SIZE 1024
 #define DEFAULT_PERIOD_COUNT 4
 #define DEFAULT_INPUT_RATE 48000
+#define DEFAULT_INPUT_CHANNELS 2
 #define LPA_PERIOD_MS 500
 #define LPA_BUFFER_SECOND 20
 
@@ -60,27 +59,21 @@ using android::base::GetBoolProperty;
 
 namespace aidl::android::hardware::audio::core {
 
-const static constexpr std::pair<int, int> kDefaultCardAndDeviceId = {
-        primary::PrimaryMixer::kAlsaCard, primary::PrimaryMixer::kAlsaDevice};
-
-StreamPrimary::StreamPrimary(
-        StreamContext* context, const Metadata& metadata,
-        const std::vector<::aidl::android::media::audio::common::AudioDevice>& devices)
+StreamPrimary::StreamPrimary(StreamContext* context, const Metadata& metadata)
     : StreamAlsa(context, metadata, 3 /*readWriteRetries*/),
       mIsAsynchronous(!!getContext().getAsyncCallback()),
-      mCardAndDeviceId(getCardAndDeviceId(devices)) {
+      mStubDriver(getContext()) {
     context->startStreamDataProcessor();
     mSavedConfig = mConfig;
     auto flags = getContext().getFlags();
     if (flags.getTag() == AudioIoFlags::Tag::output) {
         if (isBitPositionFlagSet(flags.template get<AudioIoFlags::Tag::output>(),
-                               AudioOutputFlags::PRIMARY)) {
-            mPrimaryOutput = true;
-            mDirectOutput = false;
-        } else if (isBitPositionFlagSet(flags.template get<AudioIoFlags::Tag::output>(),
                                AudioOutputFlags::DIRECT)) {
             mPrimaryOutput = false;
             mDirectOutput = true;
+        } else {
+            mPrimaryOutput = true;
+            mDirectOutput = false;
         }
     }
     ALOGD("%s: mPrimaryOutput: %d, mDirectOutput: %d", __func__, mPrimaryOutput, mDirectOutput);
@@ -90,11 +83,24 @@ StreamPrimary::StreamPrimary(
     }
 }
 
+::android::status_t StreamPrimary::init() {
+    RETURN_STATUS_IF_ERROR(mStubDriver.init());
+    return StreamAlsa::init();
+}
+
+::android::status_t StreamPrimary::drain(StreamDescriptor::DrainMode mode) {
+    return isStubStreamOnWorker() ? mStubDriver.drain(mode) : StreamAlsa::drain(mode);
+}
+
+::android::status_t StreamPrimary::flush() {
+    return isStubStreamOnWorker() ? mStubDriver.flush() : StreamAlsa::flush();
+}
+
 ::android::status_t StreamPrimary::pause() {
     if (mHardwarePause && mStarted) {
         proxy_pause(mAlsaDeviceProxies[0].get());
     }
-    return ::android::OK;
+    return isStubStreamOnWorker() ? mStubDriver.pause() : StreamAlsa::pause();
 }
 
 void StreamPrimary::tryStart(){
@@ -106,7 +112,49 @@ void StreamPrimary::tryStart(){
     }
 }
 
+void StreamPrimary::stop() {
+    if (mCard) {
+        std::unique_lock lock(mCard->mLock);
+        if (mIsInput)
+            mCard->inOwner = OWNER_NONE;
+        else if (mPrimaryOutput && mCard->outOwner == OWNER_PRIMARY)
+            mCard->outOwner = OWNER_NONE;
+        else if (mDirectOutput && mCard->outOwner == OWNER_DIRECT)
+            mCard->outOwner = OWNER_NONE;
+    }
+    mStarted = false;
+    if (mResampler) {
+        release_resampler(mResampler);
+        mResampler = NULL;
+        if (mResamplerBuffer) {
+            free(mResamplerBuffer);
+            mResamplerBuffer = NULL;
+        }
+        LOG(DEBUG) << __func__ << ": Release resampler.";
+    }
+}
+
+::android::status_t StreamPrimary::standby() {
+    stop();
+    return isStubStreamOnWorker() ? mStubDriver.standby() : StreamAlsa::standby();
+}
+
 ::android::status_t StreamPrimary::start() {
+    bool isStub = true, shutdownAlsaStream = false;
+    {
+        std::lock_guard l(mLock);
+        isStub = mAlsaDeviceId == kStubDeviceId;
+        shutdownAlsaStream =
+                mCurrAlsaDeviceId != mAlsaDeviceId && mCurrAlsaDeviceId != kStubDeviceId;
+        mCurrAlsaDeviceId = mAlsaDeviceId;
+    }
+    if (shutdownAlsaStream) {
+        StreamAlsa::shutdown();  // Close currently opened ALSA devices.
+    }
+    if (isStub) {
+        return mStubDriver.start();
+    }
+
     if (!mAlsaDeviceProxies.empty()) {
         // This is a resume after a pause.
         if (mHardwarePause && mStarted) {
@@ -118,21 +166,35 @@ void StreamPrimary::tryStart(){
     if (!mCard) {
         return ::android::NO_INIT;
     }
+    bool toStart = false;
+    {
+    std::unique_lock lock(mCard->mLock);
     if (mPrimaryOutput) {
-        if (!mCard->locked) {
-            tryStart();
+        /* output priority: DIRECT(3) > PRIMARY(2) > HFP(1) > NONE(0) */
+        if (mCard->outOwner < OWNER_DIRECT) {
+            mCard->outOwner = OWNER_PRIMARY;
+            toStart = true;
+        }
+    } else if (mDirectOutput) {
+        mCard->outOwner = OWNER_DIRECT;
+        toStart = true;
+    } else if (mIsInput) {
+        /* input priority: HFP(1) > PRIMARY(2) > NONE(0) */
+        if (mCard->inOwner != OWNER_HFP) {
+            mCard->inOwner = OWNER_PRIMARY;
+            toStart = true;
         }
     } else {
-        if (mDirectOutput) {
-            mCard->locked = true;
-            LOG(DEBUG) << __func__ << ": lock the card";
-        }
-        tryStart();
+        toStart = true;
     }
+    }
+    if (toStart)
+        tryStart();
 
     if (mIsInput && !mStarted && mConfig->rate != DEFAULT_INPUT_RATE) {
         auto requested_rate = mConfig->rate;
         mConfig->rate = DEFAULT_INPUT_RATE;
+        mConfig->channels = DEFAULT_INPUT_CHANNELS;
         tryStart();
         if (mStarted) {
             int ret = create_resampler(
@@ -144,7 +206,7 @@ void StreamPrimary::tryStart(){
                 LOG(ERROR) << "Resampler initialization failed! Error code " << ret;
                 return ::android::NO_INIT;
             }
-            mResamplerBuffer = (int16_t *)malloc(mBufferSizeFrames * mFrameSizeBytes);
+            mResamplerBuffer = (int16_t *)malloc(mBufferSizeFrames * mFrameSizeBytes * DEFAULT_INPUT_CHANNELS);
             if (!mResamplerBuffer) {
                 LOG(ERROR) << "Resampler buffer initialization failed!";
                 if (mResampler) {
@@ -172,29 +234,64 @@ void StreamPrimary::tryStart(){
 
 ::android::status_t StreamPrimary::transfer(void* buffer, size_t frameCount,
                                             size_t* actualFrameCount, int32_t* latencyMs) {
+    LOG(VERBOSE) << __func__ << ": start transfer: " << frameCount;
+    if (isStubStreamOnWorker()) {
+        return mStubDriver.transfer(buffer, frameCount, actualFrameCount, latencyMs);
+    }
+
+    bool toStandby = false, toStart = false;
+    {
+    std::unique_lock lock(mCard->mLock);
     if (mPrimaryOutput) {
-        if (mStarted && mCard->locked) {
-            LOG(DEBUG) << __func__ << ": standby the primary stream to release the card.";
-            standby();
-        } else if (!mStarted && !mCard->locked) {
-            tryStart();
+        /* output priority: DIRECT(3) > PRIMARY(2) > HFP(1) > NONE(0) */
+        if (mCard->outOwner > OWNER_PRIMARY) {
+            if (mStarted) {
+                LOG(DEBUG) << __func__ << ": standby the primary output for direct";
+                toStandby = true;
+            }
+        } else if (mCard->outOwner == OWNER_PRIMARY) {
+            if (!mStarted) {
+                toStart = true;
+            }
+        } else {
+            mCard->outOwner = OWNER_PRIMARY;
         }
     } else if (mDirectOutput) {
-        if (!mStarted) {
-            if (mStartRetryCount < kMaxStartRetryCount) {
-                tryStart();
-                if (mStarted)
-                    mStartRetryCount = 0;
-                else {
-                    mStartRetryCount ++;
-                    if (mStartRetryCount >= kMaxStartRetryCount)
-                        LOG(DEBUG) << __func__ << ": stop trying to start after " << mStartRetryCount << " times";
-                }
+        if (mCard->outOwner == OWNER_DIRECT) {
+            if (!mStarted && mStartRetryCount < kMaxStartRetryCount) {
+                toStart = true;
             }
+        } else {
+            mCard->outOwner = OWNER_DIRECT;
         }
-        if (!mCard->locked) {
-            LOG(WARNING) << __func__ << ": error state, direct transfer without lock.";
-            mCard->locked = true;
+    } else if (mIsInput) {
+        /* input priority: HFP(1) > PRIMARY(2) > NONE(0) */
+        if (mCard->inOwner == OWNER_HFP) {
+            if (mStarted) {
+                LOG(DEBUG) << __func__ << ": standby the primary input for hfp";
+                toStandby = true;
+            }
+        } else if (mCard->inOwner == OWNER_PRIMARY) {
+            if (!mStarted) {
+                toStart = true;
+            }
+        } else {
+            mCard->inOwner = OWNER_PRIMARY;
+        }
+    }
+    }
+    if (toStart)
+        tryStart();
+    if (toStandby)
+        standby();
+
+    if (mDirectOutput && mCard->outOwner == OWNER_DIRECT) {
+        if (mStarted)
+            mStartRetryCount = 0;
+        else {
+            mStartRetryCount ++;
+            if (mStartRetryCount == kMaxStartRetryCount)
+                LOG(DEBUG) << __func__ << ": stop trying to start after " << mStartRetryCount << " times";
         }
     }
 
@@ -276,14 +373,21 @@ void StreamPrimary::tryStart(){
     }
 
     if (mResampler) {
-        StreamAlsa::transfer(mResamplerBuffer, frameCount, actualFrameCount, latencyMs);
+        int ratio = 1;
+        if (mSavedConfig->channels == 1)
+            ratio = 2;
+        StreamAlsa::transfer(mResamplerBuffer, frameCount * ratio, actualFrameCount, latencyMs);
+        *actualFrameCount /= ratio;
         size_t in_frame_count = *actualFrameCount;
         size_t out_frame_count = *actualFrameCount;
         mResampler->resample_from_input(mResampler,
                 (int16_t *)mResamplerBuffer, &in_frame_count,
                 (int16_t *)buffer, &out_frame_count);
         *actualFrameCount = out_frame_count;
-        return ::android::OK;
+        if (mSavedConfig->channels == 1) {
+            downmix_to_mono_i16_from_stereo_i16((int16_t*)buffer, (const int16_t*)buffer, out_frame_count);
+        }
+        goto done;
     }
 
     RETURN_STATUS_IF_ERROR(
@@ -292,35 +396,8 @@ void StreamPrimary::tryStart(){
 done:
     if (mDump && mIsInput)
         dump(buffer, frameCount * mFrameSizeBytes, kDumpPrimaryInputFile);
+    LOG(VERBOSE) << __func__ << ": end transfer: " << *actualFrameCount;
     return ::android::OK;
-}
-
-void StreamPrimary::stop() {
-    if (mDirectOutput && mCard) {
-        mCard->locked = false;
-        LOG(DEBUG) << __func__ << ": unlock the card.";
-    }
-    mStarted = false;
-    if (mResampler) {
-        release_resampler(mResampler);
-        mResampler = NULL;
-        if (mResamplerBuffer) {
-            free(mResamplerBuffer);
-            mResamplerBuffer = NULL;
-        }
-        LOG(DEBUG) << __func__ << ": Release resampler.";
-    }
-}
-
-::android::status_t StreamPrimary::standby() {
-    StreamAlsa::standby();
-    stop();
-    return ::android::OK;
-}
-
-void StreamPrimary::shutdown() {
-    StreamAlsa::shutdown();
-    stop();
 }
 
 ::android::status_t StreamPrimary::refinePosition(StreamDescriptor::Position* position) {
@@ -331,6 +408,33 @@ void StreamPrimary::shutdown() {
     // Since not all data is actually sent to the HAL, use the position maintained by Stream class
     // which accounts for all frames passed from / to the client.
     return ::android::OK;
+}
+
+void StreamPrimary::shutdown() {
+    stop();
+    StreamAlsa::shutdown();
+    mStubDriver.shutdown();
+}
+
+ndk::ScopedAStatus StreamPrimary::setConnectedDevices(const ConnectedDevices& devices) {
+    LOG(DEBUG) << __func__ << ": " << ::android::internal::ToString(devices);
+    if (devices.size() > 1) {
+        LOG(ERROR) << __func__ << ": primary stream can only be connected to one device, got: "
+                   << devices.size();
+        return ndk::ScopedAStatus::fromExceptionCode(EX_UNSUPPORTED_OPERATION);
+    }
+    {
+        const bool useStubDriver = devices.empty() || useStubStream(mIsInput, devices[0]);
+        std::lock_guard l(mLock);
+        mAlsaDeviceId = useStubDriver ? kStubDeviceId : getCardAndDeviceId(devices);
+    }
+    if (!devices.empty()) {
+        auto streamDataProcessor = getContext().getStreamDataProcessor().lock();
+        if (streamDataProcessor != nullptr) {
+            streamDataProcessor->setAudioDevice(devices[0]);
+        }
+    }
+    return StreamAlsa::setConnectedDevices(devices);
 }
 
 std::vector<alsa::DeviceProfile> StreamPrimary::getDeviceProfiles() {
@@ -385,6 +489,20 @@ std::vector<alsa::DeviceProfile> StreamPrimary::getDeviceProfiles() {
             mConfig->period_count = card->out_period_count;
         }
 
+        if (!mIsInput) {
+            struct pcm_params *params = pcm_params_get(card->card, 0, PCM_OUT);
+            if (params) {
+                unsigned int max_period_size = pcm_params_get_max(params, PCM_PARAM_PERIOD_SIZE);
+                if (mConfig->period_size * mConfig->channels > max_period_size) {
+                    mConfig->period_size = DEFAULT_PERIOD_SIZE;
+                    LOG(INFO) << __func__ << ": Force set period size from " <<
+                        mBufferSizeFrames << " to " << DEFAULT_PERIOD_SIZE <<
+                        ", the max is " << max_period_size;
+                }
+                pcm_params_free(params);
+            }
+        }
+
         if (property_get_int32("vendor.audio.lpa.enable", 0) && mDirectOutput) {
             mConfig->period_size = mConfig->rate * LPA_PERIOD_MS / 1000;
             mConfig->period_count = LPA_BUFFER_SECOND * 1000 / LPA_PERIOD_MS;
@@ -396,12 +514,19 @@ std::vector<alsa::DeviceProfile> StreamPrimary::getDeviceProfiles() {
     return deviceProfile;
 }
 
-std::pair<int, int> StreamPrimary::getCardAndDeviceId(const std::vector<AudioDevice>& devices) {
+bool StreamPrimary::isStubStream() {
+    std::lock_guard l(mLock);
+    return mAlsaDeviceId == kStubDeviceId;
+}
+
+// static
+StreamPrimary::AlsaDeviceId StreamPrimary::getCardAndDeviceId(
+        const std::vector<AudioDevice>& devices) {
     if (devices.empty() || devices[0].address.getTag() != AudioDeviceAddress::id) {
         return kDefaultCardAndDeviceId;
     }
     std::string deviceAddress = devices[0].address.get<AudioDeviceAddress::id>();
-    std::pair<int, int> cardAndDeviceId;
+    AlsaDeviceId cardAndDeviceId;
     if (const size_t suffixPos = deviceAddress.rfind("CARD_");
         suffixPos == std::string::npos ||
         sscanf(deviceAddress.c_str() + suffixPos, "CARD_%d_DEV_%d", &cardAndDeviceId.first,
@@ -413,51 +538,31 @@ std::pair<int, int> StreamPrimary::getCardAndDeviceId(const std::vector<AudioDev
     return cardAndDeviceId;
 }
 
-StreamInPrimary::StreamInPrimary(StreamContext&& context, const SinkMetadata& sinkMetadata,
-                                 const std::vector<MicrophoneInfo>& microphones)
-    : StreamIn(std::move(context), microphones),
-      StreamSwitcher(&mContextInstance, sinkMetadata),
-      StreamInHwGainHelper(&mContextInstance) {}
-
-bool StreamInPrimary::useStubStream(const AudioDevice& device) {
+// static
+bool StreamPrimary::useStubStream(
+        bool isInput, const ::aidl::android::media::audio::common::AudioDevice& device) {
     static const bool kSimulateInput =
             GetBoolProperty("ro.boot.audio.tinyalsa.simulate_input", false);
+    static const bool kSimulateOutput =
+            GetBoolProperty("ro.boot.audio.tinyalsa.ignore_output", false);
     if (device.type.type == AudioDeviceType::IN_HEADSET &&
             device.type.connection == AudioDeviceDescription::CONNECTION_BT_SCO)
         return false;
 
-    return kSimulateInput || device.type.type == AudioDeviceType::IN_TELEPHONY_RX ||
-           device.type.type == AudioDeviceType::IN_FM_TUNER ||
-           device.type.connection == AudioDeviceDescription::CONNECTION_BUS /*deprecated */;
+    if (isInput) {
+        return kSimulateInput || device.type.type == AudioDeviceType::IN_TELEPHONY_RX ||
+               device.type.type == AudioDeviceType::IN_FM_TUNER ||
+               device.type.connection == AudioDeviceDescription::CONNECTION_BUS /*deprecated */;
+    }
+    return kSimulateOutput || device.type.type == AudioDeviceType::OUT_TELEPHONY_TX ||
+           device.type.connection == AudioDeviceDescription::CONNECTION_BUS /*deprecated*/;
 }
 
-StreamSwitcher::DeviceSwitchBehavior StreamInPrimary::switchCurrentStream(
-        const std::vector<::aidl::android::media::audio::common::AudioDevice>& devices) {
-    LOG(DEBUG) << __func__;
-    if (devices.size() > 1) {
-        LOG(ERROR) << __func__ << ": primary stream can only be connected to one device, got: "
-                   << devices.size();
-        return DeviceSwitchBehavior::UNSUPPORTED_DEVICES;
-    }
-    if (devices.empty() || useStubStream(devices[0]) == isStubStream()) {
-        return DeviceSwitchBehavior::USE_CURRENT_STREAM;
-    }
-    return DeviceSwitchBehavior::CREATE_NEW_STREAM;
-}
-
-std::unique_ptr<StreamCommonInterfaceEx> StreamInPrimary::createNewStream(
-        const std::vector<::aidl::android::media::audio::common::AudioDevice>& devices,
-        StreamContext* context, const Metadata& metadata) {
-    if (devices.empty()) {
-        LOG(FATAL) << __func__ << ": called with empty devices";  // see 'switchCurrentStream'
-    }
-    if (useStubStream(devices[0])) {
-        return std::unique_ptr<StreamCommonInterfaceEx>(
-                new InnerStreamWrapper<StreamStub>(context, metadata));
-    }
-    return std::unique_ptr<StreamCommonInterfaceEx>(
-            new InnerStreamWrapper<StreamPrimary>(context, metadata, devices));
-}
+StreamInPrimary::StreamInPrimary(StreamContext&& context, const SinkMetadata& sinkMetadata,
+                                 const std::vector<MicrophoneInfo>& microphones)
+    : StreamIn(std::move(context), microphones),
+      StreamPrimary(&mContextInstance, sinkMetadata),
+      StreamInHwGainHelper(&mContextInstance) {}
 
 ndk::ScopedAStatus StreamInPrimary::getHwGain(std::vector<float>* _aidl_return) {
     if (isStubStream()) {
@@ -501,42 +606,8 @@ ndk::ScopedAStatus StreamInPrimary::setHwGain(const std::vector<float>& in_chann
 StreamOutPrimary::StreamOutPrimary(StreamContext&& context, const SourceMetadata& sourceMetadata,
                                    const std::optional<AudioOffloadInfo>& offloadInfo)
     : StreamOut(std::move(context), offloadInfo),
-      StreamSwitcher(&mContextInstance, sourceMetadata),
+      StreamPrimary(&mContextInstance, sourceMetadata),
       StreamOutHwVolumeHelper(&mContextInstance) {}
-
-bool StreamOutPrimary::useStubStream(const AudioDevice& device) {
-    static const bool kSimulateOutput =
-            GetBoolProperty("ro.boot.audio.tinyalsa.ignore_output", false);
-    return kSimulateOutput || device.type.type == AudioDeviceType::OUT_TELEPHONY_TX ||
-           device.type.connection == AudioDeviceDescription::CONNECTION_BUS /*deprecated*/;
-}
-
-StreamSwitcher::DeviceSwitchBehavior StreamOutPrimary::switchCurrentStream(
-        const std::vector<::aidl::android::media::audio::common::AudioDevice>& devices) {
-    LOG(DEBUG) << __func__;
-    if (devices.size() > 1) {
-        LOG(ERROR) << __func__ << ": primary stream can only be connected to one device, got: "
-                   << devices.size();
-    }
-    if (devices.empty() || useStubStream(devices[0]) == isStubStream()) {
-        return DeviceSwitchBehavior::USE_CURRENT_STREAM;
-    }
-    return DeviceSwitchBehavior::CREATE_NEW_STREAM;
-}
-
-std::unique_ptr<StreamCommonInterfaceEx> StreamOutPrimary::createNewStream(
-        const std::vector<::aidl::android::media::audio::common::AudioDevice>& devices,
-        StreamContext* context, const Metadata& metadata) {
-    if (devices.empty()) {
-        LOG(FATAL) << __func__ << ": called with empty devices";  // see 'switchCurrentStream'
-    }
-    if (useStubStream(devices[0])) {
-        return std::unique_ptr<StreamCommonInterfaceEx>(
-                new InnerStreamWrapper<StreamStub>(context, metadata));
-    }
-    return std::unique_ptr<StreamCommonInterfaceEx>(
-            new InnerStreamWrapper<StreamPrimary>(context, metadata, devices));
-}
 
 ndk::ScopedAStatus StreamOutPrimary::getHwVolume(std::vector<float>* _aidl_return) {
     if (isStubStream()) {
@@ -572,17 +643,6 @@ ndk::ScopedAStatus StreamOutPrimary::setHwVolume(const std::vector<float>& in_ch
                      << ", from mixer: " << ::android::internal::ToString(volumes);
     }
     return ndk::ScopedAStatus::ok();
-}
-
-ndk::ScopedAStatus StreamOutPrimary::setConnectedDevices(
-        const std::vector<::aidl::android::media::audio::common::AudioDevice>& devices) {
-    if (!devices.empty()) {
-        auto streamDataProcessor = mContextInstance.getStreamDataProcessor().lock();
-        if (streamDataProcessor != nullptr) {
-            streamDataProcessor->setAudioDevice(devices[0]);
-        }
-    }
-    return StreamSwitcher::setConnectedDevices(devices);
 }
 
 }  // namespace aidl::android::hardware::audio::core

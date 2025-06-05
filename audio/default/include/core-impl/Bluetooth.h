@@ -21,6 +21,7 @@
 #include <aidl/android/hardware/audio/core/BnBluetoothLe.h>
 #include <core-impl/AudioCardManager.h>
 #include <tinyalsa/asoundlib.h>
+#include <audio_utils/resampler.h>
 
 namespace aidl::android::hardware::audio::core {
 
@@ -51,6 +52,12 @@ class Bluetooth : public BnBluetooth {
     struct pcm *pcm_mic_in = NULL;
     struct pcm *pcm_sco_out = NULL;
     struct pcm *pcm_sco_in = NULL;
+
+    struct resampler_itfe *mUplinkResampler = NULL;
+    int16_t *mUplinkResamplerBuffer = NULL;
+
+    struct resampler_itfe *mDownlinkResampler = NULL;
+    int16_t *mDownlinkResamplerBuffer = NULL;
 
     pthread_t tid_uplink = 0;
     pthread_t tid_downlink = 0;

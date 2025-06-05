@@ -107,6 +107,7 @@ private:
     void WaitForStatusCallbackFuture();
     void cameraAdded(std::shared_ptr<libcamera::Camera> camera);
     void cameraRemoved(std::shared_ptr<libcamera::Camera> camera);
+    int32_t foundCameraId(const char* cameraName);
 
 private:
     HwlCameraProviderCallback mCallback;
@@ -127,8 +128,7 @@ private:
     std::map<uint32_t, CameraDeviceHwl*> device_map;
 
     std::unique_ptr<libcamera::CameraManager> cameraManager_;
-    std::map<std::shared_ptr<libcamera::Camera>, unsigned int> cameraIdMap_;
-    unsigned int cameraId_ = 0;
+    std::map<uint32_t, std::shared_ptr<libcamera::Camera>> cameraIdMap_;
 };
 
 extern "C" CameraProviderHwl* CreateCameraProviderHwl() {

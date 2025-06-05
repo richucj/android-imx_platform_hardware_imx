@@ -111,6 +111,10 @@ private:
 
     std::map<uint32_t, std::unique_ptr<DeviceClient>> mDeviceClients;
     std::shared_ptr<DeviceComposer> mG2dComposer;
+#ifdef DEBUG_DUMP_G2D_CONSUMPTION
+    nsecs_t totalCostTime = 0;
+    int composeCount = 0;
+#endif
 
     bool mHdcpEnabled = false;
 };

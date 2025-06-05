@@ -64,8 +64,6 @@ static bool getDefaultG2DLib(char* libName, uint32_t size) {
 }
 
 DeviceComposer::DeviceComposer() {
-    mTarget = NULL;
-    mSolidColorBuffer = NULL;
     mHelperHandle = NULL;
     mG2dHandle = NULL;
 
@@ -137,16 +135,23 @@ DeviceComposer::DeviceComposer() {
         mCreateFenceFd = (hwc_func1)dlsym(mG2dHandle, "g2d_create_fence_fd");
     }
 
-    memset(&mSolidColorBuffInfo, 0, sizeof(mSolidColorBuffInfo));
+    mSolidColorBuffer.hnd = NULL;
+    memset(&mSolidColorBuffer.info, 0, sizeof(mSolidColorBuffer.info));
+#ifdef G2D_FORMAT_CONVERSION
+    mG2dConvertBuffer.hnd = NULL;
+    memset(&mG2dConvertBuffer.info, 0, sizeof(mG2dConvertBuffer.info));
+#endif
 }
 
 DeviceComposer::~DeviceComposer() {
-    if (mSolidColorBuffer != NULL) {
-        ::android::GraphicBufferAllocator::get().free(mSolidColorBuffer);
+    if (mSolidColorBuffer.hnd != NULL) {
+        unlockSurface(mSolidColorBuffer);
+        ::android::GraphicBufferAllocator::get().free(mSolidColorBuffer.hnd);
     }
 #ifdef G2D_FORMAT_CONVERSION
-    if (mG2dConvertBuffer == NULL) {
-        ::android::GraphicBufferAllocator::get().free(mG2dConvertBuffer);
+    if (mG2dConvertBuffer.hnd == NULL) {
+        unlockSurface(mG2dConvertBuffer);
+        ::android::GraphicBufferAllocator::get().free(mG2dConvertBuffer.hnd);
     }
 #endif
     if (mG2dHandle != NULL) {
@@ -215,75 +220,72 @@ int DeviceComposer::freeDeviceFrameBuffer(std::vector<buffer_handle_t>& buffers)
     return 0;
 }
 
-int DeviceComposer::prepareG2dTempBuffer(buffer_handle_t srcBuffer, uint32_t newFormat,
-                                         buffer_handle_t* tempBuffer, HandleInfo* tempBufInfo) {
-    HandleInfo info;
-    if ((srcBuffer == NULL) || (getInfoFromHandle(srcBuffer, &info) != 0) || (tempBuffer == NULL) ||
-        (tempBufInfo == NULL)) {
+int DeviceComposer::prepareG2dTempBuffer(G2dBuffer& srcBuffer, uint32_t newFormat,
+                                         G2dBuffer* tempBuffer) {
+    if ((srcBuffer.hnd == NULL) || (tempBuffer == nullptr)) {
         return -1;
     }
     if (newFormat == static_cast<uint32_t>(common::PixelFormat::UNSPECIFIED))
-        newFormat = info.format;
+        newFormat = srcBuffer.info.format;
 
-    if ((*tempBuffer != NULL) &&
-        (info.width == tempBufInfo->width && info.height == tempBufInfo->height &&
-         newFormat == tempBufInfo->format)) {
+    if ((tempBuffer->hnd != NULL) &&
+        (srcBuffer.info.width == tempBuffer->info.width &&
+         srcBuffer.info.height == tempBuffer->info.height &&
+         newFormat == tempBuffer->info.format)) {
         return 0;
     }
 
-    if (*tempBuffer != NULL) {
-        ::android::GraphicBufferAllocator::get().free(*tempBuffer);
-        *tempBuffer = NULL;
+    if (tempBuffer->hnd != NULL) {
+        unlockSurface(*tempBuffer);
+        ::android::GraphicBufferAllocator::get().free(tempBuffer->hnd);
+        tempBuffer->hnd = NULL;
     }
 
     uint32_t bufferStride;
     buffer_handle_t bufferHandle;
     auto status =
-            ::android::GraphicBufferAllocator::get().allocate(info.width, info.height, newFormat, 1,
-                                                              info.usage, &bufferHandle,
+            ::android::GraphicBufferAllocator::get().allocate(srcBuffer.info.width,
+                                                              srcBuffer.info.height, newFormat, 1,
+                                                              srcBuffer.info.usage, &bufferHandle,
                                                               &bufferStride, "HwcG2dTempBuffer");
     if (status != ::android::OK) {
         ALOGE("%s: failed to allocate g2d temporary buffer", __FUNCTION__);
         return -1;
     }
 
-    if (getInfoFromHandle(bufferHandle, tempBufInfo) != 0) {
+    if (getInfoFromHandle(bufferHandle, &(tempBuffer->info)) != 0) {
         ALOGE("%s: failed to get buffer info of g2d temporary buffer", __FUNCTION__);
         return -1;
     }
-    *tempBuffer = bufferHandle;
+    tempBuffer->hnd = bufferHandle;
+    lockSurface(*tempBuffer); // each temporary buffer will lockSurface() when allocate
 
     return 1;
 }
 
-int DeviceComposer::prepareSolidColorBuffer() {
-    auto ret =
-            prepareG2dTempBuffer(mTarget, static_cast<uint32_t>(common::PixelFormat::UNSPECIFIED),
-                                 &mSolidColorBuffer, &mSolidColorBuffInfo);
+int DeviceComposer::prepareSolidColorBuffer(G2dBuffer& target) {
+    auto ret = prepareG2dTempBuffer(target, static_cast<uint32_t>(common::PixelFormat::UNSPECIFIED),
+                                    &mSolidColorBuffer);
     if (ret == -1) {
         ALOGE("%s: fail to prepare g2d solidcolor buffer", __FUNCTION__);
         return ret;
     } else if (ret == 1) { // new allocated buffer
-        HandleInfo info;
-        if (mSolidColorBuffer == NULL || (getInfoFromHandle(mSolidColorBuffer, &info) != 0)) {
-            return 0;
-        }
         common::Rect rect;
         rect.left = rect.top = 0;
-        rect.right = static_cast<int>(info.width);
-        rect.bottom = static_cast<int>(info.height);
-        lockSurface(mSolidColorBuffer);
+        rect.right = static_cast<int>(mSolidColorBuffer.info.width);
+        rect.bottom = static_cast<int>(mSolidColorBuffer.info.height);
         clearRect(mSolidColorBuffer, rect);
-        unlockSurface(mSolidColorBuffer);
     }
 
     return 0;
 }
 
 int DeviceComposer::freeSolidColorBuffer() {
-    if (mSolidColorBuffer != NULL) {
-        ::android::GraphicBufferAllocator::get().free(mSolidColorBuffer);
-        mSolidColorBuffer = NULL;
+    if (mSolidColorBuffer.hnd != NULL) {
+        unlockSurface(mSolidColorBuffer);
+        ::android::GraphicBufferAllocator::get().free(mSolidColorBuffer.hnd);
+        mSolidColorBuffer.hnd = NULL;
+        memset(&mSolidColorBuffer.info, 0, sizeof(mSolidColorBuffer.info));
     }
 
     return 0;
@@ -294,19 +296,8 @@ int DeviceComposer::finishComposite() {
     return 0;
 }
 
-int DeviceComposer::setRenderTarget(buffer_handle_t memory) {
-    mTarget = memory;
-    HandleInfo info;
-    if (mTarget == NULL || (getInfoFromHandle(mTarget, &info) != 0)) {
-        return -EINVAL;
-    }
-    DEBUG_LOG_G2D("%s: --------target(fd=%d, %d x %d)--------", __FUNCTION__, info.fd, info.width,
-                  info.height);
-    return 0;
-}
-
-int DeviceComposer::clearRect(buffer_handle_t target, common::Rect& rect) {
-    if (target == NULL || isRectEmpty(rect)) {
+int DeviceComposer::clearRect(G2dBuffer& buff, common::Rect& rect) {
+    if (buff.hnd == NULL || isRectEmpty(rect)) {
         return 0;
     }
 
@@ -314,7 +305,7 @@ int DeviceComposer::clearRect(buffer_handle_t target, common::Rect& rect) {
     struct g2d_surface& surface = surfaceX.base;
 
     memset(&surfaceX, 0, sizeof(surfaceX));
-    setG2dSurface(surfaceX, target, rect);
+    setG2dSurface(surfaceX, buff, rect);
     surface.clrcolor = 0xff << 24;
     clearFunction(getHandle(), &surface);
 
@@ -323,10 +314,9 @@ int DeviceComposer::clearRect(buffer_handle_t target, common::Rect& rect) {
     return 0;
 }
 
-int DeviceComposer::clearWormHole(std::vector<Layer*>& layers) {
+int DeviceComposer::clearWormHole(std::vector<Layer*>& layers, G2dBuffer& target) {
     DEBUG_LOG("%s: clear worm hole", __FUNCTION__);
-    HandleInfo info;
-    if (mTarget == NULL || (getInfoFromHandle(mTarget, &info) != 0)) {
+    if (target.hnd == NULL) {
         ALOGE("%s: no effective render buffer", __FUNCTION__);
         return -EINVAL;
     }
@@ -350,7 +340,7 @@ int DeviceComposer::clearWormHole(std::vector<Layer*>& layers) {
     }
 
     // calculate worm hole.
-    ::android::Region screen(::android::Rect(info.width, info.height));
+    ::android::Region screen(::android::Rect(target.info.width, target.info.height));
     screen.subtractSelf(opaque);
     const ::android::Rect* holes = NULL;
     size_t numRect = 0;
@@ -373,7 +363,7 @@ int DeviceComposer::clearWormHole(std::vector<Layer*>& layers) {
         rect.bottom = holes[i].bottom;
         DEBUG_LOG_G2D("clearhole: hole(l:%d,t:%d,r:%d,b:%d)", rect.left, rect.top, rect.right,
                       rect.bottom);
-        setG2dSurface(surfaceX, mTarget, rect);
+        setG2dSurface(surfaceX, target, rect);
         surface.clrcolor = clrcolor;
         clearFunction(getHandle(), &surface);
     }
@@ -381,10 +371,10 @@ int DeviceComposer::clearWormHole(std::vector<Layer*>& layers) {
     return 0;
 }
 
-int DeviceComposer::composeLayerLocked(Layer* layer, bool bypass) {
+int DeviceComposer::composeLayerLocked(Layer* layer, G2dBuffer& layerBuffer,
+                                       G2dBuffer& targetBuffer, bool bypass) {
     DEBUG_LOG("%s: compose layer %ld", __FUNCTION__, layer->getId());
-    HandleInfo info;
-    if (layer == NULL || mTarget == NULL || (getInfoFromHandle(mTarget, &info) != 0)) {
+    if (layer == NULL || targetBuffer.hnd == NULL) {
         ALOGE("%s: invalid layer or target", __FUNCTION__);
         return -EINVAL;
     }
@@ -393,24 +383,25 @@ int DeviceComposer::composeLayerLocked(Layer* layer, bool bypass) {
     auto mode = layer->getBlendMode();
     auto transform = layer->getTransform();
     auto alpha = (uint8_t)(layer->getPlaneAlpha() * 255);
-    auto layerBuffer = layer->getBuffer().getBuffer();
+    G2dBuffer* layerBuffPtr = nullptr;
 
     common::Rect srect = layer->getSourceCropInt();
     common::Rect drect = layer->getDisplayFrame();
     struct g2d_surfaceEx dSurfaceX;
     struct g2d_surface& dSurface = dSurfaceX.base;
 
-    HandleInfo layerInfo;
-    if (layerBuffer != nullptr && (getInfoFromHandle(layerBuffer, &layerInfo) == 0)) {
-        DEBUG_LOG_G2D("%s: compose layer id=%ld, %d x %d, zorder:0x%x, phys:0x%" PRIx64 ", name=%s",
-                      __FUNCTION__, layer->getId(), layerInfo.width, layerInfo.height,
-                      layer->getZOrder(), layerInfo.phys, layerInfo.name);
+    if (layerBuffer.hnd != nullptr) {
+        DEBUG_LOG_G2D("%s: compose layer id=%ld, %d x %d, zorder:0x%x, phys:0x%" PRIx64
+                      ", transform:%s, blend:%s, alpha:0x%x, name=%s",
+                      __FUNCTION__, layer->getId(), layerBuffer.info.width, layerBuffer.info.height,
+                      layer->getZOrder(), layerBuffer.info.phys, toString(transform).c_str(),
+                      toString(mode).c_str(), alpha, layerBuffer.info.name);
     } else {
-        DEBUG_LOG_G2D("%s: compose layer id=%ld, zorder:0x%x, solid color layer", __FUNCTION__,
-                      layer->getId(), layer->getZOrder());
+        DEBUG_LOG_G2D("%s: compose layer id=%ld, zorder:0x%x, transform:%s, blend:%s, "
+                      "alpha:0x%x, solid color layer",
+                      __FUNCTION__, layer->getId(), layer->getZOrder(), toString(transform).c_str(),
+                      toString(mode).c_str(), alpha);
     }
-    DEBUG_LOG_G2D("transform:0x%x, blend:0x%x, alpha:0x%x", static_cast<unsigned int>(transform),
-                  static_cast<unsigned int>(mode), alpha);
 
     if ((isRectEmpty(srect) && !(type == Composition::SOLID_COLOR)) || isRectEmpty(drect)) {
         ALOGE("%s: invalid srect or drect", __FUNCTION__);
@@ -418,15 +409,15 @@ int DeviceComposer::composeLayerLocked(Layer* layer, bool bypass) {
     }
 
     if (type == Composition::SOLID_COLOR) {
-        prepareSolidColorBuffer();
+        prepareSolidColorBuffer(targetBuffer);
     }
 #ifdef G2D_FORMAT_CONVERSION
-    if (layerInfo.format == HAL_PIXEL_FORMAT_P010_TILED) {
+    if (layerBuffer.info.format == HAL_PIXEL_FORMAT_P010_TILED) {
         /* HAL_PIXEL_FORMAT_P010_TILED is packed 10bit NV12(NV15) with DRM_FORMAT_MOD_AMPHION_TILED
          * modifier, need to convert to linear 8bit NV12 format. So DPU can process it.
          */
-        if (prepareG2dTempBuffer(layerBuffer, HAL_PIXEL_FORMAT_YCbCr_420_SP, &mG2dConvertBuffer,
-                                 &mG2dConvertBuffInfo) == -1) {
+        if (prepareG2dTempBuffer(layerBuffer, HAL_PIXEL_FORMAT_YCbCr_420_SP, &mG2dConvertBuffer) ==
+            -1) {
             ALOGE("%s: fail to prepare g2d temporary buffer", __FUNCTION__);
             return -EINVAL;
         }
@@ -436,11 +427,18 @@ int DeviceComposer::composeLayerLocked(Layer* layer, bool bypass) {
         setG2dSurface(sSurfaceX, layerBuffer, srect);
         setG2dSurface(dSurfaceX, mG2dConvertBuffer, srect);
         blitSurface(&sSurfaceX, &dSurfaceX);
-        layerBuffer = mG2dConvertBuffer;
+
+        layerBuffPtr = &mG2dConvertBuffer;
+    } else {
+        layerBuffPtr = &layerBuffer;
     }
+#else
+    layerBuffPtr = &layerBuffer;
 #endif
 
     memset(&dSurfaceX, 0, sizeof(dSurfaceX));
+    setG2dSurface(dSurfaceX, targetBuffer, drect);
+
     bool needDither = false;
     std::vector<common::Rect>& visible = layer->getVisibleRegion();
     for (auto& clip : visible) {
@@ -460,23 +458,24 @@ int DeviceComposer::composeLayerLocked(Layer* layer, bool bypass) {
                       clip.top, clip.right, clip.bottom, drect.left, drect.top, drect.right,
                       drect.bottom);
 
-        setG2dSurface(dSurfaceX, mTarget, drect);
-
         struct g2d_surfaceEx sSurfaceX;
         memset(&sSurfaceX, 0, sizeof(sSurfaceX));
         struct g2d_surface& sSurface = sSurfaceX.base;
 
-        if (!(type == Composition::SOLID_COLOR) && layerBuffer) {
-            setG2dSurface(sSurfaceX, layerBuffer, srect);
+        if (!(type == Composition::SOLID_COLOR) && layerBuffPtr->hnd) {
+            setG2dSurface(sSurfaceX, *layerBuffPtr, srect);
 #ifndef G2D_LIMITATION_PXP // PXP G2D don't support DITHER
-            if ((info.format == static_cast<uint32_t>(common::PixelFormat::RGB_565)) &&
-                (layerInfo.format == static_cast<uint32_t>(common::PixelFormat::RGBA_8888) ||
-                 layerInfo.format == static_cast<uint32_t>(common::PixelFormat::RGBX_8888) ||
-                 layerInfo.format == static_cast<uint32_t>(common::PixelFormat::BGRA_8888))) {
+            if ((targetBuffer.info.format == static_cast<uint32_t>(common::PixelFormat::RGB_565)) &&
+                (layerBuffPtr->info.format ==
+                         static_cast<uint32_t>(common::PixelFormat::RGBA_8888) ||
+                 layerBuffPtr->info.format ==
+                         static_cast<uint32_t>(common::PixelFormat::RGBX_8888) ||
+                 layerBuffPtr->info.format ==
+                         static_cast<uint32_t>(common::PixelFormat::BGRA_8888))) {
                 needDither = true;
             }
 #endif
-        } else if (mSolidColorBuffer) {
+        } else if (mSolidColorBuffer.hnd) {
             setG2dSurface(sSurfaceX, mSolidColorBuffer, drect);
         } else {
             return -EINVAL;
@@ -510,78 +509,81 @@ int DeviceComposer::composeLayerLocked(Layer* layer, bool bypass) {
     return 0;
 }
 
-int DeviceComposer::setG2dSurface(struct g2d_surfaceEx& surfaceX, buffer_handle_t handle,
+int DeviceComposer::setG2dSurface(struct g2d_surfaceEx& surfaceX, G2dBuffer& buff,
                                   common::Rect& rect) {
     struct g2d_surface& surface = surfaceX.base;
-    HandleInfo info;
-    if (handle == NULL || (getInfoFromHandle(handle, &info) != 0)) {
+    if (buff.hnd == NULL) {
         ALOGE("%s: handle is invalid!", __FUNCTION__);
         return -1;
     }
 
-    surface.format = convertFormat(info.drm_format, handle);
+    surface.format = convertFormat(buff.info.drm_format, buff);
     enum g2d_tiling tile = G2D_LINEAR;
-    getTiling(handle, &tile);
+    getTiling(buff, &tile);
 #ifdef G2D_FORMAT_CONVERSION
-    if (info.drm_format == DRM_FORMAT_NV15 && info.modifier == DRM_FORMAT_MOD_AMPHION_TILED) {
+    if (buff.info.drm_format == DRM_FORMAT_NV15 &&
+        buff.info.modifier == DRM_FORMAT_MOD_AMPHION_TILED) {
         surfaceX.tiling = G2D_AMPHION_TILED_10BIT;
     } else
 #endif
-            if (info.modifier == DRM_FORMAT_MOD_AMPHION_TILED) {
+            if (buff.info.modifier == DRM_FORMAT_MOD_AMPHION_TILED) {
         surfaceX.tiling = G2D_AMPHION_TILED;
     } else {
         surfaceX.tiling = tile;
     }
 
     if (isFeatureSupported(G2D_FAST_CLEAR)) {
-        getTileStatus(handle, &surfaceX);
+        getTileStatus(buff, &surfaceX);
     } else {
-        resolveTileStatus(handle);
+        resolveTileStatus(buff);
     }
 
     uint64_t phys = 0;
     uint32_t offset = 0;
-    if (info.phys)
-        phys = info.phys;
+    if (buff.info.phys)
+        phys = buff.info.phys;
     else
-        getBuffPhys(handle, &phys);
+        getBuffPhys(buff, &phys);
 
-    getFlipOffset(handle, &offset);
+    getFlipOffset(buff, &offset);
     surface.planes[0] = static_cast<g2d_phys_addr_t>(phys + offset);
 
     switch (surface.format) {
+        case G2D_GRAY8:
+            surface.stride = static_cast<int>(buff.info.strides[0]); // convert to pixel stride
+            break;
         case G2D_RGB565:
         case G2D_YUYV:
-            surface.stride = static_cast<int>(info.strides[0] / 2); // convert to pixel stride
+            surface.stride = static_cast<int>(buff.info.strides[0] / 2); // convert to pixel stride
             break;
         case G2D_RGBA8888:
         case G2D_BGRA8888:
         case G2D_RGBX8888:
         case G2D_BGRX8888:
         case G2D_RGBA1010102:
-            surface.stride = static_cast<int>(info.strides[0] / 4); // convert to pixel stride
+            surface.stride = static_cast<int>(buff.info.strides[0] / 4); // convert to pixel stride
             break;
 
         case G2D_NV16:
         case G2D_NV12:
         case G2D_NV21:
-            surface.stride = static_cast<int>(info.strides[0]);
-            surface.planes[1] = surface.planes[0] + info.offsets[1];
+            surface.stride = static_cast<int>(buff.info.strides[0]);
+            surface.planes[1] = surface.planes[0] + buff.info.offsets[1];
             break;
 
         case G2D_I420:
         case G2D_YV12: {
-            surface.stride = static_cast<int>(info.strides[0]);
-            surface.planes[1] = surface.planes[0] + info.offsets[1];
-            surface.planes[2] = surface.planes[0] + info.offsets[2];
+            surface.stride = static_cast<int>(buff.info.strides[0]);
+            surface.planes[1] = surface.planes[0] + buff.info.offsets[1];
+            surface.planes[2] = surface.planes[0] + buff.info.offsets[2];
         } break;
 
         default:
             ALOGE("%s: does not support format:%d", __FUNCTION__, surface.format);
             break;
     }
-    int buff_width = static_cast<int>(info.width);
-    int buff_height = static_cast<int>(info.height);
+    int buff_width = static_cast<int>(buff.info.width);
+    int buff_height = static_cast<int>(buff.info.height);
     surface.left = rect.left < buff_width ? rect.left : buff_width;
     surface.top = rect.top < buff_height ? rect.top : buff_height;
     surface.right = rect.right < buff_width ? rect.right : buff_width;
@@ -598,7 +600,7 @@ int DeviceComposer::setG2dSurface(struct g2d_surfaceEx& surfaceX, buffer_handle_
     return 0;
 }
 
-enum g2d_format DeviceComposer::convertFormat(uint32_t format, buffer_handle_t handle) {
+enum g2d_format DeviceComposer::convertFormat(uint32_t format, G2dBuffer& buff) {
     enum g2d_format halFormat;
     switch (format) {
         case DRM_FORMAT_ABGR2101010:
@@ -628,14 +630,26 @@ enum g2d_format DeviceComposer::convertFormat(uint32_t format, buffer_handle_t h
             halFormat = G2D_NV21;
             break;
         case DRM_FORMAT_NV12:
+#ifdef FORMAT_WORKAROUND_FOR_PXP
+            halFormat = G2D_NV21;
+#else
             halFormat = G2D_NV12;
+#endif
             break;
         case DRM_FORMAT_YUV420:
+#ifdef FORMAT_WORKAROUND_FOR_PXP
+            halFormat = G2D_YV12;
+#else
             halFormat = G2D_I420;
+#endif
             break;
         case DRM_FORMAT_YVU420_ANDROID:
         case DRM_FORMAT_YVU420:
+#ifdef FORMAT_WORKAROUND_FOR_PXP
+            halFormat = G2D_I420;
+#else
             halFormat = G2D_YV12;
+#endif
             break;
         case DRM_FORMAT_NV16:
             halFormat = G2D_NV16;
@@ -648,13 +662,16 @@ enum g2d_format DeviceComposer::convertFormat(uint32_t format, buffer_handle_t h
             halFormat = G2D_NV12;
             break;
 #endif
+        case DRM_FORMAT_R8:
+            halFormat = G2D_GRAY8;
+            break;
         default:
             ALOGE("%s: unsupported format:0x%x", __FUNCTION__, format);
             halFormat = G2D_RGBA8888;
             break;
     }
 
-    halFormat = alterFormat(handle, halFormat);
+    halFormat = alterFormat(buff, halFormat);
     return halFormat;
 }
 
@@ -709,53 +726,107 @@ int DeviceComposer::convertBlending(common::BlendMode blending, struct g2d_surfa
     return 0;
 }
 
-int DeviceComposer::getAlignedSize(buffer_handle_t handle, int* width, int* height) {
-    if (mGetAlignedSize == NULL) {
+//-----------------------Start of API wrappers for libgpuhelper.so------------------------------
+inline int checkGpuHelperLimitation(G2dBuffer& buff) {
+#ifdef G2D_LIMITATION_DPU
+    // Don't call gpuhelper APIs for P010_TILED and NV12_TILED
+    if (buff.info.format == HAL_PIXEL_FORMAT_P010_TILED ||
+        buff.info.format == HAL_PIXEL_FORMAT_NV12_TILED)
+        return -1;
+    else
+        return 0;
+#else
+    return 0;
+#endif
+}
+
+int DeviceComposer::getAlignedSize(G2dBuffer& buff, int* width, int* height) {
+    if (mGetAlignedSize == NULL || checkGpuHelperLimitation(buff) != 0) {
         return -EINVAL;
     }
 
-    return (*mGetAlignedSize)((void*)handle, (void*)width, (void*)height);
+    return (*mGetAlignedSize)((void*)buff.hnd, (void*)width, (void*)height);
 }
 
-int DeviceComposer::getFlipOffset(buffer_handle_t handle, uint32_t* offset) {
-    if (mGetFlipOffset == NULL) {
+int DeviceComposer::getFlipOffset(G2dBuffer& buff, uint32_t* offset) {
+    if (mGetFlipOffset == NULL || checkGpuHelperLimitation(buff) != 0) {
         return -EINVAL;
     }
 
-    return (*mGetFlipOffset)((void*)handle, (void*)offset);
+    return (*mGetFlipOffset)((void*)buff.hnd, (void*)offset);
 }
 
-int DeviceComposer::getTiling(buffer_handle_t handle, enum g2d_tiling* tile) {
-    if (mGetTiling == NULL) {
+int DeviceComposer::getTiling(G2dBuffer& buff, enum g2d_tiling* tile) {
+    if (mGetTiling == NULL || checkGpuHelperLimitation(buff) != 0) {
         return -EINVAL;
     }
 
-    return (*mGetTiling)((void*)handle, (void*)tile);
+    return (*mGetTiling)((void*)buff.hnd, (void*)tile);
 }
 
-enum g2d_format DeviceComposer::alterFormat(buffer_handle_t handle, enum g2d_format format) {
-    if (mAlterFormat == NULL) {
+enum g2d_format DeviceComposer::alterFormat(G2dBuffer& buff, enum g2d_format format) {
+    if (mAlterFormat == NULL || checkGpuHelperLimitation(buff) != 0) {
         return format;
     }
 
-    return (enum g2d_format)(*mAlterFormat)((void*)handle, (void*)format);
+    return (enum g2d_format)(*mAlterFormat)((void*)buff.hnd, (void*)format);
 }
 
-int DeviceComposer::lockSurface(buffer_handle_t handle) {
-    if (mLockSurface == NULL) {
+int DeviceComposer::alignTile(int* width, int* height, int format, int usage) {
+    if (mAlignTile == NULL) {
+        return -EINVAL;
+    }
+    return (*mAlignTile)(width, height, (void*)(intptr_t)format, (void*)(intptr_t)usage);
+}
+
+int DeviceComposer::getTileStatus(G2dBuffer& buff, struct g2d_surfaceEx* surfaceX) {
+    if (mGetTileStatus == NULL || checkGpuHelperLimitation(buff) != 0) {
         return -EINVAL;
     }
 
-    return (*mLockSurface)((void*)handle);
+    return (*mGetTileStatus)((void*)buff.hnd, surfaceX);
 }
 
-int DeviceComposer::unlockSurface(buffer_handle_t handle) {
-    if (mUnlockSurface == NULL) {
+int DeviceComposer::resolveTileStatus(G2dBuffer& buff) {
+    if (mResolveTileStatus == NULL || checkGpuHelperLimitation(buff) != 0) {
         return -EINVAL;
     }
 
-    return (*mUnlockSurface)((void*)handle);
+    return (*mResolveTileStatus)((void*)buff.hnd);
 }
+
+int DeviceComposer::lockSurface(G2dBuffer& buff) {
+    if (mLockSurface == NULL || checkGpuHelperLimitation(buff) != 0) {
+        return -EINVAL;
+    }
+
+#ifndef G2D_LIMITATION_VIV
+    buff.originPhys = buff.info.phys;
+#endif
+    int ret = (*mLockSurface)((void*)buff.hnd);
+#ifdef G2D_LIMITATION_VIV
+    // The phys in handle will change after lockSurface() if GPU disable flat-mapping, update info
+    getPhysFromHandle(buff.hnd, &buff.info.phys);
+#endif
+
+    return ret;
+}
+
+int DeviceComposer::unlockSurface(G2dBuffer& buff) {
+    if (mUnlockSurface == NULL || checkGpuHelperLimitation(buff) != 0) {
+        return -EINVAL;
+    }
+
+    int ret = (*mUnlockSurface)((void*)buff.hnd);
+#ifndef G2D_LIMITATION_VIV
+    // Restore the original phys to handle after unlockSurface(), so the phys are correct for next
+    //  frame composition when use DPU or PXP.
+    setPhysToHandle(buff.hnd, buff.originPhys);
+#endif
+
+    return ret;
+}
+//-----------------------End of API wrappers for libgpuhelper.so--------------------------------
 
 int DeviceComposer::setClipping(common::Rect& /*src*/, common::Rect& /*dst*/, common::Rect& clip,
                                 common::Transform /*rotation*/) {
@@ -832,18 +903,17 @@ bool DeviceComposer::isFeatureSupported(g2d_feature feature) {
     return (enable != 0);
 }
 
-int DeviceComposer::getBuffPhys(buffer_handle_t handle, uint64_t* phys) {
+int DeviceComposer::getBuffPhys(G2dBuffer& buff, uint64_t* phys) {
     if (mBuffInfoFromFd == NULL) {
         return -EINVAL;
     }
 
-    HandleInfo info;
-    if (handle == NULL || (getInfoFromHandle(handle, &info) != 0)) {
+    if (buff.hnd == NULL) {
         ALOGE("%s: handle is invalid!", __FUNCTION__);
         return -EINVAL;
     }
 
-    struct g2d_buf* buf = (struct g2d_buf*)(*mBuffInfoFromFd)((void*)(intptr_t)info.fd);
+    struct g2d_buf* buf = (struct g2d_buf*)(*mBuffInfoFromFd)((void*)(intptr_t)buff.info.fd);
     if (buf && buf->buf_paddr)
         *phys = static_cast<uint64_t>(buf->buf_paddr);
 
@@ -863,29 +933,6 @@ int DeviceComposer::createFenceFd(void* handle) {
     return (*mCreateFenceFd)((void*)handle);
 }
 
-int DeviceComposer::alignTile(int* width, int* height, int format, int usage) {
-    if (mAlignTile == NULL) {
-        return -EINVAL;
-    }
-    return (*mAlignTile)(width, height, (void*)(intptr_t)format, (void*)(intptr_t)usage);
-}
-
-int DeviceComposer::getTileStatus(buffer_handle_t handle, struct g2d_surfaceEx* surfaceX) {
-    if (mGetTileStatus == NULL) {
-        return -EINVAL;
-    }
-
-    return (*mGetTileStatus)((void*)handle, surfaceX);
-}
-
-int DeviceComposer::resolveTileStatus(buffer_handle_t handle) {
-    if (mResolveTileStatus == NULL) {
-        return -EINVAL;
-    }
-
-    return (*mResolveTileStatus)((void*)handle);
-}
-
 bool DeviceComposer::checkMustDeviceComposition(Layer* layer) {
     DEBUG_LOG("%s: check layer %ld", __FUNCTION__, layer->getId());
 
@@ -897,7 +944,8 @@ bool DeviceComposer::checkMustDeviceComposition(Layer* layer) {
 
     // vpu tile format must be handled by device.
     if (layerBuffer != nullptr &&
-        (info.modifier == DRM_FORMAT_MOD_AMPHION_TILED || info.usage & GRALLOC_USAGE_PROTECTED)) {
+        (info.modifier == DRM_FORMAT_MOD_AMPHION_TILED || info.usage & GRALLOC_USAGE_PROTECTED ||
+         info.drm_format == DRM_FORMAT_R8)) {
         DEBUG_LOG("%s: 2d composition is must", __FUNCTION__);
         return true;
     }
@@ -940,7 +988,21 @@ bool DeviceComposer::checkDeviceComposition(Layer* layer) {
         return false;
     }
 #endif
+#ifdef PXP_LIMITATION_DOWN_SCALE
+    common::Rect rect = layer->getDisplayFrame();
+    int w = (rect.right - rect.left);
+    int h = (rect.bottom - rect.top);
+    common::Rect srect = layer->getSourceCropInt();
+    int srcW = srect.right - srect.left;
+    int srcH = srect.bottom - srect.top;
 
+    if ((srcW > w) || (srcH > h)) {
+        // PXP of imx943 A0 don't support down-scaling
+        DEBUG_LOG("%s: layer %" PRId64 " scaling(src: %d x %d, dst: %d x %d) check failed",
+                  __FUNCTION__, layer->getId(), srcW, srcH, w, h);
+        return false;
+    }
+#endif
 #ifdef G2D_LIMITATION_VIV
     if (info.drm_format == DRM_FORMAT_ABGR2101010) {
         DEBUG_LOG("%s: g2d can't support ABGR2101010 format", __FUNCTION__);
@@ -972,15 +1034,17 @@ std::tuple<bool, ::android::base::unique_fd> DeviceComposer::composeLayers(
     DEBUG_LOG("%s: ------%zu layers compose to target-------", __FUNCTION__, layers.size());
     ATRACE_CALL();
 
-    if (!target) {
+    Mutex::Autolock _l(sLock);
+    if (!target || (getInfoFromHandle(target, &mTarget.info) != 0)) {
         ALOGE("%s: composer target buffer is invalid", __FUNCTION__);
         return std::make_tuple(false, ::android::base::unique_fd());
     }
+    mTarget.hnd = target;
+    DEBUG_LOG_G2D("%s: --------target(fd=%d, %d x %d)--------", __FUNCTION__, mTarget.info.fd,
+                  mTarget.info.width, mTarget.info.height);
 
-    Mutex::Autolock _l(sLock);
-    lockSurface(target);
-    setRenderTarget(target);
-    clearWormHole(layers);
+    lockSurface(mTarget);
+    clearWormHole(layers, mTarget);
 
     // to do composite.
     int i = 0, ret = 0;
@@ -989,13 +1053,15 @@ std::tuple<bool, ::android::base::unique_fd> DeviceComposer::composeLayers(
             // set side band parameters.
             continue;
 
-        auto layerBuffer = layer->getBuffer().getBuffer();
-        if (layerBuffer != NULL)
+        auto hnd = layer->getBuffer().getBuffer();
+        G2dBuffer layerBuffer;
+        layerBuffer.hnd = hnd;
+        if (layerBuffer.hnd != NULL && (getInfoFromHandle(layerBuffer.hnd, &layerBuffer.info) == 0))
             lockSurface(layerBuffer);
 
-        ret = composeLayerLocked(layer, i == 0);
+        ret = composeLayerLocked(layer, layerBuffer, mTarget, i == 0);
 
-        if (layerBuffer != NULL)
+        if (layerBuffer.hnd != NULL)
             unlockSurface(layerBuffer);
 
         if (ret != 0) {
@@ -1006,7 +1072,7 @@ std::tuple<bool, ::android::base::unique_fd> DeviceComposer::composeLayers(
     }
     ::android::base::unique_fd composeFence(createFenceFd(getHandle()));
 
-    unlockSurface(target);
+    unlockSurface(mTarget);
 
     if (!composeFence.ok())
         finishComposite();

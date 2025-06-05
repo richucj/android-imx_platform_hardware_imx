@@ -1,7 +1,7 @@
 /*
  * Copyright (C) 2008 The Android Open Source Project
  * Copyright (C) 2012-2015 Freescale Semiconductor, Inc.
- * Copyright 2017-2018 NXP
+ * Copyright 2017-2018, 2025 NXP
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -55,7 +55,8 @@ public:
      */
     virtual int encode(void *inYuv, void *inYuvPhy, int inSize, int inFd, buffer_handle_t inHandle,
                        int inWidth, int inHeight, int quality, void *outBuf, int outSize,
-                       int outWidth, int outHeight, const void *app1Buffer, size_t app1Size);
+                       int outWidth, int outHeight, const void *app1Buffer, size_t app1Size,
+                       bool debug = false);
 
     virtual ~YuvToJpegEncoder() {}
     int getColorFormat() { return mColorFormat; }
@@ -81,6 +82,7 @@ protected:
                           __attribute__((unused)) int dstWidth,
                           __attribute__((unused)) int dstHeight);
     bool supportVpu;
+    bool mDebug;
 };
 
 class Yuv420SpToJpegEncoder : public YuvToJpegEncoder {

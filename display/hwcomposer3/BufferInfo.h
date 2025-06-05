@@ -44,5 +44,7 @@ struct HandleInfo {
 };
 
 int getInfoFromHandle(buffer_handle_t handle, HandleInfo* info);
+int getPhysFromHandle(buffer_handle_t handle, uint64_t* outPhys);
+int setPhysToHandle(buffer_handle_t handle, uint64_t phys);
 
 } // namespace aidl::android::hardware::graphics::composer3::impl

@@ -33,6 +33,12 @@ typedef int (*hwc_func4)(void* handle, void* arg1, void* arg2, void* arg3);
 typedef int (*hwc_func5)(void* handle, void* arg1, void* arg2, void* arg3, void* arg4);
 typedef void* (*hwc_buf_func)(void* arg1);
 
+struct G2dBuffer {
+    buffer_handle_t hnd;
+    HandleInfo info;
+    uint64_t originPhys; // used in lockSurface()/unlockSurface()
+};
+
 using ::android::Mutex;
 
 class DeviceComposer {
@@ -57,37 +63,35 @@ public:
 private:
     void* getHandle();
 
-    // set composite target buffer.
-    int setRenderTarget(buffer_handle_t memory);
     // clear worm hole introduced by layers not cover whole screen.
-    int clearWormHole(std::vector<Layer*>& layers);
+    int clearWormHole(std::vector<Layer*>& layers, G2dBuffer& target);
     // compose display layer.
-    int composeLayerLocked(Layer* layer, bool bypass);
+    int composeLayerLocked(Layer* layer, G2dBuffer& layerBuffer, G2dBuffer& targetBuffer,
+                           bool bypass);
     // sync 2D blit engine.
     int finishComposite();
-    // lock surface to get GPU specific resource.
-    int lockSurface(buffer_handle_t handle);
-    // unlock surface to release resource.
-    int unlockSurface(buffer_handle_t handle);
     bool isFeatureSupported(g2d_feature feature);
 
-    int setG2dSurface(struct g2d_surfaceEx& surfaceX, buffer_handle_t handle, common::Rect& rect);
-    enum g2d_format convertFormat(uint32_t format, buffer_handle_t handle);
+    int setG2dSurface(struct g2d_surfaceEx& surfaceX, G2dBuffer& buff, common::Rect& rect);
+    enum g2d_format convertFormat(uint32_t format, G2dBuffer& buff);
     int convertRotation(common::Transform transform, struct g2d_surface& src,
                         struct g2d_surface& dst);
     int convertBlending(common::BlendMode blending, struct g2d_surface& src,
                         struct g2d_surface& dst);
-    int prepareSolidColorBuffer();
-    int prepareG2dTempBuffer(buffer_handle_t srcBuffer, uint32_t newFormat,
-                             buffer_handle_t* tempBuffer, HandleInfo* tempBufInfo);
-    int clearRect(buffer_handle_t target, common::Rect& rect);
+    int prepareSolidColorBuffer(G2dBuffer& target);
+    int prepareG2dTempBuffer(G2dBuffer& srcBuffer, uint32_t newFormat, G2dBuffer* tempBuffer);
+    int clearRect(G2dBuffer& buff, common::Rect& rect);
 
-    int getAlignedSize(buffer_handle_t handle, int* width, int* height);
-    int getFlipOffset(buffer_handle_t handle, uint32_t* offset);
-    int getTiling(buffer_handle_t handle, enum g2d_tiling* tile);
-    int getTileStatus(buffer_handle_t handle, struct g2d_surfaceEx* surfaceX);
-    int resolveTileStatus(buffer_handle_t handle);
-    enum g2d_format alterFormat(buffer_handle_t handle, enum g2d_format format);
+    int getAlignedSize(G2dBuffer& buff, int* width, int* height);
+    int getFlipOffset(G2dBuffer& buff, uint32_t* offset);
+    int getTiling(G2dBuffer& buff, enum g2d_tiling* tile);
+    enum g2d_format alterFormat(G2dBuffer& buff, enum g2d_format format);
+    int getTileStatus(G2dBuffer& buff, struct g2d_surfaceEx* surfaceX);
+    int resolveTileStatus(G2dBuffer& buff);
+    // lock surface to get GPU specific resource.
+    int lockSurface(G2dBuffer& buff);
+    // unlock surface to release resource.
+    int unlockSurface(G2dBuffer& buff);
 
     int setClipping(common::Rect& src, common::Rect& dst, common::Rect& clip,
                     common::Transform rotation);
@@ -97,7 +101,7 @@ private:
     int clearFunction(void* handle, struct g2d_surface* area);
     int enableFunction(void* handle, enum g2d_cap_mode cap, bool enable);
     int finishEngine(void* handle);
-    int getBuffPhys(buffer_handle_t handle, uint64_t* phys);
+    int getBuffPhys(G2dBuffer& buff, uint64_t* phys);
     int createFenceFd(void* handle);
 
 private:
@@ -106,12 +110,10 @@ private:
 
     bool mG2dPrefered;
 
-    buffer_handle_t mTarget = NULL;
-    buffer_handle_t mSolidColorBuffer = NULL;
-    HandleInfo mSolidColorBuffInfo;
+    G2dBuffer mTarget;
+    G2dBuffer mSolidColorBuffer;
 #ifdef G2D_FORMAT_CONVERSION
-    buffer_handle_t mG2dConvertBuffer = NULL;
-    HandleInfo mG2dConvertBuffInfo;
+    G2dBuffer mG2dConvertBuffer;
 #endif
 
     hwc_func3 mGetAlignedSize;

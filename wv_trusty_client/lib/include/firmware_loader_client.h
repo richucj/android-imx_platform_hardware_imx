@@ -27,6 +27,7 @@ enum firmware_loader_error : uint32_t {
     FIRMWARE_LOADER_ERR_INVALID_VERSION,
     FIRMWARE_LOADER_ERR_POLICY_VIOLATION,
     FIRMWARE_LOADER_ERR_NOT_ENCRYPTED,
+    FIRMWARE_LOADER_ERR_NONE_KEY,
 };
 
 struct firmware_loader_header {
@@ -35,6 +36,7 @@ struct firmware_loader_header {
 
 struct firmware_loader_load_firmware_req {
     uint64_t package_size;
+    uint8_t secure;
 } __packed;
 
 struct firmware_loader_resp {

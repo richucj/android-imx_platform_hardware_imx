@@ -1,5 +1,5 @@
 /*
- *  Copyright 2023-2024 NXP.
+ *  Copyright 2023-2025 NXP.
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -86,6 +86,7 @@ int AllocPhyBuffer(uint32_t width, uint32_t height, uint32_t format, ImxImageBuf
                    bool bCached = true);
 int FreePhyBuffer(buffer_handle_t buffer);
 uint64_t GetPhyAddrFromBuffer(int fd);
+int SyncBuffer(int bufFd, int operation);
 int UnlockPhyBuffer(buffer_handle_t buffer);
 int GetBufferInfoFromHandle(buffer_handle_t buffer, ImxImageBuffer &outBufInfo);
 void SwitchImxBuf(ImxImageBuffer &imxBufA, ImxImageBuffer &imxBufB);

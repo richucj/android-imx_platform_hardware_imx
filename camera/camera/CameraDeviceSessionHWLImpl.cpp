@@ -228,6 +228,8 @@ status_t CameraDeviceSessionHwlImpl::Initialize(uint32_t camera_id,
     m_raw_v4l2_format = pDev->m_raw_v4l2_format;
     m_color_arrange = pDev->m_color_arrange;
 
+    m_bConfigV4L2ByIntent = false;
+
     return OK;
 }
 
@@ -333,10 +335,6 @@ int CameraDeviceSessionHwlImpl::HandleIntent(HwlPipelineRequest *hwReq) {
             fps = entry.data.i32[0];
     }
 
-    // In HDR mode, max fps is 30
-    if ((sceneMode == ANDROID_CONTROL_SCENE_MODE_HDR) && (fps > 30))
-        fps = 30;
-
     PipelineInfo *pipeline_info = GetPipelineInfo(pipeline_id);
     if (pipeline_info == NULL) {
         ALOGW("%s: Unexpected, pipeline %d is invalid", __func__, pipeline_id);
@@ -423,6 +421,57 @@ void CameraDeviceSessionHwlImpl::ReleaseFrameRequest(FrameRequest &frameRequest)
     return;
 }
 
+int CameraDeviceSessionHwlImpl::StartStreamOnMaxConfiguredResolution(HwlPipelineRequest *hwReq) {
+    int ret = 0;
+    camera_metadata_ro_entry entry;
+
+    if (hwReq == NULL)
+        return BAD_VALUE;
+
+    if ((hwReq->settings == NULL) && pVideoStreams[0]->isStart())
+        return 0;
+
+    uint32_t format = HAL_PIXEL_FORMAT_YCbCr_422_I;
+    if (strcmp(mSensorData.v4l2_format, "nv12") == 0)
+        format = HAL_PIXEL_FORMAT_YCbCr_420_SP;
+
+    int sceneMode = pVideoStreams[0]->mSceneMode;
+    if (hwReq->settings != NULL) {
+        ret = hwReq->settings->Get(ANDROID_CONTROL_SCENE_MODE, &entry);
+        if (ret == 0)
+            sceneMode = entry.data.u8[0];
+    }
+
+    uint32_t fps = pVideoStreams[0]->mFps;
+    if (fps == 0)
+        fps = 30;
+    if (hwReq->settings != NULL) {
+        ret = hwReq->settings->Get(ANDROID_CONTROL_AE_TARGET_FPS_RANGE, &entry);
+        if ((ret == 0) && (entry.count > 1)) {
+            ALOGI("%s: request fps range[%d, %d]", __func__, entry.data.i32[0], entry.data.i32[1]);
+            if (entry.data.i32[0] <= 15 && entry.data.i32[1] <= 15)
+                fps = 15;
+            else if (strstr(mSensorData.camera_name, ISP_SENSOR_NAME))
+                fps = entry.data.i32[0];
+        }
+    }
+
+    uint8_t captureIntent = pVideoStreams[0]->mCaptureIntent;
+    pVideoStreams[0]->SetBufferNumber(NUM_PREVIEW_BUFFER + 1);
+
+    // If already start, but sceneMode/fps changed, need also restart stream
+    if ((!pVideoStreams[0]->isStart()) || (fps != pVideoStreams[0]->mFps) ||
+        (sceneMode != pVideoStreams[0]->mSceneMode))
+        ret = pVideoStreams[0]->ConfigAndStart(format, maxStreamWidth, maxStreamHeight, fps,
+                                               captureIntent, sceneMode);
+    if (ret) {
+        ALOGE("%s: ConfigAndStart failed, ret %d", __func__, ret);
+        return ret;
+    }
+
+    return OK;
+}
+
 int CameraDeviceSessionHwlImpl::HandleRequest() {
     mLock.lock();
 
@@ -468,7 +517,17 @@ int CameraDeviceSessionHwlImpl::HandleRequest() {
             continue;
         }
 
-        HandleIntent(hwReq);
+        int ret = 0;
+        if (m_bConfigV4L2ByIntent)
+            ret = HandleIntent(hwReq);
+        else {
+            ret = StartStreamOnMaxConfiguredResolution(hwReq);
+        }
+
+        if (ret) {
+            ALOGE("%s: start video stream failed, ret %d", __func__, ret);
+            return ret;
+        }
 
         // ISP process based on meta
         for (int stream_id = 0; stream_id < (int)pVideoStreams.size(); ++stream_id) {
@@ -476,7 +535,7 @@ int CameraDeviceSessionHwlImpl::HandleRequest() {
         }
 
         // capture v4l2 buffer and feed to mImageList
-        status_t ret = CapAndFeed(frame, frameRequest);
+        ret = CapAndFeed(frame, frameRequest);
         if (ret)
             ReleaseFrameRequest(*frameRequest);
     }
@@ -1014,31 +1073,34 @@ status_t CameraDeviceSessionHwlImpl::ProcessCapbuf2Outbuf(ImxStreamBuffer *srcBu
     if (dstBuf == NULL)
         return BAD_VALUE;
 
-    // limit the container size
-    ImxStream *src = srcBuf->mStream;
-    ImxStream *dst = dstBuf->mStream;
-    if (setDstPhyAddr.size() >= 20) {
-        ALOGW("%s: erase the previous old addr: 0x%lx", __func__, *(setDstPhyAddr.begin()));
-        setDstPhyAddr.erase(setDstPhyAddr.begin());
-    }
+    if (m_bConfigV4L2ByIntent) {
+        // limit the container size
+        ImxStream *src = srcBuf->mStream;
+        ImxStream *dst = dstBuf->mStream;
 
-    // Adapt for Camra2.apk. The picture resolution may differ from preview resolution.
-    // If resize for preview stream, there will be obvious changes in the preview when taking
-    // picture. And if there is a new dst addr, the process will not be skipped, otherwise it will
-    // flash green.
-    if (((src->width() != dst->width()) || (src->height() != dst->height())) && dst->isPreview() &&
-        src->isPictureIntent()) {
-        if (!setDstPhyAddr.empty() &&
-            (setDstPhyAddr.find(dstBuf->mPhyAddr) != setDstPhyAddr.end())) {
-            isSkipHandle = true;
-            ALOGW("%s: resize from %dx%d to %dx%d, skip preview stream while taking picture",
-                  __func__, src->width(), src->height(), dst->width(), dst->height());
-        } else {
-            ALOGW("%s: Don't skip the preview stream handle, new dst phy addr 0x%lx appear",
-                  __func__, dstBuf->mPhyAddr);
+        if (setDstPhyAddr.size() >= 20) {
+            ALOGW("%s: erase the previous old addr: 0x%lx", __func__, *(setDstPhyAddr.begin()));
+            setDstPhyAddr.erase(setDstPhyAddr.begin());
         }
+
+        // Adapt for Camra2.apk. The picture resolution may differ from preview resolution.
+        // If resize for preview stream, there will be obvious changes in the preview when taking
+        // picture. And if there is a new dst addr, the process will not be skipped, otherwise it
+        // will flash green.
+        if (((src->width() != dst->width()) || (src->height() != dst->height())) &&
+            dst->isPreview() && src->isPictureIntent()) {
+            if (!setDstPhyAddr.empty() &&
+                (setDstPhyAddr.find(dstBuf->mPhyAddr) != setDstPhyAddr.end())) {
+                isSkipHandle = true;
+                ALOGW("%s: resize from %dx%d to %dx%d, skip preview stream while taking picture",
+                      __func__, src->width(), src->height(), dst->width(), dst->height());
+            } else {
+                ALOGW("%s: Don't skip the preview stream handle, new dst phy addr 0x%lx appear",
+                      __func__, dstBuf->mPhyAddr);
+            }
+        }
+        setDstPhyAddr.insert(dstBuf->mPhyAddr);
     }
-    setDstPhyAddr.insert(dstBuf->mPhyAddr);
 
     uint64_t t1 = systemTime();
 
@@ -1288,7 +1350,7 @@ int32_t CameraDeviceSessionHwlImpl::processJpegBuffer(ImxStreamBuffer *srcBuf,
                                    thumbWidth, thumbHeight, encodFormat);
     }
 
-    ret = mJpegBuilder->encodeImage(mainJpeg, thumbJpeg, mJpegHw, (*meta));
+    ret = mJpegBuilder->encodeImage(mainJpeg, thumbJpeg, mJpegHw, (*meta), mDebug);
     if (ret != NO_ERROR) {
         ALOGE("%s encodeImage failed", __func__);
         goto err_out;
@@ -1542,6 +1604,9 @@ status_t CameraDeviceSessionHwlImpl::ConfigurePipeline(
     rawIdx = -1;
     is_logical_request_ = false;
 
+    maxStreamWidth = 0;
+    maxStreamHeight = 0;
+
     for (int i = 0; i < stream_num; i++) {
         Stream stream = request_config.streams[i];
         ALOGI("%s, stream %d: id %d, type %d, res %dx%d, format 0x%x, usage 0x%llx, space 0x%x, "
@@ -1549,6 +1614,11 @@ status_t CameraDeviceSessionHwlImpl::ConfigurePipeline(
               __func__, i, stream.id, (int)stream.stream_type, stream.width, stream.height,
               stream.format, (unsigned long long)stream.usage, stream.data_space, (int)stream.rotation,
               stream.is_physical_camera_stream, stream.physical_camera_id, stream.buffer_size);
+
+        if ((stream.width > maxStreamWidth) && (stream.height > maxStreamHeight)) {
+            maxStreamWidth = stream.width;
+            maxStreamHeight = stream.height;
+        }
 
         uint32_t mcamera_id =
                 stream.is_physical_camera_stream ? stream.physical_camera_id : camera_id_;
@@ -1579,11 +1649,8 @@ status_t CameraDeviceSessionHwlImpl::ConfigurePipeline(
 
             case HAL_PIXEL_FORMAT_IMPLEMENTATION_DEFINED:
                 if (strcmp(mSensorData.v4l2_format, "nv12") == 0) {
-                    if (strstr(socType, "imx93")) {
-                        hal_stream.override_format = HAL_PIXEL_FORMAT_YV12;
-                    } else {
-                        hal_stream.override_format = HAL_PIXEL_FORMAT_YCBCR_420_888;
-                    }
+                    ALOGI("HAL_PIXEL_FORMAT_IMPLEMENTATION_DEFINED, use nv12");
+                    hal_stream.override_format = HAL_PIXEL_FORMAT_YCBCR_420_888;
                 } else
                     hal_stream.override_format = HAL_PIXEL_FORMAT_YCBCR_422_I;
 
@@ -1612,6 +1679,13 @@ status_t CameraDeviceSessionHwlImpl::ConfigurePipeline(
                 callbackIdx = i;
                 break;
         }
+
+        // ISP funcitons such as AEC/AWB are not applied on raw image, so need configure
+        // w/h/format by capture intent. Or the YUV preview may has bad quality.
+        if (rawIdx >= 0)
+            m_bConfigV4L2ByIntent = true;
+        else
+            m_bConfigV4L2ByIntent = false;
 
         hal_stream.producer_usage = stream.usage | usage;
         hal_stream.consumer_usage = 0;

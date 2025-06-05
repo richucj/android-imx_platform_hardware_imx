@@ -1,5 +1,5 @@
 /*
- *  Copyright 2020 NXP.
+ *  Copyright 2020, 2025 NXP.
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -101,6 +101,10 @@ status_t CameraProviderHwlImpl::Initialize() {
     mCameraCfgParser.Init();
     mCameraDef = mCameraCfgParser.mcamera();
     memset(&mCallback, 0, sizeof(mCallback));
+
+    // create singleton "ImageProcess" object, so the dlopen, g2d_open/cl_g2d_open
+    // can be done in HW init, save time for CTS.
+    fsl::ImageProcess::getInstance();
 
     return OK;
 }
