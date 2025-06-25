@@ -174,6 +174,11 @@ status_t CameraDeviceSessionHwlImpl::Initialize(uint32_t camera_id,
     else
         m_libcamera_stream_format = HAL_PIXEL_FORMAT_YCBCR_422_I;
 
+    if (strstr(mSensorData.camera_name, "mx95mbcam")) {
+        m_libcamera_stream_width = 1920;
+        m_libcamera_stream_height = 1280;
+    }
+
     m_bConfigLibcameraByIntent = false;
 
     mPreviewResolutionCount = pDev->mPreviewResolutionCount;
@@ -181,7 +186,11 @@ status_t CameraDeviceSessionHwlImpl::Initialize(uint32_t camera_id,
     mPictureResolutionCount = pDev->mPictureResolutionCount;
     memcpy(mPictureResolutions, pDev->mPictureResolutions, MAX_RESOLUTION_SIZE * sizeof(int));
 
-    camera_->acquire();
+    ret = (camera_->acquire());
+    if (ret != 0) {
+        ALOGE("%s: camera_->acquire(), %d\n", __FUNCTION__, ret);
+        return EBUSY;
+    }
     camera_->requestCompleted.connect(this, &CameraDeviceSessionHwlImpl::requestComplete);
 
     property_get("ro.boot.soc_type", mSocType, "");
@@ -872,7 +881,11 @@ status_t CameraDeviceSessionHwlImpl::ConfigurePipeline(
             case HAL_PIXEL_FORMAT_IMPLEMENTATION_DEFINED:
                 if (strcmp(mSensorData.v4l2_format, "nv12") == 0) {
                     ALOGI("HAL_PIXEL_FORMAT_IMPLEMENTATION_DEFINED, use nv12");
-                    hal_stream.override_format = HAL_PIXEL_FORMAT_YCBCR_420_888;
+                    if (strstr(mSocType, "imx93")) {
+                        hal_stream.override_format = HAL_PIXEL_FORMAT_YV12;
+                    } else {
+                        hal_stream.override_format = HAL_PIXEL_FORMAT_YCBCR_420_888;
+                    }
                 } else
                     hal_stream.override_format = HAL_PIXEL_FORMAT_YCBCR_422_I;
 

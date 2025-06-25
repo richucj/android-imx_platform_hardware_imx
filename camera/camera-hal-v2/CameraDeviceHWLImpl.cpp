@@ -143,8 +143,8 @@ bool CameraDeviceHwlImpl::PickResByMetaData(int width, int height) {
 
 static int resCandidatePreview_os08a20[] = {320, 240, 640, 480, 1280, 720, 1920, 1080};
 static int resCandidatePicture_os08a20[] = {320, 240, 640, 480, 1280, 720, 1920, 1080, 3840, 2160};
-static int resCandidatePreview_ox03c10[] = {320, 240, 640, 480, 1920, 1080};
-static int resCandidatePicture_ox03c10[] = {320, 240, 640, 480, 1920, 1080, 1920, 1280};
+static int resCandidatePreview_mx95mbcam[] = {320, 240, 640, 480, 1280, 720, 1920, 1080, 1920, 1280};
+static int resCandidatePicture_mx95mbcam[] = {320, 240, 640, 480, 1280, 720, 1920, 1080, 1920, 1280};
 static int resCandidatePreview_ap1302[] = {320, 240, 640, 480, 1280, 720, 1280, 800};
 static int resCandidatePicture_ap1302[] = {320, 240, 640, 480, 1280, 720, 1280, 800};
 static int resCandidatePreview_ov5640[] = {320, 240, 640, 480, 1024, 768, 1280, 720, 1920, 1080};
@@ -186,11 +186,6 @@ status_t CameraDeviceHwlImpl::initSensorStaticData() {
         numResCandidatePreview = ARRAY_SIZE(resCandidatePreview_os08a20);
         pResCandidatePicture = resCandidatePicture_os08a20;
         numResCandidatePicture = ARRAY_SIZE(resCandidatePicture_os08a20);
-    } else if (strstr(mSensorData.camera_name, "ox03c10")) {
-        pResCandidatePreview = resCandidatePreview_ox03c10;
-        numResCandidatePreview = ARRAY_SIZE(resCandidatePreview_ox03c10);
-        pResCandidatePicture = resCandidatePicture_ox03c10;
-        numResCandidatePicture = ARRAY_SIZE(resCandidatePicture_ox03c10);
     } else if (strstr(mSensorData.camera_name, "ap1302")) {
         pResCandidatePreview = resCandidatePreview_ap1302;
         numResCandidatePreview = ARRAY_SIZE(resCandidatePreview_ap1302);
@@ -201,6 +196,11 @@ status_t CameraDeviceHwlImpl::initSensorStaticData() {
         numResCandidatePreview = ARRAY_SIZE(resCandidatePreview_ov5640);
         pResCandidatePicture = resCandidatePicture_ov5640;
         numResCandidatePicture = ARRAY_SIZE(resCandidatePicture_ov5640);
+    } else if (strstr(mSensorData.camera_name, "mx95mbcam")) {
+        pResCandidatePreview = resCandidatePreview_mx95mbcam;
+        numResCandidatePreview = ARRAY_SIZE(resCandidatePreview_mx95mbcam);
+        pResCandidatePicture = resCandidatePicture_mx95mbcam;
+        numResCandidatePicture = ARRAY_SIZE(resCandidatePicture_mx95mbcam);
     } else {
         ALOGE("%s: unsupported camera %s", __func__, mSensorData.camera_name);
         return BAD_VALUE;
@@ -250,7 +250,7 @@ status_t CameraDeviceHwlImpl::initSensorStaticData() {
     }
 
     int fpsRange_os08a20[] = {10, 30, 15, 30, 30, 30};
-    int fpsRange_ox03c10[] = {10, 30, 15, 30, 30, 30};
+    int fpsRange_mx95mbcam[] = {10, 30, 15, 30, 30, 30};
     int fpsRange_ap1302[] = {10, 30, 15, 30, 30, 30, 15, 60, 60, 60};
     int fpsRange_ov5640[] = {10, 30, 15, 30, 30, 30};
 
@@ -258,10 +258,10 @@ status_t CameraDeviceHwlImpl::initSensorStaticData() {
         int rangeCount = ARRAY_SIZE(fpsRange_os08a20);
         mFpsRangeCount = rangeCount <= MAX_FPS_RANGE ? rangeCount : MAX_FPS_RANGE;
         memcpy(mTargetFpsRange, fpsRange_os08a20, mFpsRangeCount * sizeof(int));
-    } else if (strstr(mSensorData.camera_name, "ox03c10")) {
-        int rangeCount = ARRAY_SIZE(fpsRange_ox03c10);
+    } else if (strstr(mSensorData.camera_name, "mx95mbcam")) {
+        int rangeCount = ARRAY_SIZE(fpsRange_mx95mbcam);
         mFpsRangeCount = rangeCount <= MAX_FPS_RANGE ? rangeCount : MAX_FPS_RANGE;
-        memcpy(mTargetFpsRange, fpsRange_ox03c10, mFpsRangeCount * sizeof(int));
+        memcpy(mTargetFpsRange, fpsRange_mx95mbcam, mFpsRangeCount * sizeof(int));
     } else if (strstr(mSensorData.camera_name, "ap1302")) {
         int rangeCount = ARRAY_SIZE(fpsRange_ap1302);
         mFpsRangeCount = rangeCount <= MAX_FPS_RANGE ? rangeCount : MAX_FPS_RANGE;
