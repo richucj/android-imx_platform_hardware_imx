@@ -254,6 +254,23 @@ bool CameraDeviceHwlImpl::PickResByMetaData(int width, int height) {
     return false;
 }
 
+#define max(a,b) ((a) > (b) ? (a) : (b))
+#define min(a,b) ((a) < (b) ? (a) : (b))
+
+unsigned intersectIntervals(unsigned a1, unsigned a2, unsigned b1, unsigned b2) {
+    unsigned min = max(a1, b1);
+    unsigned goal = min(a2, b2);
+    if (goal < min) {
+
+        ALOGE("%s: No valid width intersection between [%u-%u] and [%u-%u]",
+            __func__,
+            a1, a2,
+            b1, b2);
+            return 0;
+    }
+    return goal;
+}
+
 status_t CameraDeviceHwlImpl::initSensorStaticData() {
     int32_t fd = open(*mDevPath[0], O_RDWR);
 
@@ -295,6 +312,9 @@ status_t CameraDeviceHwlImpl::initSensorStaticData() {
     struct v4l2_frmsizeenum cam_frmsize;
     struct v4l2_frmivalenum vid_frmval;
     while (ret == 0) {
+        unsigned width = 0;
+        unsigned height = 0;
+
         memset(TmpStr, 0, 20);
         memset(&cam_frmsize, 0, sizeof(struct v4l2_frmsizeenum));
         cam_frmsize.index = index++;
@@ -303,39 +323,54 @@ status_t CameraDeviceHwlImpl::initSensorStaticData() {
         if (ret != 0) {
             continue;
         }
-        ALOGI("enum frame size w:%d, h:%d, format 0x%x", cam_frmsize.discrete.width,
-              cam_frmsize.discrete.height, cam_frmsize.pixel_format);
+        if (cam_frmsize.type == V4L2_FRMSIZE_TYPE_DISCRETE) {
+            ALOGI("enum frame size w:%d, h:%d, format 0x%x", cam_frmsize.discrete.width,
+                cam_frmsize.discrete.height, cam_frmsize.pixel_format);
 
-        bool bPicked = PickResByMetaData(cam_frmsize.discrete.width, cam_frmsize.discrete.height);
-        if (!bPicked) {
-            ALOGI("%s: res %dx%d is not picked due to settings in config json", __func__,
-                  cam_frmsize.discrete.width, cam_frmsize.discrete.height);
-            continue;
+            bool bPicked = PickResByMetaData(cam_frmsize.discrete.width, cam_frmsize.discrete.height);
+            if (!bPicked) {
+                ALOGI("%s: res %dx%d is not picked due to settings in config json", __func__,
+                    cam_frmsize.discrete.width, cam_frmsize.discrete.height);
+                continue;
+            }
+            if (cam_frmsize.discrete.width == 0 || cam_frmsize.discrete.height == 0) {
+                continue;
+            }
+
+            if (cam_frmsize.discrete.width <= 160 || cam_frmsize.discrete.height <= 120) {
+                continue;
+            }
+            width = cam_frmsize.discrete.width;
+            height = cam_frmsize.discrete.height;
+        } else {// V4L2_FRMSIZE_TYPE_STEPWISE || V4L2_FRMSIZE_TYPE_CONTINUOUS
+            width = intersectIntervals(cam_frmsize.stepwise.min_width, cam_frmsize.stepwise.max_width,
+                                       mSensorData.mMinWidth, mSensorData.mMaxWidth);
+            height = intersectIntervals(cam_frmsize.stepwise.min_height, cam_frmsize.stepwise.max_height,
+                                       mSensorData.mMinHeight, mSensorData.mMaxHeight);
         }
 
-        if (cam_frmsize.discrete.width == 0 || cam_frmsize.discrete.height == 0) {
-            continue;
-        }
-
-        if (cam_frmsize.discrete.width <= 160 || cam_frmsize.discrete.height <= 120) {
-            continue;
-        }
-
+        vid_frmval.width = width;
+        vid_frmval.height = height;
         vid_frmval.index = 0;
         vid_frmval.pixel_format = cam_frmsize.pixel_format;
-        vid_frmval.width = cam_frmsize.discrete.width;
-        vid_frmval.height = cam_frmsize.discrete.height;
 
         maxFrmfps = 0;
         while (ioctl(fd, VIDIOC_ENUM_FRAMEINTERVALS, &vid_frmval) == 0) {
+            if (cam_frmsize.type == V4L2_FRMSIZE_TYPE_DISCRETE) {
             if (vid_frmval.discrete.numerator == 0)
                 break;
 
             frmfps = vid_frmval.discrete.denominator / vid_frmval.discrete.numerator;
+            } else {
+                ALOGI("Frame interval range: %u/%u to %u/%u",
+                    vid_frmval.stepwise.min.numerator, vid_frmval.stepwise.min.denominator,
+                    vid_frmval.stepwise.max.numerator, vid_frmval.stepwise.max.denominator);
+
+                frmfps = vid_frmval.stepwise.max.denominator / vid_frmval.stepwise.max.numerator;
+            }
             ALOGI("fps %d", frmfps);
             if (frmfps > maxFrmfps)
                 maxFrmfps = frmfps;
-
             vid_frmval.index++;
         }
         ALOGI("maxFrmfps %d", maxFrmfps);
@@ -349,13 +384,13 @@ status_t CameraDeviceHwlImpl::initSensorStaticData() {
         // 176x144 not work in this mode.
         if (!(cam_frmsize.discrete.width == 176 && cam_frmsize.discrete.height == 144) &&
             maxFrmfps >= 5) {
-            mPictureResolutions[pictureCnt++] = cam_frmsize.discrete.width;
-            mPictureResolutions[pictureCnt++] = cam_frmsize.discrete.height;
+            mPictureResolutions[pictureCnt++] = width;
+            mPictureResolutions[pictureCnt++] = height;
         }
 
         if (maxFrmfps >= 15) {
-            mPreviewResolutions[previewCnt++] = cam_frmsize.discrete.width;
-            mPreviewResolutions[previewCnt++] = cam_frmsize.discrete.height;
+            mPreviewResolutions[previewCnt++] = width;
+            mPreviewResolutions[previewCnt++] = height;
         }
     } // end while
 

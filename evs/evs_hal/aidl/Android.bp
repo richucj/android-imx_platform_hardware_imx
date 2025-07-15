@@ -56,7 +56,11 @@ IMXPLUGIN_cc_conditionals {
             },
             conditions_default: {
                 srcs: [
-                    "src/v4l2/*.cpp"
+                    "src/v4l2/*.cpp",
+                    "//vendor/nxp-opensource/imx/camera:RouteMediactl_src"
+                ],
+                include_dirs: [
+                    "vendor/nxp-opensource/imx/camera/camera/include",
                 ],
             },
         }
@@ -116,6 +120,7 @@ cc_binary {
         "-DLOG_TAG=\"EvsDriver\"",
         "-DGL_GLEXT_PROTOTYPES",
         "-DEGL_EGLEXT_PROTOTYPES",
+        "-DISI_COLORSPACE=RGB888_1X24",
         "-Wall",
         "-Wextra",
         "-Werror",

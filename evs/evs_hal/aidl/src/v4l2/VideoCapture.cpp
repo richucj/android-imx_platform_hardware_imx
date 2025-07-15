@@ -18,6 +18,7 @@
 #include "VideoCapture.h"
 
 #include <android-base/logging.h>
+#include "RouteMediactl.h"
 
 #include <errno.h>
 #include <error.h>
@@ -31,6 +32,9 @@
 
 #include <cassert>
 #include <iomanip>
+
+unsigned VideoCapture::sGroupFmt = 0;
+std::mutex VideoCapture::mPipelineLock;
 
 // NOTE:  This developmental code does not properly clean up resources in case of failure
 //        during the resource setup phase.  Of particular note is the potential to leak
@@ -101,8 +105,18 @@ bool VideoCapture::open(const char* deviceName, const int32_t width, const int32
             capturemode = vid_frmsize.index;
             break;
         }
+        if ((vid_frmsize.stepwise.min_width <= (uint32_t)width) &&
+            (vid_frmsize.stepwise.max_width >= (uint32_t)width) &&
+            (vid_frmsize.stepwise.min_height <= (uint32_t)height) &&
+            (vid_frmsize.stepwise.max_height >= (uint32_t)height)
+            && (ret == 0)) {
+            capturemode = vid_frmsize.index;
+            break;
+        }
     }
 
+    // TODO: Improve the configuration as the VIDIOC_S_PARM is
+    // not supported by current i.MX 8 ISI - MAX9286 - OV10635 pipeline.
     struct v4l2_streamparm param;
     memset(&param, 0, sizeof(param));
     param.type = V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE;
@@ -111,8 +125,17 @@ bool VideoCapture::open(const char* deviceName, const int32_t width, const int32
     param.parm.capture.capturemode = capturemode;
     ret = ioctl(mDeviceFd, VIDIOC_S_PARM, &param);
     if (ret < 0) {
-        LOG(ERROR) << "VIDIOC_S_PARM Failed";
-        return -EINVAL;
+        LOG(WARNING) << "VIDIOC_S_PARM Failed " << errno;
+    }
+
+    {
+        std::lock_guard<std::mutex> lock(mPipelineLock);
+        if (sGroupFmt == 0) {
+            if (configure(true /* onlyIsiConfig */) < 0)
+                return -EINVAL;
+        }
+        sGroupFmt++;
+        mColourPipeline = true;
     }
 
     // Set our desired output format
@@ -131,6 +154,7 @@ bool VideoCapture::open(const char* deviceName, const int32_t width, const int32
 
     if (ioctl(mDeviceFd, VIDIOC_S_FMT, &format) < 0) {
         PLOG(ERROR) << "VIDIOC_S_FMT failed";
+        return -EINVAL;
     }
 
     // Report the current output format
@@ -177,6 +201,8 @@ void VideoCapture::close() {
         ::close(mDeviceFd);
         mDeviceFd = -1;
     }
+    sGroupFmt -= mColourPipeline;
+    mColourPipeline = false;
 }
 
 bool VideoCapture::startStream(std::function<void(VideoCapture*, imageBuffer&, void*)> callback) {

@@ -60,19 +60,7 @@ func cameraDefaults(ctx android.LoadHookContext) {
 		cppflags = append(cppflags, "-DGRALLOC_VERSION=4")
 	}
 
-	if ctx.Config().VendorConfig("IMXPLUGIN").String("BOARD_SOC_TYPE") == "IMX8MP" {
-		cppflags = append(cppflags, "-DIMX8MP=1")
-		p.Target.Android.Srcs = append(p.Target.Android.Srcs, "./camera/CameraProviderHWLImpl.cpp")
-		p.Target.Android.Srcs = append(p.Target.Android.Srcs, "./camera/CameraDeviceHWLImpl.cpp")
-		p.Target.Android.Srcs = append(p.Target.Android.Srcs, "./camera/CameraDeviceSessionHWLImpl.cpp")
-		p.Target.Android.Srcs = append(p.Target.Android.Srcs, "./camera/VideoStream.cpp")
-		p.Target.Android.Srcs = append(p.Target.Android.Srcs, "./camera/MMAPStream.cpp")
-		p.Target.Android.Srcs = append(p.Target.Android.Srcs, "./camera/DMAStream.cpp")
-		p.Target.Android.Srcs = append(p.Target.Android.Srcs, "./camera/UvcStream.cpp")
-		p.Target.Android.Srcs = append(p.Target.Android.Srcs, "./camera/ISPCameraDeviceHWLImpl.cpp")
-		p.Target.Android.Srcs = append(p.Target.Android.Srcs, "./camera/ISPWrapper.cpp")
-		p.Target.Android.Include_dirs = append(p.Target.Android.Include_dirs, "vendor/nxp-opensource/imx/camera/camera")
-	} else {
+	if ctx.Config().VendorConfig("IMXPLUGIN").String("BOARD_SOC_TYPE") == "IMX95" {
 		p.Target.Android.Srcs = append(p.Target.Android.Srcs, "./camera-hal-v2/CameraProviderHWLImpl.cpp")
 		p.Target.Android.Srcs = append(p.Target.Android.Srcs, "./camera-hal-v2/CameraDeviceHWLImpl.cpp")
 		p.Target.Android.Srcs = append(p.Target.Android.Srcs, "./camera-hal-v2/CameraDeviceSessionHWLImpl.cpp")
@@ -82,6 +70,21 @@ func cameraDefaults(ctx android.LoadHookContext) {
 		p.Target.Android.Shared_libs = append(p.Target.Android.Shared_libs, "libcamera")
 		p.Target.Android.Shared_libs = append(p.Target.Android.Shared_libs, "libcamera-base")
 		p.Target.Android.Include_dirs = append(p.Target.Android.Include_dirs, "vendor/nxp-opensource/libcamera/include")
+		} else {
+			cppflags = append(cppflags, "-DIMX8MP=1")
+			cppflags = append(cppflags, "-DISI_COLORSPACE=UYVY8_1X16")
+			p.Target.Android.Srcs = append(p.Target.Android.Srcs, "./camera/CameraProviderHWLImpl.cpp")
+			p.Target.Android.Srcs = append(p.Target.Android.Srcs, "./camera/CameraDeviceHWLImpl.cpp")
+			p.Target.Android.Srcs = append(p.Target.Android.Srcs, "./camera/CameraDeviceSessionHWLImpl.cpp")
+			p.Target.Android.Srcs = append(p.Target.Android.Srcs, "./camera/VideoStream.cpp")
+			p.Target.Android.Srcs = append(p.Target.Android.Srcs, "./camera/MMAPStream.cpp")
+			p.Target.Android.Srcs = append(p.Target.Android.Srcs, "./camera/DMAStream.cpp")
+			p.Target.Android.Srcs = append(p.Target.Android.Srcs, "./camera/UvcStream.cpp")
+			p.Target.Android.Srcs = append(p.Target.Android.Srcs, "./camera/ISPCameraDeviceHWLImpl.cpp")
+			p.Target.Android.Srcs = append(p.Target.Android.Srcs, "./camera/ISPWrapper.cpp")
+			p.Target.Android.Srcs = append(p.Target.Android.Srcs, "./camera/RouteMediactl.cpp")
+			p.Target.Android.Include_dirs = append(p.Target.Android.Include_dirs, "vendor/nxp-opensource/imx/camera/camera")
+			p.Target.Android.Include_dirs = append(p.Target.Android.Include_dirs, "vendor/nxp-opensource/imx/camera/camera/include")
 	}
 
 	p.Target.Android.Cppflags = cppflags

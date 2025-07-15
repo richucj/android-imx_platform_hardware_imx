@@ -17,7 +17,7 @@
 #ifndef _ISP_WRAPPER_H
 #define _ISP_WRAPPER_H
 
-#include <VideoStream.h>
+#include "VideoStream.h"
 #include <json/json.h>
 #include <json/reader.h>
 

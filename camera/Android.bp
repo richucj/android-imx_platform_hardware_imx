@@ -107,6 +107,12 @@ cc_library_shared {
     defaults: ["imx_camera_default"],
 }
 
+filegroup {
+    name: "RouteMediactl_src",
+    srcs: ["camera/RouteMediactl.cpp"],
+    visibility: ["//visibility:public"],
+}
+
 cc_binary {
     name: "JpegEncTest",
     defaults: ["imx_camera_default", "imx_image_process_defaults"],

@@ -20,6 +20,7 @@
 #include "ConfigManager.h"
 #include "EvsGlDisplay.h"
 #include "EvsV4l2Camera.h"
+#include "RouteMediactl.h"
 
 #include <aidl/android/hardware/automotive/evs/DeviceStatusType.h>
 #include <aidl/android/hardware/automotive/evs/EvsResult.h>
@@ -37,6 +38,7 @@
 #include <sys/inotify.h>
 
 #include <string_view>
+#include <string.h>
 
 namespace {
 
@@ -242,9 +244,9 @@ bool EvsEnumerator::enumerateCameras() {
             //                   sCameraList.emplace_back("/dev/video0");
             //                   sCameraList.emplace_back("/dev/video1");
             LOG(INFO) << __FUNCTION__ << ": Starting dev/video* enumeration";
-            DIR* dir = opendir("/dev");
+            DIR* dir = opendir("/sys/class/video4linux");
             if (!dir) {
-                LOG_FATAL("Failed to open /dev folder\n");
+                LOG_FATAL("Failed to open /sys/class/video4linux folder\n");
                 goto found;
             }
 
@@ -255,42 +257,44 @@ bool EvsEnumerator::enumerateCameras() {
             int len_val;
             while ((entry = readdir(dir)) != nullptr) {
                 // We're only looking for entries starting with 'video'
-                if (strncmp(entry->d_name, "video", 5) == 0) {
-                    std::string deviceName("/dev/");
-                    deviceName += entry->d_name;
-                    videoCount++;
-                    snprintf(devPath, HWC_PATH_LENGTH,
-                                      "/sys/class/video4linux/%s/name", entry->d_name);
-                    if ((fp = fopen(devPath, "r")) == nullptr) {
-                        ALOGE("can't open %s", devPath);
-                        continue;
-                    }
-                    if(fgets(value, sizeof(value), fp) == nullptr) {
-                        fclose(fp);
-                        ALOGE("can't read %s", devPath);
-                        continue;
-                    }
-                    // last byte is '\n' if get the string through fgets
-                    // it cause issue that can't find item for camera. set the last byte as '\0'
-                    len_val = strlen(value) - 1;
+                char *name = entry->d_name;
+                std::string devNode("/dev/");
+                devNode += name;
+                videoCount++;
+                snprintf(devPath, HWC_PATH_LENGTH, "/sys/class/video4linux/%s/name", entry->d_name);
+                if ((fp = fopen(devPath, "r")) == nullptr) {
+                    ALOGE("can't open %s", devPath);
+                    continue;
+                }
+                if(fgets(value, sizeof(value), fp) == nullptr) {
                     fclose(fp);
-                    value[len_val] = '\0';
-                    ALOGI("enum name:%s path:%s", value, deviceName.c_str());
+                    ALOGE("can't read %s", devPath);
+                    continue;
+                }
+                // last byte is '\n' if get the string through fgets
+                // it cause issue that can't find item for camera. set the last byte as '\0'
+                len_val = strlen(value) - 1;
+                fclose(fp);
+                value[len_val] = '\0';
+                ALOGI("enum name:%s path:%s", value, devNode.c_str());
+
+                registerDevnode(value, devNode);
+                ALOGE("Dev %s : %s", value, devNode.c_str());
                     if (!filterVideoFromConfigure(value)) {
                         continue;
                     }
-                    sCameraList.emplace_back(value, deviceName.c_str(), hwCam);
-                    if (qualifyCaptureDevice(deviceName.c_str())) {
-                      captureCount++;
-                    }
+                sCameraList.emplace_back(value, devNode.c_str(), hwCam);
+                if (qualifyCaptureDevice(devNode.c_str())) {
+                    captureCount++;
                 }
             }
             closedir(dir);
         }
     }
-found:
+    found:
     if (captureCount != 0) {
         videoReady = true;
+        configure();
         if (property_set(EVS_VIDEO_READY, "1") < 0)
             ALOGE("Can not set property %s", EVS_VIDEO_READY);
     }

@@ -28,6 +28,11 @@ using google_camera_hal::Stream;
 
 // stream uses memory map buffers which allcated in kernel space.
 class MMAPStream : public VideoStream {
+    // Keep track whether the pipeline has been set to YUYV via client count.
+    static unsigned sGroupFmt;
+     // Remember if we incremented the sGroupFmt for destructor.
+    bool mColourPipeline;
+
 public:
     MMAPStream(CameraDeviceSessionHwlImpl *pSession);
     MMAPStream(CameraDeviceSessionHwlImpl *pSession, bool mplane);

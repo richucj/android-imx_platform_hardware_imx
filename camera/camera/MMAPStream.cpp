@@ -27,12 +27,16 @@
 #include <sys/types.h>
 
 #include "CameraUtils.h"
+#include "RouteMediactl.h"
 
 namespace android {
+
+unsigned MMAPStream::sGroupFmt = 0;
 
 MMAPStream::MMAPStream(CameraDeviceSessionHwlImpl *pSession) : VideoStream(pSession) {
     mPlane = false;
     mV4l2MemType = V4L2_MEMORY_MMAP;
+    mColourPipeline = false;
 }
 
 MMAPStream::MMAPStream(CameraDeviceSessionHwlImpl *pSession, bool mplane) : VideoStream(pSession) {
@@ -40,9 +44,12 @@ MMAPStream::MMAPStream(CameraDeviceSessionHwlImpl *pSession, bool mplane) : Vide
     // true, else set it as false.
     mPlane = mplane;
     mV4l2MemType = V4L2_MEMORY_MMAP;
+    mColourPipeline = false;
 }
 
-MMAPStream::~MMAPStream() {}
+MMAPStream::~MMAPStream() {
+    sGroupFmt -= mColourPipeline;
+}
 
 uint32_t MMAPStream::PickValidFps(int vformat, uint32_t width, uint32_t height,
                                   uint32_t requestFps) {
@@ -97,11 +104,22 @@ int32_t MMAPStream::onDeviceConfigureLocked(uint32_t format, uint32_t width, uin
           vformat & 0xFF, (vformat >> 8) & 0xFF, (vformat >> 16) & 0xFF, (vformat >> 24) & 0xFF,
           fps);
 
+
+    // Other clients wait till first one calls configure().
+    if (sGroupFmt == 0) {
+        configure(/* onlyIsiConfig */ true);
+    }
+    sGroupFmt++;
+    mColourPipeline = true;
+
+
     int buf_type = mPlane ? V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE : V4L2_BUF_TYPE_VIDEO_CAPTURE;
     int num_planes = mPlane ? 1 : 0;
 
     vfps = PickValidFps(vformat, width, height, fps);
 
+    // TODO: Improve the configuration as the VIDIOC_S_PARM is
+    // not supported by current i.MX 8 ISI - MAX9286 - OV10635 pipeline.
     struct v4l2_streamparm param;
     memset(&param, 0, sizeof(param));
     param.type = buf_type;
@@ -110,7 +128,6 @@ int32_t MMAPStream::onDeviceConfigureLocked(uint32_t format, uint32_t width, uin
     ret = ioctl(mDev, VIDIOC_S_PARM, &param);
     if (ret < 0) {
         ALOGE("%s: VIDIOC_S_PARM Failed: %s", __func__, strerror(errno));
-        return ret;
     }
 
     mDurationNS = NS_PER_SEC / vfps;

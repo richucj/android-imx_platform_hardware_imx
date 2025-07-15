@@ -32,6 +32,7 @@
 #include "ImageProcess.h"
 #include "VendorTags.h"
 #include "vendor_tag_defs.h"
+#include "RouteMediactl.h"
 
 namespace android {
 std::unique_ptr<CameraProviderHwlImpl> CameraProviderHwlImpl::Create() {
@@ -242,6 +243,22 @@ int32_t CameraProviderHwlImpl::matchDevNodes() {
     }
 
     while ((dirEntry = readdir(vidDir)) != NULL) {
+        sprintf(mCamDevice, "/sys/class/video4linux/%s/name", dirEntry->d_name);
+        if (!android::base::ReadFileToString(std::string(mCamDevice), &buffer)) {
+            free(node);
+            ALOGW("can't read video device name");
+            continue;
+        }
+        ALOGI("%s: /sys/class/video4linux/%s/name is %s", __func__, dirEntry->d_name,
+              buffer.c_str());
+
+        // String read from ReadFileToString have '\n' in last byte.
+        buffer.pop_back();
+
+        std::string devNode = "/dev/";
+        devNode += dirEntry->d_name;
+        registerDevnode(buffer, devNode);
+
         if (strncmp(dirEntry->d_name, "video", 5)) {
             continue;
         }
@@ -251,17 +268,7 @@ int32_t CameraProviderHwlImpl::matchDevNodes() {
             ALOGE("%s malloc failed", __func__);
             break;
         }
-
         memset(node, 0, sizeof(nodeSet));
-
-        sprintf(mCamDevice, "/sys/class/video4linux/%s/name", dirEntry->d_name);
-        if (!android::base::ReadFileToString(std::string(mCamDevice), &buffer)) {
-            free(node);
-            ALOGW("can't read video device name");
-            continue;
-        }
-        ALOGI("%s: /sys/class/video4linux/%s/name is %s", __func__, dirEntry->d_name,
-              buffer.c_str());
 
         // Use "/sys/class/video4linux/%s/name" to filter out unsupported video devices.
         // So no need to open none-camera devices such as VPU.
@@ -300,9 +307,7 @@ int32_t CameraProviderHwlImpl::matchDevNodes() {
             continue;
         }
 
-        // string read from ReadFileToString have '\n' in last byte
-        // so we just need copy (buffer.length() - 1) length
-        strncat(node->nodeName, buffer.c_str(), (buffer.length() - 1));
+        strncat(node->nodeName, buffer.c_str(), buffer.length());
         ALOGI("NodeName: node name:%s \n", node->nodeName);
 
         if (strlen(node->nodeName) != 0) {
@@ -334,6 +339,9 @@ int32_t CameraProviderHwlImpl::matchDevNodes() {
         free(node);
         node = last;
     }
+
+    // TODO: Routing camera pipeline using `configure()` is not required here
+    // because for CAR image EVS HAL calls `configure()`.
 
     return 0;
 }

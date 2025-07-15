@@ -23,6 +23,7 @@
 #include <functional>
 #include <set>
 #include <thread>
+#include <mutex>
 
 #define MAX_V4L2_BUFFER_NUM 10
 typedef v4l2_buffer imageBuffer;
@@ -52,7 +53,9 @@ public:
     int getParameter(struct v4l2_control& control);
     std::set<uint32_t> enumerateCameraControls();
     bool queueFB(int index, int fd, int size); // Queue buffer to camera driver. API for EvsV4lCamera managing buffer states.
-
+    ~VideoCapture() {
+        sGroupFmt -= mColourPipeline;
+    }
 private:
     void collectFrames();
 
@@ -74,6 +77,11 @@ private:
         RUN = 1,
         STOPPING = 2,
     };
+
+    // V4L2 pipeline configuration is required now. Also we need to switch YUYV to RGB between EVS and camera.
+    static unsigned sGroupFmt; // Count cameras, configure pipeline colours with first client.
+    static std::mutex mPipelineLock;
+    bool mColourPipeline = false; // Remember if we decrement sGroupFmt when going down.
 };
 
 #endif  // CPP_EVS_SAMPLEDRIVER_AIDL_INCLUDE_VIDEOCAPTURE_H

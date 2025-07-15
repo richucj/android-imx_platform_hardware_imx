@@ -54,7 +54,7 @@ namespace aidl::android::hardware::automotive::evs::implementation {
 EvsV4lCamera::EvsV4lCamera(const char* deviceName,
                            std::unique_ptr<ConfigManager::CameraInfo>& camInfo) :
         mFramesAllowed(0), mFramesInUse(0), mCameraInfo(camInfo), mFrameCounter(0) {
-    LOG(DEBUG) << "EvsV4lCamera instantiated";
+    LOG(DEBUG) << "EvsV4lCamera instantiated " << deviceName;
 
     mDescription.id = deviceName;
     if (camInfo) {
