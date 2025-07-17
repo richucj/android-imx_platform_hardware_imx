@@ -471,8 +471,8 @@ uint32_t DrmDisplay::findDrmPlane(const native_handle_t* handle) {
         return 0;
     }
 #ifdef OVERLAY_LIMITATION_DPU
-    if (mOverlayPlaneNum - mPlaneIdPool.size() >= 3) {
-        DEBUG_LOG("%s: already 3 overlay plane used. Not use other overlay plane to avoid display "
+    if (mOverlayPlaneNum - mPlaneIdPool.size() >= 1) {
+        DEBUG_LOG("%s: already 1 overlay plane used. Not use other overlay plane to avoid display "
                   "underrun issue", __FUNCTION__);
         return 0;
     }
