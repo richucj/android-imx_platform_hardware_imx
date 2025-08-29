@@ -31,6 +31,17 @@ struct MediaCfg {
         int configure(int fd) const;
     };
 
+    struct Crop {
+        short pad;
+        short stream;
+        uint32_t left;
+        uint32_t top;
+        uint32_t width;
+        uint32_t height;
+
+        int configure(int fd) const;
+    };
+
     struct Link {
         std::string name;
         short pads[2];
@@ -44,6 +55,7 @@ struct MediaCfg {
     const bool match_substr;
     const std::vector<v4l2_subdev_route> routes;
     const std::vector<Format> formats;
+    const std::vector<Crop> crops;
     const std::vector<Link> links;
     std::string devNode;
 
@@ -87,7 +99,7 @@ int MediaCfg::SetRoutes(int fd, const std::vector<v4l2_subdev_route> &vecRoutes)
     return 0;
 }
 
-int MediaCfg::Format::configure(int fd) const {
+int MediaCfg::Format::configure (int fd) const {
     v4l2_subdev_format sformat;
 
     memset(&sformat, 0, sizeof(sformat));
@@ -108,6 +120,29 @@ int MediaCfg::Format::configure(int fd) const {
     if (ret < 0) {
         return -errno;
     }
+    return 0;
+}
+
+int MediaCfg::Crop::configure (int fd) const {
+    struct v4l2_subdev_crop crop;
+
+    memset(&crop, 0, sizeof(crop));
+	crop.pad = pad;
+	crop.stream = stream;
+	crop.which = V4L2_SUBDEV_FORMAT_ACTIVE;
+
+	crop.rect.left = left;
+	crop.rect.top = top;
+	crop.rect.width = width;
+	crop.rect.height = height;
+
+	int ret = ioctl(fd, VIDIOC_SUBDEV_S_CROP, &crop);
+    if ((ret < 0) && (errno == EBUSY)) {
+        usleep(100000);
+        ret = ioctl(fd, VIDIOC_SUBDEV_S_CROP, &crop);
+    }
+	if (ret < 0)
+		return -errno;
     return 0;
 }
 
@@ -203,6 +238,11 @@ bool MediaCfg::configure() {
         if (ret != 0)
             LOG(ERROR) << "Failed to format.configure for " << name << " error: " << ret;
     }
+    for (auto &crop: crops) {
+        ret = crop.configure(fd);
+        if (ret != 0)
+            LOG(ERROR) << "Failed to crop.configure for " << name << " error: " << ret;
+    }
     close(fd);
     return 0;
 }
@@ -231,6 +271,7 @@ std::vector<MediaCfg> cfgGroups[1] = {
                 {   2,  0,      UYVY8_1X16,     1280,   800,    V4L2_FIELD_NONE},
                 {   3,  0,      UYVY8_1X16,     1280,   800,    V4L2_FIELD_NONE}
             },
+            {}, // crop
             { // links
                 // other side,          our pad, their pad, active
                 {   "imx8mq-mipi-csi2 58227000.csi", {4,       0},       true }
@@ -251,6 +292,7 @@ std::vector<MediaCfg> cfgGroups[1] = {
                 {0, 2,  UYVY8_1X16,     1280, 800,  V4L2_FIELD_NONE},
                 {0, 3,  UYVY8_1X16,     1280, 800,  V4L2_FIELD_NONE}
             },
+            {}, // crop
             {}
         },
 
@@ -269,6 +311,7 @@ std::vector<MediaCfg> cfgGroups[1] = {
                 {2, 2,  UYVY8_1X16,     1280, 800,  V4L2_FIELD_NONE},
                 {2, 3,  UYVY8_1X16,     1280, 800,  V4L2_FIELD_NONE}
             },
+            {}, // crop
             { // links
                 {"imx8mq-mipi-csi2 58227000.csi", {4, 0}, true }
             }
@@ -281,7 +324,10 @@ std::vector<MediaCfg> cfgGroups[1] = {
             {},
             { // pad, stream, color,    resolution, field
                 {0, 0,  UYVY8_1X16,     1280, 800,  V4L2_FIELD_NONE},
-                {1, 0,  ISI_COLORSPACE,    1280, 800,  V4L2_FIELD_NONE} // EVS need RGB888_1X24 and camera UYVY8_1X16.
+                {1, 0,  ISI_COLORSPACE,    1280, 720,  V4L2_FIELD_NONE} // EVS need RGB888_1X24 and camera UYVY8_1X16.
+            },
+            { // crop
+                {1, 0,  0, 40, 1280, 720}
             },
             {}
         },
@@ -292,7 +338,10 @@ std::vector<MediaCfg> cfgGroups[1] = {
             {},
             { // pad, stream, color,    resolution, field
                 {0, 0,  UYVY8_1X16,     1280, 800,  V4L2_FIELD_NONE},
-                {1, 0,  ISI_COLORSPACE,    1280, 800,  V4L2_FIELD_NONE}
+                {1, 0,  ISI_COLORSPACE,    1280, 720,  V4L2_FIELD_NONE}
+            },
+            { // crop
+                {1, 0,  0, 40, 1280, 720}
             },
             {}
         },
@@ -303,7 +352,10 @@ std::vector<MediaCfg> cfgGroups[1] = {
             {},
             { // pad, stream, color,    resolution, field
                 {0, 0,  UYVY8_1X16,     1280, 800,  V4L2_FIELD_NONE},
-                {1, 0,  ISI_COLORSPACE,    1280, 800,  V4L2_FIELD_NONE}
+                {1, 0,  ISI_COLORSPACE,    1280, 720,  V4L2_FIELD_NONE}
+            },
+            { // crop
+                {1, 0,  0, 40, 1280, 720}
             },
             {}
         },
@@ -314,7 +366,10 @@ std::vector<MediaCfg> cfgGroups[1] = {
             {},
             { // pad, stream, color,    resolution, field
                 {0, 0,  UYVY8_1X16,     1280, 800,  V4L2_FIELD_NONE},
-                {1, 0,  ISI_COLORSPACE,    1280, 800,  V4L2_FIELD_NONE}
+                {1, 0,  ISI_COLORSPACE,    1280, 720,  V4L2_FIELD_NONE}
+            },
+            { // crop
+                {1, 0,  0, 40, 1280, 720}
             },
             {}
         }
