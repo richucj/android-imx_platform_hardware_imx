@@ -324,7 +324,7 @@ std::vector<MediaCfg> cfgGroups[1] = {
             {},
             { // pad, stream, color,    resolution, field
                 {0, 0,  UYVY8_1X16,     1280, 800,  V4L2_FIELD_NONE},
-                {1, 0,  ISI_COLORSPACE,    1280, 720,  V4L2_FIELD_NONE} // EVS need RGB888_1X24 and camera UYVY8_1X16.
+                {1, 0,  ISI_COLORSPACE,    1280, 800,  V4L2_FIELD_NONE} // EVS need RGB888_1X24 and camera UYVY8_1X16.
             },
             { // crop
                 {1, 0,  0, 40, 1280, 720}
@@ -338,7 +338,7 @@ std::vector<MediaCfg> cfgGroups[1] = {
             {},
             { // pad, stream, color,    resolution, field
                 {0, 0,  UYVY8_1X16,     1280, 800,  V4L2_FIELD_NONE},
-                {1, 0,  ISI_COLORSPACE,    1280, 720,  V4L2_FIELD_NONE}
+                {1, 0,  ISI_COLORSPACE,    1280, 800,  V4L2_FIELD_NONE}
             },
             { // crop
                 {1, 0,  0, 40, 1280, 720}
@@ -352,7 +352,7 @@ std::vector<MediaCfg> cfgGroups[1] = {
             {},
             { // pad, stream, color,    resolution, field
                 {0, 0,  UYVY8_1X16,     1280, 800,  V4L2_FIELD_NONE},
-                {1, 0,  ISI_COLORSPACE,    1280, 720,  V4L2_FIELD_NONE}
+                {1, 0,  ISI_COLORSPACE,    1280, 800,  V4L2_FIELD_NONE}
             },
             { // crop
                 {1, 0,  0, 40, 1280, 720}
@@ -366,7 +366,7 @@ std::vector<MediaCfg> cfgGroups[1] = {
             {},
             { // pad, stream, color,    resolution, field
                 {0, 0,  UYVY8_1X16,     1280, 800,  V4L2_FIELD_NONE},
-                {1, 0,  ISI_COLORSPACE,    1280, 720,  V4L2_FIELD_NONE}
+                {1, 0,  ISI_COLORSPACE,    1280, 800,  V4L2_FIELD_NONE}
             },
             { // crop
                 {1, 0,  0, 40, 1280, 720}
