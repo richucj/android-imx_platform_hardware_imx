@@ -313,6 +313,7 @@ int32_t gralloc_driver::lock(buffer_handle_t handle, int32_t acquire_fence,
     if (hnd->cpu_write != 0 && (usage & GRALLOC_USAGE_SW_WRITE_MASK)) {
         ALOGW("%s: attemp to call lock() for writing an already locked buffer(%p)", __func__,
               handle);
+        addr[0] = reinterpret_cast<uint8_t *>(hnd->base);
         const_cast<gralloc_handle *>(hnd)->lock_count++;
         return 0; // regard as lock successfully
     }

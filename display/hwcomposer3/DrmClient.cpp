@@ -142,6 +142,7 @@ HWC3::Error DrmClient::getDisplayConfigs(std::vector<HalMultiConfigs>* configs) 
         configs->emplace_back(HalMultiConfigs{
                 .hwcId = display->getHwcId(),
                 .displayId = display->getId(),
+                .port = display->getPort(),
                 .activeConfigId = display->getActiveConfigId(),
                 .configs = display->getDisplayConfigs(),
         });
@@ -431,6 +432,7 @@ bool DrmClient::handleHotplug() {
             std::unique_ptr<HalMultiConfigs> cfg(new HalMultiConfigs{
                     .hwcId = display->getHwcId(),
                     .displayId = display->getId(),
+                    .port = display->getPort(),
                     .activeConfigId = display->getActiveConfigId(),
                     .configs = display->getDisplayConfigs(),
             });
@@ -620,8 +622,8 @@ HWC3::Error DrmClient::checkOverlayLimitation(uint32_t displayId, Layer* layer) 
     }
 #endif
 #ifdef OVERLAY_LIMITATION_DPU
-    if ((srcW != w) || (srcH != h)) {
-        // DPU of imx95 don't support scaling(TODO: support down-scaling in later B0 chip)
+    if ((srcW > w) || (srcH > h)) {
+        // DPU of imx95 B0 don't support down-scaling
         DEBUG_LOG("%s: layer %" PRId64 " scaling(src: %d x %d, dst: %d x %d) check failed",
                   __FUNCTION__, layer->getId(), srcW, srcH, w, h);
         return HWC3::Error::Unsupported;
@@ -795,7 +797,7 @@ std::tuple<HWC3::Error, buffer_handle_t> DrmClient::getComposerTarget(
     return std::make_tuple(HWC3::Error::None, mComposerTargets[displayId].handles[0]);
 }
 
-HWC3::Error DrmClient::setSecureMode(uint32_t displayId, uint32_t planeId, bool secure) {
+HWC3::Error DrmClient::setSecureMode(uint32_t displayId, bool secure) {
     if (mDisplays.find(displayId) == mDisplays.end()) {
         DEBUG_LOG("%s: invalid display:%" PRIu32, __FUNCTION__, displayId);
         return HWC3::Error::BadDisplay;

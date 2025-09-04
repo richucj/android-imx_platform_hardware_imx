@@ -70,6 +70,7 @@ typedef struct tag_imx_image_buffer {
     float mZoomRatio; // just g2d/dpu support, set in source ImxImageBuffer
     uint64_t mUsage;  // currently used to decide cache/un-cache.
     void *mPrivate; // user context
+    bool mDewarp;
 } ImxImageBuffer;
 
 int yuv422iResize(uint8_t *srcBuf, int srcWidth, int srcHeight, uint8_t *dstBuf, int dstWidth, int dstHeight);

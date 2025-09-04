@@ -134,6 +134,8 @@ const char* const kMaxWidth = "MaxWidth";
 const char* const kMaxHeight = "MaxHeight";
 const char* const kMinWidth = "MinWidth";
 const char* const kMinHeight = "MinHeight";
+const char* const kNeedDewarp = "NeedDewarp";
+const char* const kDewarpEng = "DewarpEng";
 const char* const kGivenResKey = "GivenRes";
 const char* const kGivenResWidthKey = "width";
 const char* const kGivenResHeightKey = "height";
@@ -496,9 +498,23 @@ bool ParseCharacteristics(CameraDefinition* camera, const Json::Value& root,
     else
         static_meta[cam_index].mMinHeight = 0;
 
-    ALOGI("%s: res min %dx%d, max %dx%d", __func__, static_meta[cam_index].mMinWidth,
-          static_meta[cam_index].mMinHeight, static_meta[cam_index].mMaxWidth,
-          static_meta[cam_index].mMaxHeight);
+    if (root.isMember(kNeedDewarp)) {
+        int needDewarp = strtol(root[kNeedDewarp].asString().c_str(), NULL, 10);
+        static_meta[cam_index].mNeedDewarp = (needDewarp != 0);
+    } else
+        static_meta[cam_index].mNeedDewarp = false;
+
+    if (root.isMember(kDewarpEng)) {
+        int needDewarp = strtol(root[kDewarpEng].asString().c_str(), NULL, 10);
+
+        static_meta[cam_index].mDewarpEng = ValueToImxEngine(root[kDewarpEng].asString());
+    } else
+        static_meta[cam_index].mDewarpEng = ENG_OCLCVT;
+
+    ALOGI("%s: res min %dx%d, max %dx%d, needDewarp %d, dewarpEng %d", __func__,
+          static_meta[cam_index].mMinWidth, static_meta[cam_index].mMinHeight,
+          static_meta[cam_index].mMaxWidth, static_meta[cam_index].mMaxHeight,
+          static_meta[cam_index].mNeedDewarp, static_meta[cam_index].mDewarpEng);
 
     int given_res_index = 0;
     for (Json::ValueConstIterator resIter = root[kGivenResKey].begin();

@@ -49,7 +49,7 @@ VsyncThread::~VsyncThread() {
 }
 
 HWC3::Error VsyncThread::start(int32_t vsyncPeriodNanos) {
-    DEBUG_LOG("%s for hwc display:%" PRIu64, __FUNCTION__, mHwcId);
+    DEBUG_LOG("%s Vsync thread for hwc display:%" PRIu64, __FUNCTION__, mHwcId);
 
     mVsyncPeriod = Nanoseconds(vsyncPeriodNanos);
     mPreviousVsync = std::chrono::steady_clock::now() - mVsyncPeriod;
@@ -82,7 +82,7 @@ HWC3::Error VsyncThread::stop() {
 }
 
 HWC3::Error VsyncThread::setCallbacks(const std::shared_ptr<IComposerCallback>& callback) {
-    DEBUG_LOG("%s for hwc display:%" PRIu64, __FUNCTION__, mHwcId);
+    DEBUG_LOG("%s: Vsync of hwc display:%" PRIu64, __FUNCTION__, mHwcId);
 
     std::unique_lock<std::mutex> lock(mStateMutex);
     mCallbacks = callback;
@@ -91,7 +91,7 @@ HWC3::Error VsyncThread::setCallbacks(const std::shared_ptr<IComposerCallback>& 
 }
 
 HWC3::Error VsyncThread::setVsyncEnabled(bool enabled) {
-    DEBUG_LOG("%s for hwc display:%" PRIu64 " enabled:%d", __FUNCTION__, mHwcId, enabled);
+    DEBUG_LOG("%s: Vsync hwc display:%" PRIu64 " enabled:%d", __FUNCTION__, mHwcId, enabled);
 
     std::lock_guard<std::mutex> lock(mStateMutex);
     mVsyncEnabled = enabled;
@@ -102,7 +102,7 @@ HWC3::Error VsyncThread::setVsyncEnabled(bool enabled) {
 HWC3::Error VsyncThread::scheduleVsyncUpdate(int32_t configId, int32_t newVsyncPeriod,
                                              const VsyncPeriodChangeConstraints& constraints,
                                              VsyncPeriodChangeTimeline* outTimeline) {
-    DEBUG_LOG("%s for hwc display:%" PRIu64, __FUNCTION__, mHwcId);
+    DEBUG_LOG("%s: update for hwc display:%" PRIu64, __FUNCTION__, mHwcId);
 
     std::chrono::time_point<std::chrono::steady_clock> updateTime;
     if (constraints.desiredTimeNanos == 0) { // take effect immediately
@@ -177,7 +177,7 @@ void VsyncThread::threadLoop() {
 
         if (mVsyncEnabled) {
             if (mCallbacks) {
-                ALOGV("%s: for hwc display:%" PRIu64 " calling vsync", __FUNCTION__, mHwcId);
+                ALOGV("%s: hwc display:%" PRIu64 " calling vsync", __FUNCTION__, mHwcId);
                 mCallbacks->onVsync(mHwcId, asNanosTimePoint(mPreviousVsync),
                                     static_cast<int32_t>(asNanosDuration(vsyncPeriod)));
             }
@@ -185,7 +185,7 @@ void VsyncThread::threadLoop() {
 
         static constexpr const int kLogIntervalSeconds = 60;
         if (now > (previousLog + std::chrono::seconds(kLogIntervalSeconds))) {
-            DEBUG_LOG("%s: for hwc display:%" PRIu64 " send %" PRIu32 " in last %d seconds",
+            DEBUG_LOG("%s: hwc display:%" PRIu64 " send %" PRIu32 " in last %d seconds",
                       __FUNCTION__, mHwcId, vsyncs, kLogIntervalSeconds);
             previousLog = now;
             vsyncs = 0;

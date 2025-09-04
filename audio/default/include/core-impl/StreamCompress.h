@@ -27,6 +27,12 @@
 
 namespace aidl::android::hardware::audio::core {
 
+#define COMPRESS_OFFLOAD_DEFAULT_CHANNELS   2
+#define COMPRESS_OFFLOAD_FRAGMENT_SIZE      3840
+#define COMPRESS_OFFLOAD_NUM_FRAGMENTS      2
+#define COMPRESS_OFFLOAD_BUFFER_SIZE        7680
+#define COMPRESS_OFFLOAD_LATENCY_MS         96
+
 class StreamCompress : public StreamCommonImpl {
   public:
     StreamCompress(
@@ -35,7 +41,7 @@ class StreamCompress : public StreamCommonImpl {
                     offloadInfo);
     ~StreamCompress();
     // Methods of 'DriverInterface'.
-    ::android::status_t init() override;
+    ::android::status_t init(DriverCallbackInterface*) override;
     ::android::status_t drain(StreamDescriptor::DrainMode) override;
     ::android::status_t flush() override;
     ::android::status_t pause() override;

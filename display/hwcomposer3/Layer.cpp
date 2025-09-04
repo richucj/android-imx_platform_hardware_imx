@@ -357,4 +357,17 @@ HWC3::Error Layer::uncacheLayerBuffers(const std::vector<buffer_handle_t>& buffe
     return HWC3::Error::None;
 }
 
+HWC3::Error Layer::setLuts(const Luts& luts) {
+    DEBUG_LOG("%s: layer:%" PRId64, __FUNCTION__, mId);
+
+    mHasLuts = luts.pfd.get() >= 0;
+    return HWC3::Error::None;
+}
+
+bool Layer::hasLuts() const {
+    DEBUG_LOG("%s: layer:%" PRId64, __FUNCTION__, mId);
+
+    return mHasLuts;
+}
+
 } // namespace aidl::android::hardware::graphics::composer3::impl

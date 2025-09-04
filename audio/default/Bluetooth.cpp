@@ -463,7 +463,6 @@ ndk::ScopedAStatus Bluetooth::setHfpConfig(const HfpConfig& in_config, HfpConfig
     if (in_config.sampleRate.has_value()) {
         mHfpConfig.sampleRate = in_config.sampleRate;
         pcm_config_sco.rate = mHfpConfig.sampleRate.value().value;
-        pcm_config_speaker.rate = mHfpConfig.sampleRate.value().value;
     }
     if (in_config.volume.has_value()) {
         mHfpConfig.volume = in_config.volume;

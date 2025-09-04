@@ -30,11 +30,6 @@ using aidl::android::hardware::audio::common::getChannelCount;
 
 namespace aidl::android::hardware::audio::core {
 
-#define COMPRESS_OFFLOAD_DEFAULT_CHANNELS   2
-#define COMPRESS_OFFLOAD_FRAGMENT_SIZE      3940
-#define COMPRESS_OFFLOAD_NUM_FRAGMENTS      2
-#define COMPRESS_OFFLOAD_LATENCY_MS         96
-
 StreamCompress::StreamCompress(StreamContext* context, const Metadata& metadata,
         const std::optional<AudioOffloadInfo>& offloadInfo)
     : StreamCommonImpl(context, metadata),
@@ -64,7 +59,7 @@ StreamCompress::~StreamCompress() {
     }
 }
 
-::android::status_t StreamCompress::init() {
+::android::status_t StreamCompress::init(DriverCallbackInterface*) {
     return ::android::OK;
 }
 

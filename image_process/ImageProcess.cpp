@@ -26,7 +26,10 @@
 #include <libyuv/convert.h>
 #include <linux/ipu.h>
 #include <stdio.h>
+#include <sys/stat.h>
+#include <sys/types.h>
 #include <system/graphics.h>
+#include <unistd.h>
 #include <vndksupport/linker.h>
 
 #include "gralloc_handle.h"
@@ -34,6 +37,8 @@
 extern "C" {
 #include <linux/pxp_device.h>
 }
+
+#include <pthread.h>
 
 #if defined(__LP64__)
 #define LIB_PATH1 "/system/lib64"
@@ -47,6 +52,8 @@ extern "C" {
 #define CLENGINE "libg2d-opencl.so"
 #define G2DENGINE "libg2d"
 #define IMX_OCL_CONVERTER "lib_imx_opencl_converter.so"
+
+#define DEWARP_COORD_FILE "/vendor/etc/configs/ox03c_absolute_32bpp_dewarp_file-1920x1280.bin"
 
 namespace fsl {
 
@@ -109,6 +116,13 @@ bool ImageProcess::getDefaultG2DLib(char *libName, int size) {
     return true;
 }
 
+void ImageProcess::FreeOclHandle(void *handle) {
+    OCL_HANDLE hOcl = (OCL_HANDLE)handle;
+    ALOGI("%s: hOcl %p", __func__, hOcl);
+    ImageProcess::getInstance()->m_ocl_close(hOcl);
+    return;
+}
+
 ImageProcess *ImageProcess::getInstance() {
     Mutex::Autolock _l(sLock);
     if (sInstance != NULL) {
@@ -162,9 +176,27 @@ ImageProcess::ImageProcess()
         mFinishEngine = (hwc_func1)dlsym(mG2dModule, "g2d_finish");
         mCopyEngine = (hwc_func4)dlsym(mG2dModule, "g2d_copy");
         mBlitEngine = (hwc_func3)dlsym(mG2dModule, "g2d_blit");
+        mQueryFeature = (hwc_query)dlsym(mG2dModule, "g2d_query_feature");
+        mSetWarpCord = (hwc_func2)dlsym(mG2dModule, "g2d_set_warp_coordinates");
+        mEnableEngine = (hwc_enable)dlsym(mG2dModule, "g2d_enable");
+        mDisableEngine = (hwc_disable)dlsym(mG2dModule, "g2d_disable");
+        mAlloc = (hwc_alloc)dlsym(mG2dModule, "g2d_alloc");
+        mFree = (hwc_free)dlsym(mG2dModule, "g2d_free");
+        mGetCoordFromDct =
+                (hwc_get_coord_from_dct)dlsym(mG2dModule, "g2d_get_warp_coordinates_from_dct_file");
+
         ret = mOpenEngine(&mG2dHandle);
         if (ret != 0) {
             mG2dHandle = NULL;
+        }
+    }
+
+    memset(&mDewarpCtx, 0, sizeof(mDewarpCtx));
+    if (mG2dHandle) {
+        int can_warp = 0;
+        mQueryFeature(mG2dHandle, G2D_WARP_DEWARP, &can_warp);
+        if (can_warp) {
+            PrepareDewarpBinary();
         }
     }
 
@@ -211,7 +243,6 @@ ImageProcess::ImageProcess()
     mImxOclCvtModule = dlopen(path, RTLD_NOW);
     if (mImxOclCvtModule == NULL) {
         ALOGW("%s:, dlopen %s failed", __func__, path);
-        mHOcl = NULL;
         m_ocl_open = NULL;
         m_ocl_setParam = NULL;
         m_ocl_getParam = NULL;
@@ -224,24 +255,31 @@ ImageProcess::ImageProcess()
         m_ocl_convert = (ocl_convert)dlsym(mImxOclCvtModule, "OCL_Convert");
         m_ocl_close = (ocl_close)dlsym(mImxOclCvtModule, "OCL_Close");
 
-        ret = (*m_ocl_open)(OCL_OPEN_FLAG_PROFILE, &mHOcl);
-        if (ret != 0) {
-            mHOcl = NULL;
-            ALOGW("%s: m_ocl_open failed, ret %d", __func__, ret);
-        }
-        ALOGI("%s: mHOcl %p", __func__, mHOcl);
         char socType[128] = {0};
         property_get("ro.boot.soc_type", socType, "");
         if (!strncmp(socType, "imx9", 4))
             mOclBufferType = OCL_MEM_TYPE_DEVICE;
+
+        pthread_key_create(&m_ocl_key, FreeOclHandle);
+    }
+
+    memset(&mWarpBuffer, 0, sizeof(mWarpBuffer));
+    memset(&m_warp_param, 0, sizeof(m_warp_param));
+
+    if (mImxOclCvtModule) {
+        ret = read_warp_coordinates_file(DEWARP_COORD_FILE, &m_warp_param);
+        if (ret) {
+            ALOGW("%s: read_warp_coordinates_file failed, ret %d", __func__, ret);
+        } else {
+            ALOGI("%s: read_warp_coordinates_file ok", __func__);
+            m_warp_param.enable = 1;
+        }
     }
 }
 
 ImageProcess::~ImageProcess() {
-    if (mHOcl) {
-        m_ocl_close(mHOcl);
-        mHOcl = NULL;
-    }
+    if (mImxOclCvtModule)
+        pthread_key_delete(m_ocl_key);
 
     if (mImxOclCvtModule)
         dlclose(mImxOclCvtModule);
@@ -270,6 +308,13 @@ ImageProcess::~ImageProcess() {
 
     if (mG2dModule != NULL) {
         dlclose(mG2dModule);
+    }
+
+    if (m_warp_param.buf.planes[0].vaddr) {
+        if (mWarpBuffer.buffer)
+            FreePhyBuffer(mWarpBuffer.buffer);
+        else
+            free((void *)m_warp_param.buf.planes[0].vaddr);
     }
 
     sInstance = NULL;
@@ -320,10 +365,11 @@ int ImageProcess::ConvertImage(ImxImageBuffer &dstBuf, ImxImageBuffer &srcBuf, I
     mDebug = debug;
     if (mDebug)
         ALOGI("%s: src: virt %p, phy 0x%lx, size %d, res %ux%u, format 0x%x, "
-              "dst: virt %p, phy 0x%lx, size %d, res %ux%u, format 0x%x, engine %d, ZoomRatio %f",
+              "dst: virt %p, phy 0x%lx, size %d, res %ux%u, format 0x%x, engine %d, ZoomRatio %f, dewarp %d",
               __func__, srcBuf.mVirtAddr, srcBuf.mPhyAddr, (int)srcBuf.mSize, srcBuf.mWidth,
               srcBuf.mHeight, srcBuf.mFormat, dstBuf.mVirtAddr, dstBuf.mPhyAddr, (int)dstBuf.mSize,
-              dstBuf.mWidth, dstBuf.mHeight, dstBuf.mFormat, engine, srcBuf.mZoomRatio);
+              dstBuf.mWidth, dstBuf.mHeight, dstBuf.mFormat, engine, srcBuf.mZoomRatio,
+              (int)srcBuf.mDewarp);
 
     // unify HAL_PIXEL_FORMAT_YCbCr_420_SP to HAL_PIXEL_FORMAT_YCBCR_420_888
     if (srcBuf.mFormat == HAL_PIXEL_FORMAT_YCbCr_420_SP) {
@@ -383,6 +429,9 @@ int convertPixelFormatToG2DFormat(int format) {
             break;
         case HAL_PIXEL_FORMAT_YCrCb_420_SP:
             nFormat = G2D_NV21;
+            break;
+        case HAL_PIXEL_FORMAT_RGB_888:
+            nFormat = G2D_RGB888;
             break;
         default:
             ALOGE("%s:%d, Error: format:0x%x not supported!", __func__, __LINE__, format);
@@ -593,12 +642,14 @@ int ImageProcess::ConvertImageByG2DBlit(ImxImageBuffer &dstBuf, ImxImageBuffer &
     }
 
     // can't do csc for some formats.
-    if (!(((dstBuf.mFormat == HAL_PIXEL_FORMAT_YCbCr_420_888) ||
+    if (!((dstBuf.mFormat == HAL_PIXEL_FORMAT_YCbCr_420_888) ||
            (dstBuf.mFormat == HAL_PIXEL_FORMAT_YCbCr_420_SP) ||
            ((dstBuf.mFormat == HAL_PIXEL_FORMAT_YCrCb_420_SP) &&
             (srcBuf.mFormat == HAL_PIXEL_FORMAT_YCbCr_422_I)) ||
            ((srcBuf.mFormat == HAL_PIXEL_FORMAT_YCbCr_422_I) &&
-            (dstBuf.mFormat == HAL_PIXEL_FORMAT_YCbCr_422_I))))) {
+            (dstBuf.mFormat == HAL_PIXEL_FORMAT_YCbCr_422_I)) ||
+           ((srcBuf.mFormat == HAL_PIXEL_FORMAT_RGB_888) &&
+            (dstBuf.mFormat == HAL_PIXEL_FORMAT_RGB_888)))) {
         return -EINVAL;
     }
 
@@ -640,10 +691,15 @@ int ImageProcess::ConvertImageByG2DBlit(ImxImageBuffer &dstBuf, ImxImageBuffer &
     ALOGV("%s: crop from (%d, %d), size %dx%d, srcBuf.mFormatSize %d, mZoomRatio %f", __func__,
           crop_left, crop_top, crop_width, crop_height, (int)srcBuf.mFormatSize, srcBuf.mZoomRatio);
 
+    if (srcBuf.mDewarp && (!mDewarpCtx.enable)) {
+        ALOGW("%s: want to dewarp but mDewarpCtx.enable false", __func__);
+        return -EINVAL;
+    }
+
     if ((srcBuf.mFormat == dstBuf.mFormat) ||
         (srcBuf.mZoomRatio <= 1.0 &&
          (srcBuf.mWidth == dstBuf.mWidth &&
-          srcBuf.mHeight == dstBuf.mHeight))) { // just scale or just csc
+          srcBuf.mHeight == dstBuf.mHeight))) { // just scale or just csc or just dewarp
         d_surface.format = (g2d_format)convertPixelFormatToG2DFormat(dstBuf.mFormat);
         d_surface.planes[0] = (long)d_buf.buf_paddr;
         d_surface.planes[1] = (long)d_buf.buf_paddr + dstBuf.mStride * dstBuf.mHeight;
@@ -657,9 +713,18 @@ int ImageProcess::ConvertImageByG2DBlit(ImxImageBuffer &dstBuf, ImxImageBuffer &
         d_surface.rot = G2D_ROTATION_0;
 
         Mutex::Autolock _l(mG2dLock);
+        if (srcBuf.mDewarp && mDewarpCtx.enable) {
+            mEnableEngine(mG2dHandle, G2D_WARPING);
+            mSetWarpCord(mG2dHandle, &mDewarpCtx.coord);
+        }
+
         ret = mBlitEngine(g2dHandle, (void *)&s_surface, (void *)&d_surface);
         if (ret)
             return ret;
+
+        if (srcBuf.mDewarp && mDewarpCtx.enable) {
+            mDisableEngine(mG2dHandle, G2D_WARPING);
+        }
 
         mFinishEngine(g2dHandle);
     } else {
@@ -780,7 +845,8 @@ int ImageProcess::ConvertImageByG2D(ImxImageBuffer &dstBuf, ImxImageBuffer &srcB
     }
 
     if ((srcBuf.mFormat == dstBuf.mFormat) && (srcBuf.mWidth == dstBuf.mWidth) &&
-        (srcBuf.mHeight == dstBuf.mHeight) && (srcBuf.mZoomRatio <= 1.0)) {
+        (srcBuf.mHeight == dstBuf.mHeight) && (srcBuf.mZoomRatio <= 1.0) &&
+        (srcBuf.mDewarp == false)) {
         ret = ConvertImageByG2DCopy(dstBuf, srcBuf);
     } else {
         ret = ConvertImageByG2DBlit(dstBuf, srcBuf);
@@ -1121,7 +1187,13 @@ void ImageProcess::ImxImageBufferToOclBuffer(ImxImageBuffer &imxImgBuf, OCL_BUFF
     memset(&plane_info, 0, sizeof(plane_info));
     plane_info.ocl_format = &oclFmt;
 
-    ret = m_ocl_getParam(mHOcl, OCL_PARAM_INDEX_FORMAT_PLANE_INFO, &plane_info);
+    OCL_HANDLE hOcl = (OCL_HANDLE)pthread_getspecific(m_ocl_key);
+    if (hOcl == NULL) {
+        ALOGE("%s: unexpected hOcl NULL", __func__);
+        return;
+    }
+
+    ret = m_ocl_getParam(hOcl, OCL_PARAM_INDEX_FORMAT_PLANE_INFO, &plane_info);
     if (ret) {
         ALOGE("%s: m_ocl_getParam OCL_PARAM_INDEX_FORMAT_PLANE_INFO failed, ret %d", __func__, ret);
         return;
@@ -1171,6 +1243,9 @@ static void HalPixelFormatToOclPixelFormat(uint32_t &halPixelFormat,
         case HAL_PIXEL_FORMAT_YCbCr_422_SP:
             oclPixelFormat = OCL_FORMAT_NV16;
             break;
+        case HAL_PIXEL_FORMAT_RGB_888:
+            oclPixelFormat = OCL_FORMAT_RGB888;
+            break;
         default:
             ALOGW("==xx %s: unsupported halPixelFormat %d, set oclPixelFormat to OCL_FORMAT_YUYV",
                   __func__, halPixelFormat);
@@ -1203,8 +1278,21 @@ static void ImxImageBufferToOclFormat(ImxImageBuffer &imxImgBuf, OCL_FORMAT &ocl
 int ImageProcess::ConvertImageByOclCvt(ImxImageBuffer &dstBuf, ImxImageBuffer &srcBuf) {
     int ret = 0;
 
-    if (mHOcl == NULL) {
-        return BAD_VALUE;
+    OCL_HANDLE hOcl = (OCL_HANDLE)pthread_getspecific(m_ocl_key);
+
+    // first time get, create ocl handle.
+    if (hOcl == NULL) {
+        ret = (*m_ocl_open)(OCL_OPEN_FLAG_PROFILE, &hOcl);
+        if ((ret != 0) || (hOcl == NULL)) {
+            ALOGW("%s: m_ocl_open failed, ret %d", __func__, ret);
+            return BAD_VALUE;
+        }
+
+        if ((m_warp_param.enable == 1) && srcBuf.mDewarp)
+            m_ocl_setParam(hOcl, OCL_PARAM_INDEX_WARP_PARAM, &m_warp_param);
+
+        ALOGI("%s: call pthread_setspecific, hOcl %p", __func__, hOcl);
+        pthread_setspecific(m_ocl_key, (void *)hOcl);
     }
 
     /* set format */
@@ -1214,17 +1302,16 @@ int ImageProcess::ConvertImageByOclCvt(ImxImageBuffer &dstBuf, ImxImageBuffer &s
     memset(&input_format, 0, sizeof(input_format));
     memset(&output_format, 0, sizeof(output_format));
 
-    Mutex::Autolock _l(mOclCvtLock);
     ImxImageBufferToOclFormat(srcBuf, input_format);
     ImxImageBufferToOclFormat(dstBuf, output_format);
 
-    ret = m_ocl_setParam(mHOcl, OCL_PARAM_INDEX_INPUT_FORMAT, &input_format);
+    ret = m_ocl_setParam(hOcl, OCL_PARAM_INDEX_INPUT_FORMAT, &input_format);
     if (ret) {
         ALOGE("%s: m_ocl_setParam OCL_PARAM_INDEX_INPUT_FORMAT failed, ret %d", __func__, ret);
         return ret;
     }
 
-    ret = m_ocl_setParam(mHOcl, OCL_PARAM_INDEX_OUTPUT_FORMAT, &output_format);
+    ret = m_ocl_setParam(hOcl, OCL_PARAM_INDEX_OUTPUT_FORMAT, &output_format);
     if (ret) {
         ALOGE("%s: m_ocl_setParam OCL_PARAM_INDEX_OUTPUT_FORMAT failed, ret %d", __func__, ret);
         return ret;
@@ -1240,14 +1327,14 @@ int ImageProcess::ConvertImageByOclCvt(ImxImageBuffer &dstBuf, ImxImageBuffer &s
     ImxImageBufferToOclBuffer(srcBuf, inBuffer, input_format);
     ImxImageBufferToOclBuffer(dstBuf, outBuffer, output_format);
 
-    ret = m_ocl_convert(mHOcl, &inBuffer, &outBuffer);
+    ret = m_ocl_convert(hOcl, &inBuffer, &outBuffer);
     if (ret) {
         ALOGE("%s: m_ocl_convert failed, ret %d", __func__, ret);
         return ret;
     }
 
     OCL_RUN_TIME time;
-    ret = m_ocl_getParam(mHOcl, OCL_PARAM_INDEX_RUN_TIME, &time);
+    ret = m_ocl_getParam(hOcl, OCL_PARAM_INDEX_RUN_TIME, &time);
     if (mDebug)
         ALOGI("%s: m_ocl_convert, ret %d, src: res %dx%d, fmt %d, dst: res %dx%d, fmt %d, run_time: %d us, kernel_time: %d us\n",
               __func__, ret, input_format.width, input_format.height, input_format.format,
@@ -1370,6 +1457,245 @@ cpu_resize:
               srcBuf.mWidth, srcBuf.mHeight, dstBuf.mWidth, dstBuf.mHeight, ret);
 
     return ret;
+}
+
+int ImageProcess::probe_warp_header(FILE *fp, uint32_t file_size, OCL_WARP_PARAM *warp_param) {
+    uint8_t *pbuf = NULL;
+    uint32_t header_size = 0;
+    uint8_t file_version = 0;
+    uint32_t width, height;
+    uint32_t data_size = 0;
+    int ret = -1;
+
+#define WARP_HEADER_WIDTH 4
+#define WARP_FILE_VERSION_WIDTH 1
+#define WARP_ALOGITHMS_OFFSET 5
+#define WARP_WIDTH_OFFSET 8
+#define WARP_HEIGHT_OFFSET 12
+#define WARP_ARB_START_X_OFFSET 16
+#define WARP_ARB_START_Y_OFFSET 20
+#define WARP_ARB_DELTA_XX_OFFSET 24
+#define WARP_ARB_DELTA_XY_OFFSET 28
+#define WARP_ARB_DELTA_YX_OFFSET 32
+#define WARP_ARB_DELTA_YY_OFFSET 36
+#define WARP_VERSION_1_HEADER_SZIE 40
+
+    if (!fp || !file_size || !warp_param || file_size < WARP_HEADER_WIDTH) {
+        goto exit;
+    }
+
+    /* Check header size */
+    if (fread(&header_size, 1, WARP_HEADER_WIDTH, fp) != WARP_HEADER_WIDTH) {
+        ALOGE("%s: Can't read header size", __func__);
+        goto exit;
+    }
+
+    if (!header_size || file_size < header_size) {
+        goto exit;
+    }
+
+    if (fread(&file_version, 1, WARP_FILE_VERSION_WIDTH, fp) != WARP_FILE_VERSION_WIDTH) {
+        ALOGE("%s: Can't read file format version", __func__);
+        goto exit;
+    }
+
+    if (file_version == 1) {
+        /* The header size is fixed for file version 1 */
+        if (header_size != WARP_VERSION_1_HEADER_SZIE) {
+            goto exit;
+        }
+    } else {
+        if (header_size < WARP_VERSION_1_HEADER_SZIE) {
+            goto exit;
+        }
+    }
+
+    pbuf = (uint8_t *)malloc(header_size);
+    if (fread(pbuf + WARP_ALOGITHMS_OFFSET, 1, header_size - WARP_ALOGITHMS_OFFSET, fp) !=
+        header_size - WARP_ALOGITHMS_OFFSET) {
+        ALOGE("%s: Can't read header data", __func__);
+        goto exit;
+    }
+
+#define WARP_PNT_32BPP 1
+    if (pbuf[WARP_ALOGITHMS_OFFSET] == WARP_PNT_32BPP) {
+        /* Check file integrity */
+        width = *((uint32_t *)(pbuf + WARP_WIDTH_OFFSET));
+        height = *((uint32_t *)(pbuf + WARP_HEIGHT_OFFSET));
+        data_size = width * height * 32 / 8;
+        if ((data_size + header_size) != file_size) {
+            ALOGE("%s: Invalid header data", __func__);
+            goto exit;
+        }
+        warp_param->enable = 1;
+        warp_param->map = OCL_WARP_MAP_PNT;
+        warp_param->width = width;
+        warp_param->height = height;
+        warp_param->buf.mem_type = mOclBufferType;
+        warp_param->buf.plane_num = 1;
+        warp_param->buf.planes[0].size = file_size - header_size;
+        warp_param->buf.planes[0].paddr = 0;
+        warp_param->buf.planes[0].vaddr = 0;
+        warp_param->buf.planes[0].fd = -1;
+        warp_param->buf.planes[0].offset = 0;
+        ret = 0;
+    } else {
+        ALOGE("%s: Invalid algorithms type", __func__);
+        goto exit;
+    }
+
+exit:
+    if (pbuf)
+        free(pbuf);
+
+    if (ret == 0) {
+        ALOGI("%s: Get header data", __func__);
+    } else {
+        ALOGE("%s: No header size info", __func__);
+        if (warp_param)
+            warp_param->buf.planes[0].size = file_size;
+    }
+
+    return ret;
+}
+
+int ImageProcess::read_warp_coordinates_file(const char *file_name, OCL_WARP_PARAM *warp_param) {
+    FILE *fp;
+    int ret = 0;
+    uint32_t size = 0;
+    uint32_t aligned_size = 0;
+    bool use_dma = false;
+
+    if (!file_name || !warp_param)
+        return -1;
+
+    do {
+        fp = fopen(file_name, "rb");
+        if (!fp) {
+            ret = -1;
+            ALOGE("%s: Can't open file, file name: %s", __func__, file_name);
+            break;
+        }
+
+        ret = fseek(fp, 0, SEEK_END);
+        if (ret) {
+            break;
+        }
+
+        size = ftell(fp);
+        if (size == 0) {
+            ret = -1;
+            break;
+        }
+
+        ret = fseek(fp, 0, SEEK_SET);
+        if (ret) {
+            break;
+        }
+
+        /* Probe header data*/
+        if (probe_warp_header(fp, size, warp_param)) {
+            ret = fseek(fp, 0, SEEK_SET);
+            if (ret) {
+                break;
+            }
+        }
+
+        if (warp_param->buf.mem_type == OCL_MEM_TYPE_DEVICE)
+            use_dma = true;
+
+        size = warp_param->buf.planes[0].size;
+        aligned_size = (size + 4095) & ~4095;
+
+        if (!use_dma) {
+            void *ptr = malloc(aligned_size);
+            if (!ptr) {
+                ALOGE("%s: read warp cooordinate file: aligned_alloc failed, size: %u, aligned_size %u", __func__,
+                      size, aligned_size);
+                ret = -1;
+                break;
+            }
+
+            warp_param->buf.planes[0].size = aligned_size;
+            warp_param->buf.planes[0].vaddr = (long long)ptr;
+        } else {
+            ret = AllocPhyBuffer(aligned_size, 1, HAL_PIXEL_FORMAT_BLOB, mWarpBuffer, false);
+            if (ret) {
+                ALOGE("%s: AllocPhyBuffer for mWarpBuffer failed, size %u, aligned_size %u", __func__,
+                      size, aligned_size);
+                ret = -1;
+                break;
+            }
+
+            ALOGI("%s: fd %d, size %u, aligned_size %u, vaddr %p", __func__, mWarpBuffer.mFd, size, aligned_size,
+                  mWarpBuffer.mVirtAddr);
+
+            warp_param->buf.planes[0].fd = mWarpBuffer.mFd;
+            warp_param->buf.planes[0].size = aligned_size;
+            warp_param->buf.planes[0].vaddr = (long long)mWarpBuffer.mVirtAddr;
+        }
+
+        if (fread((void *)warp_param->buf.planes[0].vaddr, 1, size, fp) != size) {
+            ret = -1;
+            break;
+        } else {
+            ret = 0;
+        }
+    } while (0);
+
+    if (fp)
+        fclose(fp);
+
+    if (ret) {
+        if (warp_param->buf.planes[0].vaddr) {
+            if (use_dma)
+                FreePhyBuffer(mWarpBuffer.buffer);
+            else
+                free((void *)warp_param->buf.planes[0].vaddr);
+        }
+
+        ALOGE("%s: read file failed: %s", file_name, __func__);
+        warp_param->buf.planes[0].size = 0;
+        return ret;
+    }
+
+    return ret;
+}
+
+int ImageProcess::PrepareDewarpBinary() {
+    int ret = 0;
+    struct stat statbuf;
+
+    ret = stat(DEWARP_COORD_FILE, &statbuf);
+    if (ret) {
+        ALOGI("%s: no dewarp file %s", __func__, DEWARP_COORD_FILE);
+        return -1;
+    }
+
+    ALOGI("%s: %s size is %ld", __func__, DEWARP_COORD_FILE, statbuf.st_size);
+    mDewarpCtx.g2d_coord_buf = mAlloc(statbuf.st_size, 0);
+    if (mDewarpCtx.g2d_coord_buf == NULL) {
+        ALOGI("%s: mAlloc size %ld failed", __func__, statbuf.st_size);
+        return -1;
+    }
+
+    ret = mGetCoordFromDct(mG2dHandle, DEWARP_COORD_FILE, mDewarpCtx.g2d_coord_buf,
+                           &mDewarpCtx.coord);
+    if (ret) {
+        ALOGI("%s: g2d_get_warp_coordinates_from_dct_file failed, ret %d", __func__, ret);
+        return ret;
+    }
+
+    ALOGI("%s: coord para: addr 0x%lx, format %d, bpp %d, width %d, height %d, x %u, y %u, xx %u, xy %u, yx %u, yy %u\n",
+          __func__, mDewarpCtx.coord.addr, mDewarpCtx.coord.format, mDewarpCtx.coord.bpp,
+          mDewarpCtx.coord.width, mDewarpCtx.coord.height, mDewarpCtx.coord.arb_start_x,
+          mDewarpCtx.coord.arb_start_y, mDewarpCtx.coord.arb_delta_xx,
+          mDewarpCtx.coord.arb_delta_xy, mDewarpCtx.coord.arb_delta_yx,
+          mDewarpCtx.coord.arb_delta_yy);
+
+    mDewarpCtx.enable = true;
+
+    return 0;
 }
 
 } // namespace fsl

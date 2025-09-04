@@ -257,6 +257,10 @@ ndk::ScopedAStatus Thermal::unregisterCoolingDeviceChangedCallback(
     return ndk::ScopedAStatus::ok();
 }
 
+ndk::ScopedAStatus Thermal::forecastSkinTemperature(int32_t, float*) {
+    return ndk::ScopedAStatus::fromExceptionCode(EX_UNSUPPORTED_OPERATION);
+}
+
 void Thermal::sendThermalChangedCallback(const std::vector<Temperature> &temps) {
     std::lock_guard<std::mutex> _lock(thermal_callback_mutex_);
     for (auto &t : temps) {

@@ -218,7 +218,6 @@ private:
     status_t PickConfigStreamLocked(uint32_t pipeline_id, uint8_t intent);
     int HandleIntent(HwlPipelineRequest *hwReq);
 
-    int HandleImage();
     status_t CapAndFeed(uint32_t frame, FrameRequest *frameRequest);
     void DumpRequest();
     void ReleaseFrameRequest(FrameRequest &frameRequest);
@@ -237,6 +236,8 @@ private:
     status_t ConfigLibcameraLocked(uint32_t bufferNum, uint32_t format, uint32_t width,
                                    uint32_t height);
     status_t PickAndConfigLibcamera(std::vector<HwlPipelineRequest> &requests);
+    void GetConfigSize(int halFmt, uint32_t refWidth, uint32_t refHeight, uint32_t &configWidth,
+                       uint32_t &configHeight);
 
     void ReturnFrameBufferLocked();
     status_t queueRequestToLibcameraLocked(HalCameraMetadata *cameraMeta);
@@ -323,6 +324,7 @@ private:
     };
     CameraState state_;
     std::shared_ptr<libcamera::Camera> camera_;
+    libcamera::StreamFormats mSupportedFormats;
     libcamera::Stream *mLibCameraStream = NULL;
     std::list<std::unique_ptr<libcamera::FrameBuffer>> mFrameBuffersFree;
     std::list<std::unique_ptr<libcamera::FrameBuffer>> mFrameBuffersBusy;
@@ -341,6 +343,44 @@ private:
     char mSocType[128];
     uint32_t maxStreamWidth = 0;
     uint32_t maxStreamHeight = 0;
+
+    // dewarp on ox03c10
+    ImxImageBuffer mDewarpBuf;
+
+    // process multi-cameras in multi-threads
+    class ImgProcThread : public Thread {
+    public:
+        ImgProcThread(CameraDeviceSessionHwlImpl *pSession) : Thread(false), mSession(pSession) {}
+
+        virtual void onFirstRef() { run("ImgProcThread", PRIORITY_URGENT_DISPLAY); }
+
+        virtual status_t readyToRun() {
+            ALOGI("ImgProcThread, readyToRun");
+            return 0;
+        }
+
+        virtual bool threadLoop() {
+            int ret = mSession->HandleImage();
+            if (ret != OK) {
+                ALOGI("%s exit...", __func__);
+                return false;
+            }
+            return true;
+        }
+
+    private:
+        CameraDeviceSessionHwlImpl *mSession;
+    };
+
+    int HandleImage();
+    std::list<libcamera::Request *> mRequestPendingList;
+    Mutex mRequestPendingListLock;
+    Condition mRequestPendingListCond;
+
+    void requestCompleteDispatch(libcamera::Request *request);
+
+    static std::map<CameraDeviceSessionHwlImpl *, sp<ImgProcThread>> sessionThreadMap;
+    static Mutex sessionThreadMapLock;
 
 public:
     int32_t m_raw_v4l2_format = -1;

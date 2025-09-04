@@ -157,6 +157,17 @@ HWC3::Error ComposerClient::init() {
         return error;
     }
 
+    const auto HdcpChangedCallback = [this](long displayId,
+                                            bool hdcpState,
+                                            aidl::android::hardware::drm::HdcpLevels levels) {
+        handleHdcpChanged(displayId, hdcpState, levels);
+    };
+    error = mComposer->registerOnHdcpChangedCallback(HdcpChangedCallback);
+    if (error != HWC3::Error::None) {
+        ALOGE("%s failed to register hdcpchanged callback", __FUNCTION__);
+        return error;
+    }
+
     error = createDisplaysLocked();
     if (error != HWC3::Error::None) {
         ALOGE("%s failed to create displays.", __FUNCTION__);
@@ -717,12 +728,12 @@ ndk::ScopedAStatus ComposerClient::getMaxLayerPictureProfiles(int64_t hwcId, int
 }
 
 ndk::ScopedAStatus ComposerClient::startHdcpNegotiation(
-        int64_t hwcId, const aidl::android::hardware::drm::HdcpLevels& /*levels*/) {
+        int64_t hwcId, const aidl::android::hardware::drm::HdcpLevels& levels) {
     DEBUG_LOG("%s", __FUNCTION__);
 
     GET_DISPLAY_OR_RETURN_ERROR();
 
-    return ToBinderStatus(HWC3::Error::Unsupported);
+    return ToBinderStatus(display->startHdcpNegotiation(levels));
 }
 
 ndk::ScopedAStatus ComposerClient::getLuts(int64_t hwcId, const std::vector<Buffer>&,
@@ -1396,11 +1407,16 @@ void ComposerClient::executeLayerCommandSetLayerBufferSlotsToClear(
     }
 }
 
-void ComposerClient::executeLayerCommandSetLayerLuts(CommandResultWriter& /*commandResults*/,
-                                                     Display& /*display*/, Layer* /*layer*/,
-                                                     const Luts& /*luts*/) {
+void ComposerClient::executeLayerCommandSetLayerLuts(CommandResultWriter& commandResults,
+                                                     Display& display, Layer* layer,
+                                                     const Luts& luts) {
     DEBUG_LOG("%s", __FUNCTION__);
-    // TODO(b/358188835)
+
+    auto error = layer->setLuts(luts);
+    if (error != HWC3::Error::None) {
+        LOG_LAYER_COMMAND_ERROR(display, layer, error);
+        commandResults.addError(error);
+    }
 }
 
 std::shared_ptr<Display> ComposerClient::getDisplay(int64_t hwcId) {
@@ -1431,7 +1447,8 @@ HWC3::Error ComposerClient::createDisplaysLocked() {
     }
 
     for (const auto& iter : displays) {
-        error = createDisplayLocked(iter.hwcId, iter.displayId, iter.activeConfigId, iter.configs);
+        error = createDisplayLocked(iter.hwcId, iter.displayId, iter.port, iter.activeConfigId,
+                                    iter.configs);
         if (error != HWC3::Error::None) {
             ALOGE("%s failed to create display from config", __FUNCTION__);
             return error;
@@ -1441,7 +1458,7 @@ HWC3::Error ComposerClient::createDisplaysLocked() {
     return HWC3::Error::None;
 }
 
-HWC3::Error ComposerClient::createDisplayLocked(int64_t hwcId, uint32_t displayId,
+HWC3::Error ComposerClient::createDisplayLocked(int64_t hwcId, uint32_t displayId, uint32_t port,
                                                 int32_t activeConfigId,
                                                 const std::vector<DisplayConfig>& configs) {
     DEBUG_LOG("%s", __FUNCTION__);
@@ -1455,7 +1472,7 @@ HWC3::Error ComposerClient::createDisplayLocked(int64_t hwcId, uint32_t displayI
     Display* display;
     std::shared_ptr<Display> hwcDisplay;
     if (mDisplays.find(hwcId) == mDisplays.end()) {
-        hwcDisplay = std::make_shared<Display>(mComposer, hwcId, displayId);
+        hwcDisplay = std::make_shared<Display>(mComposer, hwcId, displayId, port);
         display = hwcDisplay.get();
         if (display == nullptr) {
             ALOGE("%s failed to allocate hwc display", __FUNCTION__);
@@ -1545,6 +1562,7 @@ HWC3::Error ComposerClient::handleHotplug(bool connected,
 
     const int64_t hwcId = static_cast<int64_t>(halConfigs->hwcId);
     const uint32_t displayId = halConfigs->displayId;
+    const uint32_t port = halConfigs->port;
 
     if (connected) {
         const int32_t configId = halConfigs->activeConfigId;
@@ -1562,12 +1580,12 @@ HWC3::Error ComposerClient::handleHotplug(bool connected,
 
         {
             std::lock_guard<std::mutex> lock(mDisplaysMutex);
-            createDisplayLocked(hwcId, displayId, configId, configs);
+            createDisplayLocked(hwcId, displayId, port, configId, configs);
         }
 
         auto& cfg = (*(halConfigs->configs))[static_cast<uint32_t>(configId)];
-        ALOGI("Connecting display:%d hwcId:%ld, w:%d, h:%d, dpiX:%d, dpiY:%d, fps:%d", displayId,
-              hwcId, cfg.width, cfg.height, cfg.dpiX, cfg.dpiY, cfg.refreshRateHz);
+        ALOGI("Connecting display:%d hwcId:%ld, port:0x%x, w:%d, h:%d, dpiX:%d, dpiY:%d, fps:%d",
+              displayId, hwcId, port, cfg.width, cfg.height, cfg.dpiX, cfg.dpiY, cfg.refreshRateHz);
         mCallbacks->onHotplug(hwcId, /*connected=*/true);
     } else {
         ALOGI("Disconnecting display:%d", displayId);
@@ -1579,6 +1597,23 @@ HWC3::Error ComposerClient::handleHotplug(bool connected,
         }
     }
 
+    return HWC3::Error::None;
+}
+
+HWC3::Error ComposerClient::handleHdcpChanged(long displayId,
+                                              bool hdcpState,
+                                              aidl::android::hardware::drm::HdcpLevels levels) {
+    if (!mCallbacks) {
+        return HWC3::Error::None;
+    }
+    if (hdcpState) {
+        mCallbacks->onHdcpLevelsChanged(displayId, levels);
+    } else {
+        aidl::android::hardware::drm::HdcpLevels noneLevels;
+        noneLevels.connectedLevel = aidl::android::hardware::drm::HdcpLevel::HDCP_NONE;
+        noneLevels.maxLevel = levels.maxLevel;
+        mCallbacks->onHdcpLevelsChanged(displayId, noneLevels);
+    }
     return HWC3::Error::None;
 }
 

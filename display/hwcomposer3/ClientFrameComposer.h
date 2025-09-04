@@ -85,10 +85,13 @@ public:
         return HWC3::Error::None;
     }
 
+    HWC3::Error startHdcp(Display* display) override;
+    HWC3::Error registerOnHdcpChangedCallback(const HdcpChangedCallback& cb) override;
+
 private:
     std::tuple<HWC3::Error, DeviceClient*> getDeviceClient(uint32_t displayId);
     HWC3::Error pollDrmThreadCallback(char* file);
-    void HDCPThreadCallback(Display* display);
+    void hdcpAuthSuccessCallback(Display* display);
 
     struct ValidatedLayers {
         std::unordered_map<uint32_t, Layer*> layersForOverlayPlane; // <planeId, layer>
@@ -117,6 +120,7 @@ private:
 #endif
 
     bool mHdcpEnabled = false;
+    std::optional<HdcpChangedCallback> mHdcpChangedCallback;
 };
 
 } // namespace aidl::android::hardware::graphics::composer3::impl

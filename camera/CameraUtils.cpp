@@ -60,6 +60,9 @@ int32_t changeSensorFormats(int *src, int *dst, int len) {
             case v4l2_fourcc('Y', 'U', 'V', '4'):
                 dst[k++] = HAL_PIXEL_FORMAT_YCbCr_444_888;
                 break;
+            case v4l2_fourcc('R', 'G', 'B', '3'):
+                dst[k++] = HAL_PIXEL_FORMAT_RGB_888;
+                break;
 
             default:
                 ALOGE("Error: format:%c%c%c%c not supported!", src[i] & 0xFF, (src[i] >> 8) & 0xFF,
@@ -123,6 +126,7 @@ int32_t ImageBufferToStreamBuffer(ImxImageBuffer &imageBuffer, ImxStreamBuffer &
     streamBuffer.mFormatSize = imageBuffer.mFormatSize;
     streamBuffer.buffer = imageBuffer.buffer;
     stream->mZoomRatio = imageBuffer.mZoomRatio;
+    streamBuffer.mDewarp = imageBuffer.mDewarp;
 
     return 0;
 }
@@ -146,6 +150,7 @@ static int32_t StreamBufferToImageBuffer(ImxStreamBuffer &streamBuffer, ImxImage
     imageBuffer.mFormatSize = streamBuffer.mFormatSize;
     imageBuffer.buffer = streamBuffer.buffer;
     imageBuffer.mZoomRatio = stream->mZoomRatio;
+    imageBuffer.mDewarp = streamBuffer.mDewarp;
     imageBuffer.mUsage = stream->usage();
     imageBuffer.mPrivate = NULL;
 
@@ -158,6 +163,9 @@ int32_t handleFrame(ImxStreamBuffer &dstBuf, ImxStreamBuffer &srcBuf, ImxEngine 
 
     ImxImageBuffer imageBufferSrc;
     ImxImageBuffer imageBufferDst;
+
+    memset(&imageBufferSrc, 0, sizeof(imageBufferSrc));
+    memset(&imageBufferDst, 0, sizeof(imageBufferDst));
 
     StreamBufferToImageBuffer(srcBuf, imageBufferSrc);
     StreamBufferToImageBuffer(dstBuf, imageBufferDst);

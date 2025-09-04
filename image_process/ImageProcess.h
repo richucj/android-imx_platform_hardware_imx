@@ -17,25 +17,43 @@
 #ifndef _FSL_IMAGE_PROCESS_H
 #define _FSL_IMAGE_PROCESS_H
 
+#include <cutils/native_handle.h>
+#include <g2d.h>
+#include <g2dExt.h>
 #include <stdint.h>
 #include <utils/Mutex.h>
-#include <cutils/native_handle.h>
-#include "ImageUtils.h"
+
 #include <vector>
+
+#include "ImageUtils.h"
 
 namespace fsl {
 
 using namespace android;
 
 typedef int (*hwc_func1)(void* handle);
+typedef int (*hwc_func2)(void* handle, void* arg1);
 typedef int (*hwc_func3)(void* handle, void* arg1, void* arg2);
 typedef int (*hwc_func4)(void* handle, void* arg1, void* arg2, void* arg3);
+typedef int (*hwc_query)(void*, enum g2d_feature, int*);
+typedef int (*hwc_enable)(void*, enum g2d_cap_mode);
+typedef int (*hwc_disable)(void*, enum g2d_cap_mode);
+typedef struct g2d_buf* (*hwc_alloc)(int, int);
+typedef int (*hwc_free)(struct g2d_buf*);
+typedef int (*hwc_get_coord_from_dct)(void*, const char*, struct g2d_buf*,
+                                      struct g2d_warp_coordinates*);
 
 typedef OCL_RESULT (*ocl_open)(OCL_OPEN_FLAG flag, OCL_HANDLE* handle);
 typedef OCL_RESULT (*ocl_setParam)(OCL_HANDLE handle, OCL_PARAM_INDEX index, void* param);
 typedef OCL_RESULT (*ocl_getParam)(OCL_HANDLE handle, OCL_PARAM_INDEX index, void* param);
 typedef OCL_RESULT (*ocl_convert)(OCL_HANDLE handle, OCL_BUFFER* in_buf, OCL_BUFFER* out_buf);
 typedef OCL_RESULT (*ocl_close)(OCL_HANDLE handle);
+
+struct DewarpCtx {
+    struct g2d_warp_coordinates coord;
+    struct g2d_buf* g2d_coord_buf;
+    bool enable;
+};
 
 class ImageProcess {
 public:
@@ -82,6 +100,14 @@ private:
     int ConvertImageByOclCvt(ImxImageBuffer& dst, ImxImageBuffer& src);
     void ImxImageBufferToOclBuffer(ImxImageBuffer& imxImgBuf, OCL_BUFFER& oclBuf,
                                    OCL_FORMAT& oclFmt);
+    static void FreeOclHandle(void* handle);
+
+    // g3d dewarp
+    int probe_warp_header(FILE* fp, uint32_t file_size, OCL_WARP_PARAM* warp_param);
+    int read_warp_coordinates_file(const char* file_name, OCL_WARP_PARAM* warp_param);
+
+    // g2d/dpu dewarp
+    int PrepareDewarpBinary();
 
 private:
     ImageProcess();
@@ -129,13 +155,26 @@ private:
     OCL_MEMORY_TYPE mOclBufferType;
 
     void* mImxOclCvtModule;
-    OCL_HANDLE mHOcl;
+    pthread_key_t m_ocl_key;
     ocl_open m_ocl_open;
     ocl_setParam m_ocl_setParam;
     ocl_getParam m_ocl_getParam;
     ocl_convert m_ocl_convert;
     ocl_close m_ocl_close;
-    Mutex mOclCvtLock;
+
+    // g3d dewarp
+    OCL_WARP_PARAM m_warp_param;
+    ImxImageBuffer mWarpBuffer;
+
+    // g2d/dpu dewarp
+    struct DewarpCtx mDewarpCtx;
+    hwc_query mQueryFeature;
+    hwc_func2 mSetWarpCord;
+    hwc_enable mEnableEngine;
+    hwc_disable mDisableEngine;
+    hwc_alloc mAlloc;
+    hwc_free mFree;
+    hwc_get_coord_from_dct mGetCoordFromDct;
 };
 
 } // namespace fsl

@@ -27,6 +27,7 @@
 #include <memory>
 #include <string>
 #include <unordered_map>
+#include <android-base/properties.h>
 
 #include "Common.h"
 #include "DeviceComposer.h"
@@ -61,6 +62,7 @@ public:
 
     uint32_t getId() const { return mId; }
     uint32_t getHwcId() const { return mHwcId; }
+    uint32_t getPort() const { return mPort; }
     uint32_t getCrtcIndex() const { return mCrtc->getIndex(); }
 
     bool isConnected() const { return mConnector->isConnected(); }
@@ -104,6 +106,10 @@ public:
             mOriginalHwcId = mHwcId;
             mIsPrimary = true;
             mHwcId = DEFAULT_HWC_PRIMARY_DISPLAY_ID;
+
+            // set primary display supportHdcp property
+            ::android::base::SetProperty("vendor.hwc.primarydisplay.support_hdcp",
+                                         mConnector->getHDCPSupported() == true ? "1": "0");
         } else {
             mHwcId = mOriginalHwcId;
             mIsPrimary = false;
@@ -123,11 +129,13 @@ public:
     void clearTempBuffer(uint32_t overlaynum);
 
 private:
-    DrmDisplay(uint32_t id, std::unique_ptr<DrmConnector> connector, std::unique_ptr<DrmCrtc> crtc,
+    DrmDisplay(uint32_t id, uint32_t port, std::unique_ptr<DrmConnector> connector,
+               std::unique_ptr<DrmCrtc> crtc,
                std::unordered_map<uint32_t, std::unique_ptr<DrmPlane>> planes)
           : mHwcId(id),
             mOriginalHwcId(mHwcId),
             mId(id),
+            mPort(port),
             mConnector(std::move(connector)),
             mCrtc(std::move(crtc)),
             mPlanes(std::move(planes)) {
@@ -144,6 +152,7 @@ private:
     uint32_t mHwcId; // logic display Id, may be changed when needed
     uint32_t mOriginalHwcId;
     const uint32_t mId; // const value when display enumerated
+    const uint32_t mPort; // only least significant 8 bit used
     std::unique_ptr<DrmConnector> mConnector;
     std::unique_ptr<DrmCrtc> mCrtc;
     std::unordered_map<uint32_t, std::unique_ptr<DrmPlane>> mPlanes;

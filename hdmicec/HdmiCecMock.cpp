@@ -373,55 +373,49 @@ bool HdmiCecMock::getPhysicalAddrFromEdid(uint16_t* phyaddr) {
                 ALOGE("No Externsion blocks");
                 goto finish;
             }
-            // get physical address from edid Extension blocks
-            // Check the Tag of each Data Block, start from Video Data
-            // Video Data -> Audio Data -> Speaker Allocation -> Vendor-Specific
+
+            // Get physical address from Vendor Specific Data Block
+            // The order of the Data Blocks in Extension blocks is not constrained
+            // 3 bits<bit7~bit5> used for the tag code to label the type of data
+            // 5 bits<bit4~bit0> used to indicate the length of the block
+            // CEA Data Block Tag Codes:
+            // 0: Reserved
+            // 1: Audio Data
+            // 2: Video Data
+            // 3: Vendor Specific Data
+            // 4: Speaker Allocation Data
+            // 5: VESA DTC Data
+            // 6: Reserved
+            // 7: Use Extended Tag
+
             uint8_t idx = 0x84;
-            uint8_t idxDataLen = outData[idx] & 0x1f;
-            if (((outData[idx] >> 5) & 0x7) == 2) {
-                ALOGV("Video Data idx:0x%x,  value:0x%x,  dataLen:0x%x", idx, outData[idx],
-                      idxDataLen);
-                idx = idx + idxDataLen + 1;
-                idxDataLen = outData[idx] & 0x1f;
-            }
-            if (((outData[idx] >> 5) & 0x7) == 1) {
-                ALOGV("Audio Data idx:0x%x,  value:0x%x,  dataLen:0x%x", idx, outData[idx],
-                      idxDataLen);
-                idx = idx + idxDataLen + 1;
-                idxDataLen = outData[idx] & 0x1f;
-            }
-            if (((outData[idx] >> 5) & 0x7) == 4) {
-                ALOGV("Speaker Allocation idx:0x%x,  value:0x%x,  dataLen:0x%x", idx, outData[idx],
-                      idxDataLen);
-                idx = idx + idxDataLen + 1;
-                idxDataLen = outData[idx] & 0x1f;
-            }
-            if (((outData[idx] >> 5) & 0x7) == 3) {
-                ALOGV("Vendor-Specific idx:0x%x,  value:0x%x,  dataLen:0x%x", idx, outData[idx],
-                      idxDataLen);
-            } else {
-                ALOGI("here just a workaround for the samsung TV, Add 3 bytes for idxVSDB");
-                idx = idx + 3;
-                idxDataLen = outData[idx] & 0x1f;
-                ALOGV("Vendor-Specific idx:0x%x,  value:0x%x,  dataLen:0x%x", idx, outData[idx],
-                      idxDataLen);
-            }
+            // we just care about the Vendor-Specific to find out the Physical addr
+            while (idx < id.data.size()) {
+                uint8_t codeTag = ((outData[idx] >> 5) & 0x7);
+                uint8_t idxDataLen = outData[idx] & 0x1f;
+                if (codeTag != 3) {
+                    ALOGI("Code tag is %d, dataLen:0x%x", codeTag, idxDataLen);
+                    idx = idx + idxDataLen + 1;
+                } else {
+                    // Vendor-Specific, H14b
+                    uint32_t HdmiIdentifier = 0x000C03;
+                    if ((HdmiIdentifier & 0x00ffffffff) !=
+                        (uint32_t)(outData[idx + 3] << 16 | outData[idx + 2] << 8 | outData[idx + 1])) {
+                        ALOGE("HdmiIdentifier check failed:0x%x %x %x", outData[idx + 3], outData[idx + 2],
+                            outData[idx + 1]);
+                        goto finish;
+                    }
 
-            uint32_t HdmiIdentifier = 0x000C03;
-            if ((HdmiIdentifier & 0x00ffffffff) !=
-                (uint32_t)(outData[idx + 3] << 16 | outData[idx + 2] << 8 | outData[idx + 1])) {
-                ALOGE("HdmiIdentifier check failed:0x%x %x %x", outData[idx + 3], outData[idx + 2],
-                      outData[idx + 1]);
-                goto finish;
+                    uint8_t idxPhysicalMSB = idx + 4;
+                    uint8_t idxPhysicalLSB = idx + 5;
+                    ALOGI("PhysicalMSB:0x%x,  PhysicalLSB:0x%x", outData[idxPhysicalMSB],
+                        outData[idxPhysicalLSB]);
+
+                    *phyaddr = (unsigned short)(outData[idxPhysicalMSB] << 8 | outData[idxPhysicalLSB]);
+                    ret = true;
+                    break;
+                }
             }
-
-            uint8_t idxPhysicalMSB = idx + 4;
-            uint8_t idxPhysicalLSB = idx + 5;
-            ALOGV("PhysicalMSB:0x%x,  PhysicalLSB:0x%x", outData[idxPhysicalMSB],
-                  outData[idxPhysicalLSB]);
-
-            *phyaddr = (unsigned short)(outData[idxPhysicalMSB] << 8 | outData[idxPhysicalLSB]);
-            ret = true;
         } else {
             ALOGE("getDisplayIdentificationData failed.");
             goto finish;

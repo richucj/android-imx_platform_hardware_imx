@@ -19,7 +19,6 @@
 #include <utils/ThreadDefs.h>
 #include <thread>
 #include "Display.h"
-#
 
 using android::base::ReadFileToString;
 using android::base::WriteStringToFd;
@@ -28,8 +27,12 @@ namespace aidl::android::hardware::graphics::composer3::impl {
 
 HDCPThread::HDCPThread(Display* display) : mHwcId(display->getHwcId()),
                                            mDisplay(display),
-                                           mHdcpStatusPath(getHdcpStatusPath()),
-                                           mPattern("(\\d+)\\s*:") {}
+                                           mPattern("(\\d+)\\s*:") {
+    const std::string hdcpInfoPath = getHdcpInfoPath();
+    mHdcpStatusPath = hdcpInfoPath + "/HDCPTX_Status";
+    mHdcpCapPath = hdcpInfoPath + "/HDCPTX_Version";
+    mHdcpVersionPath = hdcpInfoPath + "/HDCPTX_Curversion";
+}
 
 HDCPThread::~HDCPThread() {
     stop();
@@ -67,7 +70,7 @@ HWC3::Error HDCPThread::stop() {
     return HWC3::Error::None;
 }
 
-HWC3::Error HDCPThread::setCallbacks(const HDCPThreadCallback& callback) {
+HWC3::Error HDCPThread::setCallbacks(const HdcpThreadCallback& callback) {
     DEBUG_LOG("%s HDCP Thread for hwc display:%" PRIu64, __FUNCTION__, mHwcId);
 
     std::unique_lock<std::mutex> lock(mStateMutex);
@@ -78,27 +81,111 @@ HWC3::Error HDCPThread::setCallbacks(const HDCPThreadCallback& callback) {
     return HWC3::Error::None;
 }
 
-HWC3::Error HDCPThread::setHDCPThreadEnabled(bool enabled) {
+HWC3::Error HDCPThread::setHdcpThreadEnabled(bool enabled) {
     DEBUG_LOG("%s HDCP Thread for hwc display:%" PRIu64 " enabled:%d", __FUNCTION__, mHwcId, enabled);
 
     std::lock_guard<std::mutex> lock(mStateMutex);
     mThreadEnabled = enabled;
+    mHdcpStartTime = std::chrono::system_clock::now();
 
+    return HWC3::Error::None;
+}
+
+HWC3::Error HDCPThread::setHdcpChangedCallback(const HdcpChangedCallback& callback) {
+    DEBUG_LOG("%s HDCP Thread for hwc display:%" PRIu64, __FUNCTION__, mHwcId);
+
+    std::unique_lock<std::mutex> lock(mStateMutex);
+    if (!mHdcpChangedCallbacks.has_value()) {
+        mHdcpChangedCallbacks = callback;
+    }
+
+    return HWC3::Error::None;
+}
+
+void HDCPThread::updateHdcpLevels(std::string hdcpCap,
+                                  std::string hdcpVer) {
+    DEBUG_LOG("%s HDCP Thread for hwc display:%" PRIu64, __FUNCTION__, mHwcId);
+
+    std::unique_lock<std::mutex> lock(mStateMutex);
+    int8_t hdcp_cap = static_cast<int8_t>(HdcpLevel::HDCP_UNKNOWN);
+    int8_t hdcp_ver = static_cast<int8_t>(HdcpLevel::HDCP_UNKNOWN);
+    if (!hdcpCap.empty())
+        hdcp_cap = std::stoi(hdcpCap.c_str());
+
+    if (!hdcpVer.empty())
+        hdcp_ver = std::stoi(hdcpVer.c_str());
+
+    switch (hdcp_ver) {
+        case KHdcp_Version::HDCP_TX_2:
+            mLevels.connectedLevel = HdcpLevel::HDCP_V2_2;
+            break;
+        case KHdcp_Version::HDCP_TX_1:
+            mLevels.connectedLevel = HdcpLevel::HDCP_V1;
+            break;
+        default:
+            mLevels.connectedLevel = HdcpLevel::HDCP_UNKNOWN;
+            ALOGE("cur hdcp versioin is not correct");
+    }
+
+    switch (hdcp_cap) {
+        case (HDCP_CONFIG_1_4 | HDCP_CONFIG_2_2):
+            mLevels.maxLevel = HdcpLevel::HDCP_V2_2;
+            break;
+        case HDCP_CONFIG_2_2:
+            mLevels.maxLevel = HdcpLevel::HDCP_V2_2;
+            break;
+        case HDCP_CONFIG_1_4:
+            mLevels.maxLevel = HdcpLevel::HDCP_V1;
+            break;
+        default:
+            mLevels.maxLevel = HdcpLevel::HDCP_UNKNOWN;
+            ALOGE("hdcp versioin is not correct");
+    }
+}
+
+void HDCPThread::setHdcpState(bool state) {
+    DEBUG_LOG("%s HDCP Thread for hwc display:%" PRIu64, __FUNCTION__, mHwcId);
+
+    std::unique_lock<std::mutex> lock(mStateMutex);
+    if (mHdcpState != state) {
+        mHdcpState = state;
+        (*mHdcpChangedCallbacks)(mDisplay->getHwcId(), mHdcpState, mLevels);
+    }
+}
+
+HWC3::Error HDCPThread::getHdcpLevels(HdcpLevels& levels) {
+    levels.connectedLevel = mLevels.connectedLevel;
+    levels.maxLevel = mLevels.maxLevel;
     return HWC3::Error::None;
 }
 
 void HDCPThread::threadLoop() {
     std::string mAuthResult;
     std::smatch mMatch;
+    std::string mHdcpCapResult;
+    std::string mVersionResult;
     while (!mShuttingDown.load()) {
-        if (mThreadEnabled && ReadFileToString(mHdcpStatusPath, &mAuthResult)) {
-            if (!mAuthResult.empty()) {
-                if (std::regex_search(mAuthResult, mMatch, mPattern)) {
-                    if(std::stoi(mMatch[1].str()) == 5) {
-                        if (mCallbacks) {
-                            DEBUG_LOG("%s: for hwc display:%" PRIu64 " calling hdcp", __FUNCTION__, mHwcId);
-                            (*mCallbacks)(mDisplay);
-                        }
+        if (mThreadEnabled) {
+            if (ReadFileToString(mHdcpStatusPath, &mAuthResult)) {
+                if (!mAuthResult.empty()) {
+                    if (std::regex_search(mAuthResult, mMatch, mPattern)) {
+                        if(std::stoi(mMatch[1].str()) == 5) {
+                            /* Get the current hdcp levels from connected display */
+                            ReadFileToString(mHdcpCapPath, &mHdcpCapResult);
+                            ReadFileToString(mHdcpVersionPath, &mVersionResult);
+                            updateHdcpLevels(mHdcpCapResult, mVersionResult);
+                            if (mCallbacks) {
+                                DEBUG_LOG("%s: for hwc display:%" PRIu64 " calling hdcp", __FUNCTION__, mHwcId);
+                                (*mCallbacks)(mDisplay);
+                            }
+                        } else {
+                            std::chrono::time_point<std::chrono::system_clock> end_time = std::chrono::system_clock::now();
+                            auto elapsed_seconds = std::chrono::duration_cast<std::chrono::seconds>(end_time - mHdcpStartTime).count();
+                            // hdcp auth timeout set to 30
+                            if (elapsed_seconds >= 30) {
+                                mThreadEnabled = false;
+                            }
+			}
                     }
                 }
             }
@@ -106,5 +193,4 @@ void HDCPThread::threadLoop() {
         std::this_thread::sleep_for(std::chrono::seconds(1));
     }
 }
-
 } // namespace aidl::android::hardware::graphics::composer3::impl

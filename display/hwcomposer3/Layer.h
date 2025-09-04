@@ -107,6 +107,8 @@ public:
     HWC3::Error setBlockingRegion(const std::vector<std::optional<common::Rect>>& blockingRegion);
     HWC3::Error uncacheLayerBuffers(const std::vector<buffer_handle_t>& buffers,
                                     std::vector<buffer_handle_t>& outClearableBuffers);
+    HWC3::Error setLuts(const Luts& luts);
+    bool hasLuts() const;
 
     int getHdrMetadataState() { return mHdrMetadataState; }
     void setHdrMetadataState(int state) { mHdrMetadataState = state; }
@@ -128,6 +130,7 @@ private:
     int32_t mZOrder = 0;
     std::optional<std::array<float, 16>> mColorTransform;
     float mBrightness = 1.0f;
+    bool mHasLuts = false;
 
     Edid* mEdidParser = NULL; /* just a pointer here, owned by Display */
     int mHdrMetadataState = LAYER_HDR_METADATA_STATE_NONE;

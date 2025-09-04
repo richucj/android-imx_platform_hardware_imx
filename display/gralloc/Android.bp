@@ -63,7 +63,7 @@ gralloc_config_cc_defaults {
                         ],
             },
             IMX8MM: {
-                cflags: ["-DWORKAROUND_VIRTUAL_DISPLAY_FLICKER"],
+                cflags: ["-DGPU_RGBA1010102_LIMITATION"],
             },
             IMX8MQ: {
                 cflags: ["-DFRAMEBUFFER_WITH_TILED_COMPRESSION"],

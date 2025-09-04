@@ -1063,6 +1063,10 @@ status_t ExternalCameraDeviceSession::initDefaultRequests() {
     const uint8_t controlMode = ANDROID_CONTROL_MODE_AUTO;
     UPDATE(md, ANDROID_CONTROL_MODE, &controlMode, 1);
 
+    // Ref value from GCH EmulatedCamera
+    int32_t sensitivity = 1000;
+    UPDATE(md, ANDROID_SENSOR_SENSITIVITY, &sensitivity, 1);
+
     for (const auto& type : ndk::enum_range<RequestTemplate>()) {
         common::V1_0::helper::CameraMetadata mdCopy = md;
         uint8_t intent = ANDROID_CONTROL_CAPTURE_INTENT_PREVIEW;
@@ -1316,6 +1320,12 @@ int ExternalCameraDeviceSession::configureV4l2StreamLocked(const SupportedV4L2Fo
     mOutputThread->m_IspWrapper->processAWB(ANDROID_CONTROL_AWB_MODE_AUTO, true);
     mOutputThread->m_IspWrapper->processAeMode(ANDROID_CONTROL_AE_MODE_ON, true);
     mOutputThread->m_IspWrapper->processAfMode(ANDROID_CONTROL_AF_MODE_AUTO, true);
+
+    // Force to set features controlled by vendortag, or colors may not be recovered
+    mOutputThread->m_IspWrapper->processBrightness(0, true);
+    mOutputThread->m_IspWrapper->processContrast(0.0f, true);
+    mOutputThread->m_IspWrapper->processSaturation(0.0f, true);
+    mOutputThread->m_IspWrapper->processSharpLevel(0, true);
 
     mV4l2StreamingFmt = v4l2Fmt;
     mV4l2Streaming = true;
@@ -3331,6 +3341,9 @@ int ExternalCameraDeviceSession::OutputThread::handleFrame(
     ImxImageBuffer srcBuf;
     ImxImageBuffer dstBuf;
 
+    memset(&srcBuf, 0, sizeof(srcBuf));
+    memset(&dstBuf, 0, sizeof(dstBuf));
+
     uint32_t srcFmt = convertV4L2FormatToPixelFormat(src_fourcc);
     uint32_t dstFmt = convertV4L2FormatToPixelFormat(dst_fourcc);
 
@@ -3473,7 +3486,7 @@ bool ExternalCameraDeviceSession::OutputThread::threadLoop() {
     }
 
     // ISP process based on meta
-    m_IspWrapper->process(req->setting);
+    m_IspWrapper->process(req->setting, parent->getDeviceCardName().c_str());
 
     std::unique_lock<std::mutex> lk(mBufferLock);
     // Convert input V4L2 frame to YU12 of the same size

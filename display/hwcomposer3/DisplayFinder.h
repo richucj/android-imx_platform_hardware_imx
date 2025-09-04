@@ -30,8 +30,9 @@ namespace aidl::android::hardware::graphics::composer3::impl {
 class FrameComposer;
 
 struct DisplayMultiConfigs {
-    int64_t hwcId;      // logic display id in hwc
-    uint32_t displayId; // used as display port
+    int64_t hwcId;      // logic display id for framework
+    uint32_t displayId; // display id used in hwc only
+    uint32_t port;      // display port, only least significant 8 bit used, can be set manually
     int32_t activeConfigId;
     // Modes that this display can be configured to use.
     std::vector<DisplayConfig> configs;

@@ -1,5 +1,5 @@
 /*
- * Copyright 2017-2024 NXP.
+ * Copyright 2017-2025 NXP.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -140,6 +140,7 @@ DeviceComposer::DeviceComposer() {
 #ifdef G2D_FORMAT_CONVERSION
     mG2dConvertBuffer.hnd = NULL;
     memset(&mG2dConvertBuffer.info, 0, sizeof(mG2dConvertBuffer.info));
+    mOclCvt = std::make_unique<OclConverter>();
 #endif
 }
 
@@ -407,6 +408,10 @@ int DeviceComposer::composeLayerLocked(Layer* layer, G2dBuffer& layerBuffer,
         ALOGE("%s: invalid srect or drect", __FUNCTION__);
         return 0;
     }
+    if (alpha == 0) {
+        DEBUG_LOG_G2D("%s: global_alpha is 0(transparent), skip such layer", __FUNCTION__);
+        return 0;
+    }
 
     if (type == Composition::SOLID_COLOR) {
         prepareSolidColorBuffer(targetBuffer);
@@ -421,13 +426,18 @@ int DeviceComposer::composeLayerLocked(Layer* layer, G2dBuffer& layerBuffer,
             ALOGE("%s: fail to prepare g2d temporary buffer", __FUNCTION__);
             return -EINVAL;
         }
-        struct g2d_surfaceEx sSurfaceX;
-        memset(&sSurfaceX, 0, sizeof(sSurfaceX));
-        memset(&dSurfaceX, 0, sizeof(dSurfaceX));
-        setG2dSurface(sSurfaceX, layerBuffer, srect);
-        setG2dSurface(dSurfaceX, mG2dConvertBuffer, srect);
-        blitSurface(&sSurfaceX, &dSurfaceX);
-
+        if (mOclCvt->isValid()) {
+            auto ret = mOclCvt->openclConvert(layerBuffer, mG2dConvertBuffer);
+            if (ret)
+                ALOGE("%s: OpenCL CSC convert fail", __FUNCTION__);
+        } else {
+            struct g2d_surfaceEx sSurfaceX;
+            memset(&sSurfaceX, 0, sizeof(sSurfaceX));
+            memset(&dSurfaceX, 0, sizeof(dSurfaceX));
+            setG2dSurface(sSurfaceX, layerBuffer, srect);
+            setG2dSurface(dSurfaceX, mG2dConvertBuffer, srect);
+            blitSurface(&sSurfaceX, &dSurfaceX);
+        }
         layerBuffPtr = &mG2dConvertBuffer;
     } else {
         layerBuffPtr = &layerBuffer;
@@ -477,6 +487,9 @@ int DeviceComposer::composeLayerLocked(Layer* layer, G2dBuffer& layerBuffer,
 #endif
         } else if (mSolidColorBuffer.hnd) {
             setG2dSurface(sSurfaceX, mSolidColorBuffer, drect);
+#ifndef G2D_LIMITATION_PXP
+            sSurface.clrcolor = 0xff << 24;
+#endif
         } else {
             return -EINVAL;
         }
@@ -489,7 +502,12 @@ int DeviceComposer::composeLayerLocked(Layer* layer, G2dBuffer& layerBuffer,
 
         if ((mode != common::BlendMode::NONE) && !bypass) {
             enableFunction(getHandle(), G2D_GLOBAL_ALPHA, true);
-            enableFunction(getHandle(), G2D_BLEND, true);
+#ifndef G2D_LIMITATION_PXP
+            if (type == Composition::SOLID_COLOR)
+                enableFunction(getHandle(), G2D_BLEND_DIM, true);
+            else
+#endif
+                enableFunction(getHandle(), G2D_BLEND, true);
         }
 
         if (needDither)
@@ -501,7 +519,12 @@ int DeviceComposer::composeLayerLocked(Layer* layer, G2dBuffer& layerBuffer,
             enableFunction(getHandle(), G2D_DITHER, false);
 
         if ((mode != common::BlendMode::NONE) && !bypass) {
-            enableFunction(getHandle(), G2D_BLEND, false);
+#ifndef G2D_LIMITATION_PXP
+            if (type == Composition::SOLID_COLOR)
+                enableFunction(getHandle(), G2D_BLEND_DIM, false);
+            else
+#endif
+                enableFunction(getHandle(), G2D_BLEND, false);
             enableFunction(getHandle(), G2D_GLOBAL_ALPHA, false);
         }
     }

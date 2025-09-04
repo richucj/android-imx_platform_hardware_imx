@@ -61,7 +61,9 @@ std::unique_ptr<DrmDisplay> DrmDisplay::create(
 
     uint32_t port = 0;
     if (getDisplayPortFromProperty(connector->getName(), &port)) {
-        id = port;
+        ALOGI("%s: display %d port id set as 0x%x", __FUNCTION__, id, port);
+    } else {
+        port = id;
     }
 
     char planeStr[100] = {0}, tempStr[100];
@@ -70,11 +72,11 @@ std::unique_ptr<DrmDisplay> DrmDisplay::create(
         strcat(planeStr, tempStr);
     }
 
-    ALOGI("%s: display %d created: crtc=%d, connector=%d(%s), plane=%s", __FUNCTION__, id,
-          crtc->getId(), connector->getId(), connector->getName().c_str(), planeStr);
+    ALOGI("%s: display %d (port=0x%x) created: crtc=%d, connector=%d(%s), plane=%s", __FUNCTION__,
+          id, port, crtc->getId(), connector->getId(), connector->getName().c_str(), planeStr);
 
     std::unique_ptr<DrmDisplay> display(
-            new DrmDisplay(id, std::move(connector), std::move(crtc), std::move(planes)));
+            new DrmDisplay(id, port, std::move(connector), std::move(crtc), std::move(planes)));
 
 #ifdef DEBUG_DUMP_REFRESH_RATE
     memset(&(display->mDumpActualFps), 0, sizeof(DumpRefreshRate));
@@ -471,8 +473,8 @@ uint32_t DrmDisplay::findDrmPlane(const native_handle_t* handle) {
         return 0;
     }
 #ifdef OVERLAY_LIMITATION_DPU
-    if (mOverlayPlaneNum - mPlaneIdPool.size() >= 1) {
-        DEBUG_LOG("%s: already 1 overlay plane used. Not use other overlay plane to avoid display "
+    if (mOverlayPlaneNum - mPlaneIdPool.size() >= 3) {
+        DEBUG_LOG("%s: already 3 overlay plane used. Not use other overlay plane to avoid display "
                   "underrun issue", __FUNCTION__);
         return 0;
     }

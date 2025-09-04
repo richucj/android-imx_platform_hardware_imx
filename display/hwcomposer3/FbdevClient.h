@@ -71,7 +71,7 @@ public:
 
     std::tuple<HWC3::Error, buffer_handle_t> getComposerTarget(
             std::shared_ptr<DeviceComposer> composer, uint32_t displayId, bool secure) override;
-    HWC3::Error setSecureMode(uint32_t displayId, uint32_t planeId, bool secure) override;
+    HWC3::Error setSecureMode(uint32_t displayId, bool secure) override;
     HWC3::Error getDisplayClientTargetProperty(uint32_t displayId,
                                                ClientTargetProperty* outProperty) override;
 

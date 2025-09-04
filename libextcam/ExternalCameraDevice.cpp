@@ -161,6 +161,7 @@ ndk::ScopedAStatus ExternalCameraDevice::open(
 
     session->mSessionNeedHardwareDec = mNeedHardwareDec;
     session->mInterBufFormat = mInterBufFormat;
+    session->mSessionDeviceCardName = mDeviceCardName;
 
     if (session->isInitFailed()) {
         ALOGE("%s: camera device session init failed", __FUNCTION__);
@@ -554,6 +555,7 @@ status_t ExternalCameraDevice::initDefaultCharsKeys(
                                             ANDROID_LENS_FOCUS_DISTANCE,
                                             ANDROID_NOISE_REDUCTION_MODE,
                                             ANDROID_SCALER_CROP_REGION,
+                                            ANDROID_SENSOR_SENSITIVITY,
                                             ANDROID_SENSOR_TEST_PATTERN_MODE,
                                             ANDROID_STATISTICS_FACE_DETECT_MODE,
                                             ANDROID_STATISTICS_HOT_PIXEL_MAP_MODE};
@@ -604,7 +606,7 @@ status_t ExternalCameraDevice::initDefaultCharsKeys(
 }
 
 status_t ExternalCameraDevice::initCameraControlsCharsKeys(
-        int, ::android::hardware::camera::common::V1_0::helper::CameraMetadata* metadata) {
+        int fd, ::android::hardware::camera::common::V1_0::helper::CameraMetadata* metadata) {
     // android.sensor.info.sensitivityRange   -> V4L2_CID_ISO_SENSITIVITY
     // android.sensor.info.exposureTimeRange  -> V4L2_CID_EXPOSURE_ABSOLUTE
     // android.sensor.info.maxFrameDuration   -> TBD
@@ -640,6 +642,26 @@ status_t ExternalCameraDevice::initCameraControlsCharsKeys(
     const float scalerAvailableMaxDigitalZoom[] = {1};
     UPDATE(ANDROID_SCALER_AVAILABLE_MAX_DIGITAL_ZOOM, scalerAvailableMaxDigitalZoom,
            ARRAY_SIZE(scalerAvailableMaxDigitalZoom));
+
+    // TODO: V4L2_CID_FOCUS_ABSOLUTE
+    const float focusDistance = 0.0f;
+    UPDATE(ANDROID_LENS_FOCUS_DISTANCE, &focusDistance, 1);
+
+    // Get the exposure time range
+    v4l2_queryctrl queryctrl = {0};
+    queryctrl.id = V4L2_CID_EXPOSURE_ABSOLUTE;
+
+    if (ioctl(fd, VIDIOC_QUERYCTRL, &queryctrl) != 0) {
+        ALOGW("%s, VIDIOC_QUERYCTRL for control 0x%08x failed: %s", __func__, queryctrl.id,
+              strerror(errno));
+    } else {
+        ALOGI("%s, VIDIOC_QUERYCTRL for control 0x%08x success, type:%u, name:%s,  minimum: %d, maximum: %d, step: %d,  default_value: %d",
+              __func__, queryctrl.id, queryctrl.type, queryctrl.name, queryctrl.minimum,
+              queryctrl.maximum, queryctrl.step, queryctrl.default_value);
+        int64_t exposureTimeRange[2] = {queryctrl.minimum, queryctrl.maximum};
+        UPDATE(ANDROID_SENSOR_INFO_EXPOSURE_TIME_RANGE, exposureTimeRange,
+               ARRAY_SIZE(exposureTimeRange));
+    }
 
     return OK;
 }
@@ -923,6 +945,8 @@ std::vector<SupportedV4L2Format> ExternalCameraDevice::getCandidateSupportedForm
     int ret = TEMP_FAILURE_RETRY(ioctl(fd, VIDIOC_QUERYCAP, &vidCap));
     ALOGI("%s: name=%s, card name=%s, bus info %s\n", __func__, (char*)vidCap.driver,
           (char*)vidCap.card, (char*)vidCap.bus_info);
+
+    mDeviceCardName = (char*)vidCap.card;
 
     mNeedHardwareDec = false;
     char hardwareDecDeviceList[HARDWARE_DEC_DEVICE_SIZE];

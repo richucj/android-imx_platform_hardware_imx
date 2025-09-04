@@ -130,6 +130,10 @@ struct CameraSensorMetadata {
     // only used for evk_95
     uint32_t mPreviewBuffers;
     uint32_t mLibcameraBuffers;
+
+    // whether need dewarp
+    bool mNeedDewarp;
+    ImxEngine mDewarpEng;
 };
 
 typedef std::unordered_map<uint32_t,

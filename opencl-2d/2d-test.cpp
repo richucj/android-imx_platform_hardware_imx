@@ -40,18 +40,36 @@
 #endif
 
 #include <g2d.h>
+#include <g2dExt.h>
 #include <linux/videodev2.h>
 
+#include "dewarp_buffer_1080p.h"
 #include "opencl-2d.h"
 
 typedef int (*hwc_func1)(void *handle);
+typedef int (*hwc_func2)(void *handle, void *arg1);
 typedef int (*hwc_func3)(void *handle, void *arg1, void *arg2);
 typedef int (*hwc_func4)(void *handle, void *arg1, void *arg2, void *arg3);
+typedef int (*hwc_query)(void *, enum g2d_feature, int *);
+typedef int (*hwc_enable)(void *, enum g2d_cap_mode);
+typedef int (*hwc_disable)(void *, enum g2d_cap_mode);
+typedef struct g2d_buf *(*hwc_alloc)(int, int);
+typedef int (*hwc_free)(struct g2d_buf *);
+typedef int (*hwc_get_coord_from_dct)(void *, const char *, struct g2d_buf *,
+                                      struct g2d_warp_coordinates *);
+
 hwc_func1 mOpenEngine;
 hwc_func1 mCloseEngine;
 hwc_func1 mFinishEngine;
 hwc_func4 mCopyEngine;
 hwc_func3 mBlitEngine;
+hwc_query mQueryFeature;
+hwc_func2 mSetWarpCord;
+hwc_enable mEnableEngine;
+hwc_disable mDisableEngine;
+hwc_alloc mAlloc;
+hwc_free mFree;
+hwc_get_coord_from_dct mGetCoordFromDct;
 
 hwc_func1 mCLOpen;
 hwc_func1 mCLClose;
@@ -95,6 +113,9 @@ static bool gMemTest = false;
 static bool gCLBuildTest = false;
 static int gCopyLen = 0;
 static bool g_usePhyAddr = false;
+static bool gDewarpTest = false;
+static bool gUseDewarpBinary = false;
+static char gDewarpBinary[MAX_FILE_LEN];
 
 static int get_buf_size(enum cl_g2d_format format, int width, int height, bool copyTest,
                         int copyLen) {
@@ -576,6 +597,14 @@ static void initializeModule(void **G2dHandle, void **CLHandle) {
         mFinishEngine = (hwc_func1)dlsym(*G2dHandle, "g2d_finish");
         mCopyEngine = (hwc_func4)dlsym(*G2dHandle, "g2d_copy");
         mBlitEngine = (hwc_func3)dlsym(*G2dHandle, "g2d_blit");
+        mQueryFeature = (hwc_query)dlsym(*G2dHandle, "g2d_query_feature");
+        mSetWarpCord = (hwc_func2)dlsym(*G2dHandle, "g2d_set_warp_coordinates");
+        mEnableEngine = (hwc_enable)dlsym(*G2dHandle, "g2d_enable");
+        mDisableEngine = (hwc_disable)dlsym(*G2dHandle, "g2d_disable");
+        mAlloc = (hwc_alloc)dlsym(*G2dHandle, "g2d_alloc");
+        mFree = (hwc_free)dlsym(*G2dHandle, "g2d_free");
+        mGetCoordFromDct =
+                (hwc_get_coord_from_dct)dlsym(*G2dHandle, "g2d_get_warp_coordinates_from_dct_file");
         if (mOpenEngine(G2dHandle) != 0 || (*G2dHandle) == NULL) {
             *G2dHandle = NULL;
             ALOGE("Fail to open %s device!\n", path);
@@ -929,6 +958,7 @@ enlarge:
 
     return 0;
 }
+
 struct testPhyBuffer {
     void *mVirtAddr;
     uint64_t mPhyAddr;
@@ -936,6 +966,14 @@ struct testPhyBuffer {
     int32_t mFd;
     buffer_handle_t buffer;
 };
+
+struct DewarpCtx {
+    struct g2d_warp_coordinates coord;
+    struct testPhyBuffer coord_buf;
+    struct g2d_buf *g2d_coord_buf;
+};
+
+static struct DewarpCtx g_dewarpCtx;
 
 uint64_t GetPhyAddrFromBuffer(int bufFd) {
     uint64_t phyAddr = 0;
@@ -969,7 +1007,7 @@ int AllocPhyBuffer(struct testPhyBuffer *phyBufs, bool bCached) {
     buffer_handle_t bufferHandle;
     uint32_t bufferStride;
      // need to make sure physical contiguous memory
-    uint64_t usage = GRALLOC_USAGE_HW_2D | GRALLOC_USAGE_PRIVATE_3;
+    uint64_t usage = GRALLOC_USAGE_HW_CAMERA_WRITE | GRALLOC_USAGE_PRIVATE_3;
     if (bCached)
         usage |=  GRALLOC_USAGE_SW_READ_OFTEN | GRALLOC_USAGE_SW_WRITE_OFTEN;
 
@@ -1005,7 +1043,7 @@ int AllocPhyBuffer(struct testPhyBuffer *phyBufs, bool bCached) {
 
     int sharedFd = bufferHandle->data[0];
     uint64_t phyAddr = GetPhyAddrFromBuffer(sharedFd);
-    ALOGV("%s, vaddr:%p,  phy:%p, size:%lu\n", __func__, vaddr, (void *)phyAddr, allocatedSize);
+    ALOGI("%s, vaddr:%p,  phy:%p, size:%lu\n", __func__, vaddr, (void *)phyAddr, allocatedSize);
 
     phyBufs->mVirtAddr = (void *)vaddr;
     phyBufs->mPhyAddr = phyAddr;
@@ -1169,6 +1207,104 @@ static int FreeV4l2Buffers() {
     return ret;
 }
 
+static int g2d_dewarp_init(struct DewarpCtx *deWarpCtx, int width, int height,
+                           enum g2d_format in_format, enum g2d_format out_format,
+                           enum g2d_warp_map_format coord_format) {
+    memset(&deWarpCtx->coord_buf, 0, sizeof(deWarpCtx->coord_buf));
+    deWarpCtx->coord_buf.mSize = width * height * 4;
+    AllocPhyBuffer(&deWarpCtx->coord_buf, 0);
+
+    deWarpCtx->coord.addr = deWarpCtx->coord_buf.mPhyAddr;
+    deWarpCtx->coord.width = width;
+    deWarpCtx->coord.height = height;
+    deWarpCtx->coord.format = coord_format;
+    deWarpCtx->coord.bpp = 32;
+
+    if (coord_format == G2D_WARP_MAP_DDPNT) {
+        deWarpCtx->coord.bpp = 8;
+    }
+
+    return 0;
+}
+
+int PrepareDewarp() {
+    int ret;
+    int mode, fb_width, fb_height, coord_buffer_size;
+    void *warp_coord_absolute;
+    void *dewarp_coord_absolute;
+    struct timeval tv1, tv2;
+    int i, diff;
+    int test_loop = 16;
+
+    mode = 2;
+    fb_width = 1920;
+    fb_height = 1080;
+    coord_buffer_size = fb_width * fb_height;
+    dewarp_coord_absolute = dewarp_coord_absolute_1920_1080;
+
+    printf("Mode: %d, Width: %d, Height: %d\n", mode, fb_width, fb_height);
+
+    ret = g2d_dewarp_init(&g_dewarpCtx, fb_width, fb_height, G2D_YVYU, G2D_YVYU,
+                          G2D_WARP_MAP_DDPNT);
+
+    if (ret < 0) {
+        return -1;
+    }
+
+    /* copy the dewarping coordinates buffer to the contiguous allocated memory */
+    memcpy(g_dewarpCtx.coord_buf.mVirtAddr, dewarp_coord_absolute, coord_buffer_size);
+
+    if (mode == 2) {
+        g_dewarpCtx.coord.arb_start_x = 0x286c;
+        g_dewarpCtx.coord.arb_start_y = 0x16a6;
+        g_dewarpCtx.coord.arb_delta_xx = 0x0e;
+        g_dewarpCtx.coord.arb_delta_xy = 0xfc;
+        g_dewarpCtx.coord.arb_delta_yx = 0xfc;
+        g_dewarpCtx.coord.arb_delta_yy = 0x14;
+    } else if (mode == 3) {
+        g_dewarpCtx.coord.arb_start_x = 0x50d4;
+        g_dewarpCtx.coord.arb_start_y = 0x2d64;
+        g_dewarpCtx.coord.arb_delta_xx = 0x0e;
+        g_dewarpCtx.coord.arb_delta_xy = 0xfa;
+        g_dewarpCtx.coord.arb_delta_yx = 0xfc;
+        g_dewarpCtx.coord.arb_delta_yy = 0x12;
+    }
+
+    return 0;
+}
+
+int PrepareDewarpBinary(void *g2d_handle) {
+    ALOGI("%s: g2d handle %p, mAlloc %p, width %d, height %d", __func__, g2d_handle, mAlloc, gWidth,
+          gHeight);
+
+    g_dewarpCtx.g2d_coord_buf = mAlloc(gWidth * gHeight * 4, 0);
+    if (g_dewarpCtx.g2d_coord_buf == NULL) {
+        printf("%s: mAlloc size %u failed", __func__, gWidth * gHeight * 4);
+        return -1;
+    }
+
+    int ret = mGetCoordFromDct(g2d_handle, gDewarpBinary, g_dewarpCtx.g2d_coord_buf,
+                               &g_dewarpCtx.coord);
+    if (ret) {
+        printf("%s: g2d_get_warp_coordinates_from_dct_file failed, ret %d", __func__, ret);
+        return ret;
+    }
+
+    printf("%s: coord para: addr 0x%lx, format %d, bpp %d, width %d, height %d, x %u, y %u, xx %u, xy %u, yx %u, yy %u\n",
+           __func__, g_dewarpCtx.coord.addr, g_dewarpCtx.coord.format, g_dewarpCtx.coord.bpp,
+           g_dewarpCtx.coord.width, g_dewarpCtx.coord.height, g_dewarpCtx.coord.arb_start_x,
+           g_dewarpCtx.coord.arb_start_y, g_dewarpCtx.coord.arb_delta_xx,
+           g_dewarpCtx.coord.arb_delta_xy, g_dewarpCtx.coord.arb_delta_yx,
+           g_dewarpCtx.coord.arb_delta_yy);
+
+    if ((g_dewarpCtx.coord.width != gWidth) || (g_dewarpCtx.coord.height != gHeight)) {
+        printf("%s: resolution from binary is %dx%d, less than input %dx%d", __func__,
+               g_dewarpCtx.coord.width, g_dewarpCtx.coord.height, gWidth, gHeight);
+    }
+
+    return 0;
+}
+
 int main(int argc, char **argv) {
     int rt;
     int ret = 0;
@@ -1197,7 +1333,7 @@ int main(int argc, char **argv) {
         return 0;
     }
 
-    while ((rt = getopt(argc, argv, "hbcl:i:s:o:d:w:g:t:m:n:x:y:z:v:p:")) >= 0) {
+    while ((rt = getopt(argc, argv, "hbcrl:i:R:s:o:d:w:g:t:m:n:x:y:z:v:p:")) >= 0) {
         switch (rt) {
             case 'h':
                 usage(argv[0]);
@@ -1207,6 +1343,9 @@ int main(int argc, char **argv) {
                 break;
             case 'c':
                 gMemTest = true;
+                break;
+            case 'r':
+                gDewarpTest = true;
                 break;
             case 'p':
                 g_usePhyAddr = atoi(optarg);
@@ -1221,6 +1360,16 @@ int main(int argc, char **argv) {
                     return 0;
                 }
                 strncpy(input_file, optarg, strlen(optarg));
+                break;
+            case 'R':
+                gDewarpTest = true;
+                gUseDewarpBinary = true;
+                memset(gDewarpBinary, 0, MAX_FILE_LEN);
+                if (strlen(optarg) >= MAX_FILE_LEN) {
+                    ALOGE("dewarp binary file name too long to process: %s", optarg);
+                    return 0;
+                }
+                strncpy(gDewarpBinary, optarg, strlen(optarg));
                 break;
             case 's':
                 gInput_format = (enum cl_g2d_format)atoi(optarg);
@@ -1273,7 +1422,8 @@ int main(int argc, char **argv) {
     if (g_use_v4l2_buffer)
         printf("g_v4l_device %s, gMemTest %d\n", g_v4l_device, gMemTest);
 
-    printf("g_usePhyAddr %d\n", g_usePhyAddr);
+    printf("g_usePhyAddr %d, gDewarpTest %d, gUseDewarpBinary %d, gDewarpBinary %s\n", g_usePhyAddr,
+           gDewarpTest, gUseDewarpBinary, gDewarpBinary);
 
     if (gOutWidth == 0)
         gOutWidth = gWidth;
@@ -1306,16 +1456,24 @@ int main(int argc, char **argv) {
         return 0;
     }
 
+    if (gDewarpTest && (gUseDewarpBinary == false) &&
+        ((gWidth != 1920) || (gHeight != 1080) || (gOutWidth != 1920) || (gOutHeight != 1080))) {
+        printf("dewarp test only support 1080p\n");
+        return 0;
+    }
+
     ALOGI("Start 2d test with:");
     ALOGI("input file: %s", input_file);
     ALOGI("output file: %s", output_file);
 
     inputlen = get_file_len(input_file);
-    if (inputlen <= 0 ||
-        inputlen < get_buf_size(gInput_format, gWidth, gHeight, gMemTest, gCopyLen)) {
-        ALOGE("No valid file %s for this test", input_file);
+    int requestLen = get_buf_size(gInput_format, gWidth, gHeight, gMemTest, gCopyLen);
+    if (inputlen <= 0 || inputlen < requestLen) {
+        ALOGE("No valid file %s for this test, inputlen %d, requestLen %d", input_file, inputlen,
+              requestLen);
         goto clean;
     }
+
     // if no '-l' parameter, the default length is input file size
     gCopyLen = gCopyLen ? gCopyLen : inputlen;
 
@@ -1391,6 +1549,27 @@ int main(int argc, char **argv) {
         goto clean;
     }
 
+    if (gDewarpTest) {
+        int can_warp;
+        mQueryFeature(G2dHandle, G2D_WARP_DEWARP, &can_warp);
+        if (!can_warp) {
+            printf("G2D device cannot perform warp/dewarp operations\n");
+            goto clean;
+        }
+
+        if (gUseDewarpBinary) {
+            ret = PrepareDewarpBinary(G2dHandle);
+        } else {
+            ret = PrepareDewarp();
+        }
+
+        if (ret) {
+            ALOGE("%s failed, ret %d", gUseDewarpBinary ? "PrepareDewarpBinary" : "PrepareDewarp",
+                  ret);
+            goto clean;
+        }
+    }
+
     // Delete output files. So if test fail, related files will not exist.
     memset(output_2d_file, 0, MAX_FILE_LEN);
     strncpy(output_2d_file, output_file, strlen(output_file));
@@ -1415,6 +1594,7 @@ int main(int argc, char **argv) {
         input_buf = InPhyBuffer[0].mVirtAddr;
         inputPhy_buf = InPhyBuffer[0].mPhyAddr;
         read_len = read_from_file((char *)input_buf, inputlen, input_file);
+
         t1 = systemTime();
 
         for (int loop = 0; loop < G2D_TEST_LOOP; loop++) {
@@ -1428,7 +1608,15 @@ int main(int argc, char **argv) {
                 update_surface_parameters_2d(&s_buf, &s_surface, (char *)input_buf, inputPhy_buf,
                                              &d_buf, &d_surface, (char *)output_buf, outputPhy_buf);
                 ALOGV("call g2d_blit");
+
+                if (gDewarpTest) {
+                    mEnableEngine(G2dHandle, G2D_WARPING);
+                    mSetWarpCord(G2dHandle, &g_dewarpCtx.coord);
+                }
                 mBlitEngine(G2dHandle, &s_surface, &d_surface);
+                if (gDewarpTest) {
+                    mDisableEngine(G2dHandle, G2D_WARPING);
+                }
             } else {
                 s_buf.buf_paddr = inputPhy_buf;
                 s_buf.buf_vaddr = input_buf;
@@ -1449,6 +1637,9 @@ int main(int argc, char **argv) {
 
         write_to_file((char *)output_buf, outputlen, output_2d_file);
     }
+
+    if (gDewarpTest)
+        goto clean;
 
     // cl engine
     if (CLHandle != NULL) {
@@ -1572,6 +1763,13 @@ int main(int argc, char **argv) {
     write_to_file((char *)output_benchmark_buf, outputlen, output_benchmark_file);
 
 clean:
+
+    if (g_dewarpCtx.coord_buf.buffer)
+        FreePhyBuffer(&g_dewarpCtx.coord_buf);
+
+    if (g_dewarpCtx.g2d_coord_buf)
+        mFree(g_dewarpCtx.g2d_coord_buf);
+
     if (g_use_v4l2_buffer) {
         FreeV4l2Buffers();
         ExitV4l2();

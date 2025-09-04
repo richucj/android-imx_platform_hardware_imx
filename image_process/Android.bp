@@ -105,6 +105,7 @@ cc_binary {
         "hardware/libhardware/include",
         "device/nxp/common/kernel-headers",
         "system/core/libsystem/include/system",
+        "vendor/nxp/fsl-proprietary/include",
         "vendor/nxp/imx_opencl_converter/ghdr",
         "vendor/nxp-opensource/imx/include",
         "vendor/nxp-opensource/imx/opencl-2d",

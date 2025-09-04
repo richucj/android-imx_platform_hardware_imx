@@ -1,6 +1,6 @@
 /*
  * Copyright 2020 The Chromium OS Authors. All rights reserved.
- * Copyright 2024 NXP
+ * Copyright 2024-2025 NXP
  * Use of this source code is governed by a BSD-style license that can be
  * found in the LICENSE file.
  */
@@ -71,6 +71,7 @@ const format_info_t formats[] = {
                 .is_rgb = true,
                 .is_yuv = false,
         },
+#ifndef GPU_RGBA1010102_LIMITATION
         {
                 .id = static_cast<int32_t>(PixelFormat::RGBA_1010102),
                 .fourcc = DRM_FORMAT_ABGR2101010,
@@ -78,6 +79,7 @@ const format_info_t formats[] = {
                 .is_rgb = true,
                 .is_yuv = false,
         },
+#endif
         {
                 .id = static_cast<int32_t>(PixelFormat::YCBCR_422_SP), // NV16
                 .fourcc = DRM_FORMAT_NV16,
@@ -109,13 +111,6 @@ const format_info_t formats[] = {
         {
                 .id = static_cast<int32_t>(PixelFormat::YV12),
                 .fourcc = DRM_FORMAT_YVU420,
-                .modifier = DRM_FORMAT_MOD_LINEAR,
-                .is_rgb = false,
-                .is_yuv = true,
-        },
-        {
-                .id = static_cast<int32_t>(PixelFormat::YCBCR_P010),
-                .fourcc = DRM_FORMAT_P010,
                 .modifier = DRM_FORMAT_MOD_LINEAR,
                 .is_rgb = false,
                 .is_yuv = true,

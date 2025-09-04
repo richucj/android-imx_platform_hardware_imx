@@ -33,6 +33,9 @@
 
 using namespace cameraconfigparser;
 namespace android {
+std::map<CameraDeviceSessionHwlImpl *, sp<CameraDeviceSessionHwlImpl::ImgProcThread>>
+        CameraDeviceSessionHwlImpl::sessionThreadMap;
+Mutex CameraDeviceSessionHwlImpl::sessionThreadMapLock;
 
 static uint32_t importCount;
 static uint32_t freeCount;
@@ -163,6 +166,8 @@ status_t CameraDeviceSessionHwlImpl::Initialize(uint32_t camera_id,
     mMaxWidth = pDev->mMaxWidth;
     mMaxHeight = pDev->mMaxHeight;
 
+    mSupportedFormats = pDev->mSupportedFormats;
+
     // Device may be destroyed after create session, need copy some members from device.
     mCamBlitCopyType = pDev->mCamBlitCopyType;
     mCamBlitCscType = pDev->mCamBlitCscType;
@@ -171,13 +176,10 @@ status_t CameraDeviceSessionHwlImpl::Initialize(uint32_t camera_id,
     mSensorData = pDev->mSensorData;
     if (strcmp(mSensorData.v4l2_format, "nv12") == 0)
         m_libcamera_stream_format = HAL_PIXEL_FORMAT_YCBCR_420_888;
-    else
+    else if (strcmp(mSensorData.v4l2_format, "rgb3") == 0) {
+        m_libcamera_stream_format = HAL_PIXEL_FORMAT_RGB_888;
+    } else
         m_libcamera_stream_format = HAL_PIXEL_FORMAT_YCBCR_422_I;
-
-    if (strstr(mSensorData.camera_name, "mx95mbcam")) {
-        m_libcamera_stream_width = 1920;
-        m_libcamera_stream_height = 1280;
-    }
 
     m_bConfigLibcameraByIntent = false;
 
@@ -186,15 +188,34 @@ status_t CameraDeviceSessionHwlImpl::Initialize(uint32_t camera_id,
     mPictureResolutionCount = pDev->mPictureResolutionCount;
     memcpy(mPictureResolutions, pDev->mPictureResolutions, MAX_RESOLUTION_SIZE * sizeof(int));
 
-    ret = (camera_->acquire());
-    if (ret != 0) {
-        ALOGE("%s: camera_->acquire(), %d\n", __FUNCTION__, ret);
-        return EBUSY;
+    memset(&mDewarpBuf, 0, sizeof(mDewarpBuf));
+    if (mSensorData.mNeedDewarp) {
+        ret = AllocPhyBuffer(mMaxWidth, mMaxHeight, m_libcamera_stream_format, mDewarpBuf, true);
+        if (ret) {
+            ALOGE("%s:%d AllocPhyBuffer for mDewarpBuf failed, width %d, height %d, format 0x%x",
+                  __func__, __LINE__, mMaxWidth, mMaxHeight, m_libcamera_stream_format);
+            return BAD_VALUE;
+        }
     }
-    camera_->requestCompleted.connect(this, &CameraDeviceSessionHwlImpl::requestComplete);
+
+    camera_->acquire();
+    camera_->requestCompleted.connect(this, &CameraDeviceSessionHwlImpl::requestCompleteDispatch);
 
     property_get("ro.boot.soc_type", mSocType, "");
     ALOGI("%s: mSocType :%s \n", __FUNCTION__, mSocType);
+
+    sessionThreadMapLock.lock();
+    auto iter = sessionThreadMap.find(this);
+    if (iter == sessionThreadMap.end()) {
+        sp<ImgProcThread> imgProcThread = new ImgProcThread(this);
+        sessionThreadMap[this] = imgProcThread;
+        ALOGI("%s: bind session %p to task %p, tid %d", __func__, this, imgProcThread.get(),
+              imgProcThread->getTid());
+    } else {
+        ALOGW("%s: unexpected! session %p has task %p", __func__, this,
+              sessionThreadMap[this].get());
+    }
+    sessionThreadMapLock.unlock();
 
     return OK;
 }
@@ -218,6 +239,21 @@ CameraDeviceSessionHwlImpl::CameraDeviceSessionHwlImpl(PhysicalMetaMapPtr physic
 CameraDeviceSessionHwlImpl::~CameraDeviceSessionHwlImpl() {
     ALOGI("%s: this %p, camera_ %p, %p", __func__, this, camera_.get());
 
+    sessionThreadMapLock.lock();
+    auto iter = sessionThreadMap.find(this);
+    if (iter != sessionThreadMap.end()) {
+        sp<ImgProcThread> imgProcThread = sessionThreadMap[this];
+        if (imgProcThread != NULL) {
+            imgProcThread->requestExitAndWait();
+            ALOGI("%s, task %p, tid %d, exited for session %p", __func__, imgProcThread.get(),
+                  imgProcThread->getTid(), this);
+        }
+        sessionThreadMap.erase(iter);
+    } else {
+        ALOGW("%s: unexpected! session %p has no task", __func__, this);
+    }
+    sessionThreadMapLock.unlock();
+
     if (mJpegBuilder != NULL)
         mJpegBuilder.clear();
 
@@ -233,6 +269,9 @@ CameraDeviceSessionHwlImpl::~CameraDeviceSessionHwlImpl() {
         camera_->requestCompleted.disconnect();
         camera_->release();
     }
+
+    if (mDewarpBuf.buffer)
+        FreePhyBuffer(mDewarpBuf.buffer);
 }
 
 PipelineInfo *CameraDeviceSessionHwlImpl::GetPipelineInfo(uint32_t id) {
@@ -547,6 +586,9 @@ static libcamera::PixelFormat HalFromat2PixelFormat(int halFmt) {
         case HAL_PIXEL_FORMAT_BLOB:
             pixelFmt = libcamera::formats::YUYV;
             break;
+        case HAL_PIXEL_FORMAT_RGB_888:
+            pixelFmt = libcamera::formats::RGB888;
+            break;
         default:
             ALOGW("%s: unsupported HalFromat 0x%x", __func__, halFmt);
             break;
@@ -587,8 +629,16 @@ status_t CameraDeviceSessionHwlImpl::ConfigLibcameraLocked(uint32_t bufferNum, u
     std::unique_ptr<libcamera::CameraConfiguration> camCfg;
     struct OmitFrame *pOmitFrame = NULL;
 
-    ALOGI("%s:, buffers %u, format 0x%x, width %u, height %u", __func__, bufferNum, format, width,
-          height);
+    uint32_t configWidth = 0;
+    uint32_t configHeight = 0;
+    GetConfigSize(m_libcamera_stream_format, width, height, configWidth, configHeight);
+    if ((configWidth == INT_MAX) || (configHeight == INT_MAX)) {
+        ALOGE("%s: no config size found for %ux%u", __func__, width, height);
+        return BAD_VALUE;
+    }
+
+    ALOGI("%s:, buffers %u, format 0x%x, width %u, height %u, configWidth %u, configHeight %u",
+          __func__, bufferNum, format, width, height, configWidth, configHeight);
 
     camCfg = camera_->generateConfiguration();
     if (!camCfg) {
@@ -599,8 +649,8 @@ status_t CameraDeviceSessionHwlImpl::ConfigLibcameraLocked(uint32_t bufferNum, u
 
     // config libcamera with 1 stream
     cfg.bufferCount = bufferNum;
-    cfg.size.width = width;
-    cfg.size.height = height;
+    cfg.size.width = configWidth;
+    cfg.size.height = configHeight;
     cfg.pixelFormat = HalFromat2PixelFormat(format);
     camCfg->addConfiguration(cfg);
 
@@ -637,24 +687,24 @@ status_t CameraDeviceSessionHwlImpl::ConfigLibcameraLocked(uint32_t bufferNum, u
         uint32_t bufferStride;
         ImxImageBuffer srcBuf;
 
-        uint32_t allocWidth = width;
+        uint32_t allocWidth = configWidth;
         if (strstr(mSocType, "imx8mn") || strstr(mSocType, "imx8qm") ||
             strstr(mSocType, "imx8qxp") || strstr(mSocType, "imx8mp")) {
-            allocWidth = width * 2;
-            ALOGI("%s: double width from %u to %u", __func__, width, allocWidth);
+            allocWidth = configWidth * 2;
+            ALOGI("%s: double configWidth from %u to %u", __func__, configWidth, allocWidth);
         }
 
-        ret = AllocPhyBuffer(allocWidth, height, format, srcBuf, true);
+        ret = AllocPhyBuffer(allocWidth, configHeight, format, srcBuf, true);
         if (ret) {
             ALOGE("%s: failed to allocate buffer:%d x %d, format=%x, ret=%d", __func__, allocWidth,
-                  height, format, ret);
+                  configHeight, format, ret);
             ret = BAD_VALUE;
             goto err_out;
         }
 
-        // Recover to the actual width.
-        srcBuf.mWidth = width;
-        srcBuf.mFormatSize = getSizeByForamtRes(format, width, height, false);
+        // Recover to the actual configWidth.
+        srcBuf.mWidth = configWidth;
+        srcBuf.mFormatSize = getSizeByForamtRes(format, configWidth, configHeight, false);
         if (srcBuf.mFormatSize == 0)
             srcBuf.mFormatSize = srcBuf.mSize;
 
@@ -676,17 +726,18 @@ status_t CameraDeviceSessionHwlImpl::ConfigLibcameraLocked(uint32_t bufferNum, u
               pfb, srcBuf.buffer, mFrameBuffersFree.size(), this);
     }
 
-    m_libcamera_stream_width = width;
-    m_libcamera_stream_height = height;
+    m_libcamera_stream_width = configWidth;
+    m_libcamera_stream_height = configHeight;
 
     mOmitFrames = 0;
     mOmitFrmCount = 0;
 
     pOmitFrame = mSensorData.omit_frame;
     for (struct OmitFrame *item = pOmitFrame; item < pOmitFrame + OMIT_RESOLUTION_NUM; item++) {
-        if ((width == (uint32_t)item->width) && (height == (uint32_t)item->height)) {
+        if ((configWidth == (uint32_t)item->width) && (configHeight == (uint32_t)item->height)) {
             mOmitFrmCount = (uint32_t)item->omitnum;
-            ALOGI("%s, set omit frames %d for %ux%u", __func__, item->omitnum, width, height);
+            ALOGI("%s, set omit frames %d for %ux%u", __func__, item->omitnum, configWidth,
+                  configHeight);
             break;
         }
     }
@@ -714,14 +765,14 @@ void CameraDeviceSessionHwlImpl::WaitRequestsFinishAndCleanResource() {
     /*==== step 1: wait all the requests finished ====*/
     // For ov5640, destroy pipeline right after config/build pipeline.
     if ((mFrameBuffersFree.size() == 0) && (mFrameBuffersBusy.size() == 0)) {
-        ALOGI("%s: no request submitted, just return", __func__);
+        ALOGI("%s: no request submitted in session %p, just return", __func__, this);
         return;
     }
 
     /* If still has on-fly requests from map_frame_request, wait to finish */
     while (mDeQueRequestIdx != mInQueRequestIdx) {
-        ALOGW("%s: still has requests to process, wait %d us, DeQueIdx %lu, InQueIdx %lu", __func__,
-              WAIT_ITVL_US, mDeQueRequestIdx, mInQueRequestIdx);
+        ALOGW("%s: still has requests to process, wait %d us, DeQueIdx %lu, InQueIdx %lu, session %p",
+              __func__, WAIT_ITVL_US, mDeQueRequestIdx, mInQueRequestIdx, this);
         mLock.unlock();
         usleep(WAIT_ITVL_US);
         mLock.lock();
@@ -729,6 +780,9 @@ void CameraDeviceSessionHwlImpl::WaitRequestsFinishAndCleanResource() {
 
     ALOGI("%s: requests, mDeQueRequestIdx %lu, mInQueRequestIdx %lu", __func__, mDeQueRequestIdx,
           mInQueRequestIdx);
+
+    mInQueRequestIdx = 0;
+    mDeQueRequestIdx = 0;
 
     if (mFrameBuffersFree.size() != mSensorData.mLibcameraBuffers)
         ALOGW("%s: !!! unexpected, mFrameBuffersFree size %lu != %d", __func__,
@@ -881,11 +935,10 @@ status_t CameraDeviceSessionHwlImpl::ConfigurePipeline(
             case HAL_PIXEL_FORMAT_IMPLEMENTATION_DEFINED:
                 if (strcmp(mSensorData.v4l2_format, "nv12") == 0) {
                     ALOGI("HAL_PIXEL_FORMAT_IMPLEMENTATION_DEFINED, use nv12");
-                    if (strstr(mSocType, "imx93")) {
-                        hal_stream.override_format = HAL_PIXEL_FORMAT_YV12;
-                    } else {
-                        hal_stream.override_format = HAL_PIXEL_FORMAT_YCBCR_420_888;
-                    }
+                    hal_stream.override_format = HAL_PIXEL_FORMAT_YCBCR_420_888;
+                } else if (strcmp(mSensorData.v4l2_format, "rgb3") == 0) {
+                    ALOGI("HAL_PIXEL_FORMAT_IMPLEMENTATION_DEFINED, use rgb3");
+                    hal_stream.override_format = HAL_PIXEL_FORMAT_RGB_888;
                 } else
                     hal_stream.override_format = HAL_PIXEL_FORMAT_YCBCR_422_I;
 
@@ -1089,6 +1142,11 @@ static uint32_t GetPlansInfo(const libcamera::StreamConfiguration &streamConfig,
             plansInfo.plans[0].offset = 0;
             plansInfo.plans[0].size = width * height * 2;
             break;
+        case libcamera::formats::RGB888:
+            plansInfo.num = 1;
+            plansInfo.plans[0].offset = 0;
+            plansInfo.plans[0].size = width * height * 3;
+            break;
         default:
             ALOGE("%s: unsupported pixelFormat %s", __func__,
                   streamConfig.pixelFormat.toString().c_str());
@@ -1263,7 +1321,7 @@ config:
     ret = ConfigLibcameraLocked(mSensorData.mLibcameraBuffers, m_libcamera_stream_format,
                                 pickedWidth, pickedHeight);
     if (ret) {
-        ALOGE("%s: ConfigLibcameraLocked failed, ret %d, buffers %d, foramt 0x%x, width %d, height %d",
+        ALOGE("%s: ConfigLibcameraLocked failed, ret %d, buffers %d, foramt 0x%x, pickedWidth %d, pickedHeight %d",
               __func__, ret, mSensorData.mLibcameraBuffers, m_libcamera_stream_format, pickedWidth,
               pickedHeight);
         return ret;
@@ -1336,6 +1394,40 @@ status_t CameraDeviceSessionHwlImpl::queueRequestToLibcameraLocked(HalCameraMeta
     return 0;
 }
 
+void CameraDeviceSessionHwlImpl::GetConfigSize(int halFmt, uint32_t refWidth, uint32_t refHeight,
+                                               uint32_t &configWidth, uint32_t &configHeight) {
+    ALOGI("%s: halFmt 0x%x, refWidth %u, refHeight %u", __func__, halFmt, refWidth, refHeight);
+
+    libcamera::PixelFormat pixelFmt = HalFromat2PixelFormat(halFmt);
+    std::vector<libcamera::Size> sizes = mSupportedFormats.sizes(pixelFmt);
+    configWidth = INT_MAX;
+    configHeight = INT_MAX;
+
+    for (auto size : sizes) {
+        ALOGI("%s: check size %s", __func__, size.toString().c_str());
+
+        // The best is to find the matched size.
+        if ((size.width == refWidth) && (size.height == refHeight)) {
+            ALOGI("%s: found matched size", __func__);
+            configWidth = refWidth;
+            configHeight = refHeight;
+            break;
+        }
+
+        // Then use the minimal size that greater than ref size.
+        // Use "=" due to case as framework requests 1920x1080,
+        // but libcamera only supports 1920x1280, as for 0x03c10.
+        if ((size.width >= refWidth) && (size.height >= refHeight)) {
+            if ((size.width < configWidth) && (size.height < configHeight)) {
+                configWidth = size.width;
+                configHeight = size.height;
+            }
+        }
+    }
+
+    return;
+}
+
 status_t CameraDeviceSessionHwlImpl::SubmitRequests(uint32_t frame_number,
                                                     std::vector<HwlPipelineRequest> &requests) {
     char value[PROPERTY_VALUE_MAX];
@@ -1356,21 +1448,12 @@ status_t CameraDeviceSessionHwlImpl::SubmitRequests(uint32_t frame_number,
             return ret;
         }
     } else {
-        // imx95 fixed use sensor size to config libcamera.
-        uint32_t configWidth = mMaxWidth;
-        uint32_t configHeight = mMaxHeight;
-
-        if (strstr(mSensorData.camera_name, "ov5640")) {
-            configWidth = maxStreamWidth;
-            configHeight = maxStreamHeight;
-        }
-
         ret = ConfigLibcameraLocked(mSensorData.mLibcameraBuffers, m_libcamera_stream_format,
-                                    configWidth, configHeight);
+                                    maxStreamWidth, maxStreamHeight);
         if (ret) {
-            ALOGE("%s: ConfigLibcameraLocked failed, ret %d, buffers %d, foramt 0x%x, width %d, height %d",
+            ALOGE("%s: ConfigLibcameraLocked failed, ret %d, buffers %d, format 0x%x, width %d, height %d",
                   __func__, ret, mSensorData.mLibcameraBuffers, m_libcamera_stream_format,
-                  configWidth, configHeight);
+                  maxStreamWidth, maxStreamHeight);
             return ret;
         }
     }
@@ -1451,9 +1534,9 @@ status_t CameraDeviceSessionHwlImpl::SubmitRequests(uint32_t frame_number,
     // DumpRequest();
     mInQueRequestIdx++;
 
-    if (mDebug) {
-        ALOGI("%s: mInQueRequestIdx %lu, mDeQueRequestIdx %lu, requestList size %zu", __func__,
-              mInQueRequestIdx, mDeQueRequestIdx, requestList.size());
+    if (mDebug || (mInQueRequestIdx <= 5)) {
+        ALOGI("%s: session %p, mInQueRequestIdx %lu, mDeQueRequestIdx %lu, requestList size %zu",
+              __func__, this, mInQueRequestIdx, mDeQueRequestIdx, requestList.size());
         ItvlStat(mPreSubmitRequestTime, (char *)"SubmitRequests");
     }
 
@@ -1750,6 +1833,38 @@ void CameraDeviceSessionHwlImpl::ReturnFrameBufferLocked() {
     return;
 }
 
+void CameraDeviceSessionHwlImpl::requestCompleteDispatch(libcamera::Request *request) {
+    if (mDebug)
+        ALOGI("%s: dispatch session %p to task %p, tid %d", __func__, this,
+              sessionThreadMap[this].get(), sessionThreadMap[this]->getTid());
+
+    Mutex::Autolock _l(mRequestPendingListLock);
+    mRequestPendingList.push_back(request);
+    mRequestPendingListCond.signal();
+    return;
+}
+
+int CameraDeviceSessionHwlImpl::HandleImage() {
+    mRequestPendingListLock.lock();
+    while (mRequestPendingList.empty()) {
+        mRequestPendingListCond.waitRelative(mRequestPendingListLock, WAIT_TIME_OUT);
+        if (mRequestPendingList.empty()) {
+            if (mDebug)
+                ALOGW("%s: mRequestPendingList still empty after %lld ns", __func__, WAIT_TIME_OUT);
+            mRequestPendingListLock.unlock();
+            return 0;
+        }
+    }
+
+    libcamera::Request *request = mRequestPendingList.front();
+    mRequestPendingList.pop_front();
+    mRequestPendingListLock.unlock();
+
+    requestComplete(request);
+
+    return 0;
+}
+
 void CameraDeviceSessionHwlImpl::requestComplete(libcamera::Request *request) {
     if (request == NULL) {
         ALOGE("%s: request NULL", __func__);
@@ -1841,10 +1956,10 @@ void CameraDeviceSessionHwlImpl::requestComplete(libcamera::Request *request) {
 
     if (mDebug) {
         libcamera::ControlList &metadata = request->metadata();
-        ALOGI("%s: frame %d, output_buffers %lu, result->regsult_metadata %p, entry count %d, libcamera::Request buffers %lu, sequence %u, metadata size %lu",
+        ALOGI("%s: frame %d, output_buffers %lu, result->regsult_metadata %p, entry count %d, libcamera::Request buffers %lu, sequence %u, metadata size %lu, session %p",
               __func__, frame, result->output_buffers.size(), result->result_metadata.get(),
               (int)result->result_metadata->GetEntryCount(), request->buffers().size(),
-              request->sequence(), metadata.size());
+              request->sequence(), metadata.size(), this);
         for (libcamera::ControlList::iterator it = metadata.begin(); it != metadata.end(); it++) {
             int i = it->first;
             libcamera::ControlValue ctlVal = it->second;
@@ -1854,14 +1969,30 @@ void CameraDeviceSessionHwlImpl::requestComplete(libcamera::Request *request) {
     }
     libcamera::FrameBuffer *frameBuffer = request->findBuffer(mLibCameraStream);
     ImxImageBuffer srcImgBuf = mFrameBufferHandleMap[frameBuffer];
+
     ImxStreamBuffer srcBuf;
     memcpy(&srcBuf, &srcImgBuf, sizeof(srcImgBuf));
     srcBuf.mStream = new ImxStream(m_libcamera_stream_width, m_libcamera_stream_height,
                                    m_libcamera_stream_format, srcBuf.mUsage, 0, false);
     ALOGV("srcBuf %dx%d, 0x%x", srcBuf.mWidth, srcBuf.mHeight, srcBuf.mFormat);
 
-    ProcessCapbuf2MultiOutbuf(&srcBuf, hwReq->output_buffers, frameRequest->outBufferFences,
-                              requestMeta);
+    if (!mSensorData.mNeedDewarp) {
+        ProcessCapbuf2MultiOutbuf(&srcBuf, hwReq->output_buffers, frameRequest->outBufferFences,
+                                  requestMeta);
+    } else {
+        ImxStreamBuffer dewarpStreamBuf;
+        memcpy(&dewarpStreamBuf, &mDewarpBuf, sizeof(mDewarpBuf));
+        dewarpStreamBuf.mStream =
+                new ImxStream(m_libcamera_stream_width, m_libcamera_stream_height,
+                              m_libcamera_stream_format, mDewarpBuf.mUsage, 0, false);
+
+        srcBuf.mDewarp = true;
+        handleFrame(dewarpStreamBuf, srcBuf, mSensorData.mDewarpEng, mDebug);
+        ProcessCapbuf2MultiOutbuf(&dewarpStreamBuf, hwReq->output_buffers,
+                                  frameRequest->outBufferFences, requestMeta);
+
+        delete dewarpStreamBuf.mStream;
+    }
 
     delete srcBuf.mStream;
 
@@ -1887,12 +2018,12 @@ void CameraDeviceSessionHwlImpl::requestComplete(libcamera::Request *request) {
         }
     }
 
-    mDeQueRequestIdx++;
-    if (mDebug)
-        ALOGI("%s: mInQueRequestIdx %lu, mDeQueRequestIdx %lu", __func__, mInQueRequestIdx,
-              mDeQueRequestIdx);
-
     ReturnFrameBufferLocked();
+
+    mDeQueRequestIdx++;
+    if (mDebug || (mDeQueRequestIdx <= 5))
+        ALOGI("%s: session %p, mInQueRequestIdx %lu, mDeQueRequestIdx %lu", __func__, this,
+              mInQueRequestIdx, mDeQueRequestIdx);
 
     return;
 }

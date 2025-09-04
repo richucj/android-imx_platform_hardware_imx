@@ -50,6 +50,7 @@ HWC3::Error findClientDisplays(DeviceClient* device,
         outDisplays->push_back(DisplayMultiConfigs{
                 .hwcId = deviceConfig.hwcId,
                 .displayId = deviceConfig.displayId,
+                .port = deviceConfig.port,
                 .activeConfigId = static_cast<int32_t>(deviceConfig.activeConfigId),
                 .configs = hwcConfigs,
         });
@@ -94,26 +95,29 @@ HWC3::Error findDisplays(FrameComposer* composer, std::vector<DisplayMultiConfig
             return err;
         }
     } else {
-        uint32_t minDisplayId = INT_MAX;
+        uint32_t minPort = INT_MAX;
+        uint32_t primaryId = INT_MAX;
         uint32_t minBaseId = INT_MAX;
         for (const auto& disp : *outDisplays) {
-            if (disp.displayId < minDisplayId)
-                minDisplayId = disp.displayId;
+            if (disp.port < minPort) {
+                minPort = disp.port;
+                primaryId = disp.displayId; // select display with minimum port as primary display
+            }
         }
-        // find the baseId of the client that include minDisplayId
+        // find the baseId of the client that include primaryId
         for (const auto& [baseId, _] : clients) {
-            if (baseId <= minDisplayId)
+            if (baseId <= primaryId)
                 minBaseId = baseId;
-            if (baseId > minDisplayId)
+            if (baseId > primaryId)
                 break;
         }
 
-        clients[minBaseId]->setHwcPrimaryDisplay(minDisplayId, true);
-        ALOGI("%s: %zu displays connected, select port id=%d as primary display", __FUNCTION__,
-              outDisplays->size(), minDisplayId);
+        clients[minBaseId]->setHwcPrimaryDisplay(primaryId, true);
+        ALOGI("%s: %zu displays connected, select display id=%d(port=0x%x) as primary display",
+              __FUNCTION__, outDisplays->size(), primaryId, minPort);
 
         for (auto& disp : *outDisplays) {
-            if (disp.displayId == minDisplayId) {
+            if (disp.displayId == primaryId) {
                 disp.hwcId = DEFAULT_HWC_PRIMARY_DISPLAY_ID;
                 break;
             }

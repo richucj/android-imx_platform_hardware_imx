@@ -63,7 +63,6 @@ StreamPrimary::StreamPrimary(StreamContext* context, const Metadata& metadata)
     : StreamAlsa(context, metadata, 3 /*readWriteRetries*/),
       mIsAsynchronous(!!getContext().getAsyncCallback()),
       mStubDriver(getContext()) {
-    context->startStreamDataProcessor();
     mSavedConfig = mConfig;
     auto flags = getContext().getFlags();
     if (flags.getTag() == AudioIoFlags::Tag::output) {
@@ -76,6 +75,8 @@ StreamPrimary::StreamPrimary(StreamContext* context, const Metadata& metadata)
             mDirectOutput = false;
         }
     }
+    if (!mDirectOutput)
+        context->startStreamDataProcessor();
     ALOGD("%s: mPrimaryOutput: %d, mDirectOutput: %d", __func__, mPrimaryOutput, mDirectOutput);
     if (mDump) {
         std::ofstream ifile(kDumpPrimaryInputFile, std::ios::trunc);
@@ -83,9 +84,9 @@ StreamPrimary::StreamPrimary(StreamContext* context, const Metadata& metadata)
     }
 }
 
-::android::status_t StreamPrimary::init() {
-    RETURN_STATUS_IF_ERROR(mStubDriver.init());
-    return StreamAlsa::init();
+::android::status_t StreamPrimary::init(DriverCallbackInterface* callback) {
+    RETURN_STATUS_IF_ERROR(mStubDriver.init(callback));
+    return StreamAlsa::init(callback);
 }
 
 ::android::status_t StreamPrimary::drain(StreamDescriptor::DrainMode mode) {
@@ -109,6 +110,7 @@ void StreamPrimary::tryStart(){
         mStarted = false;
     } else {
         mStarted = true;
+        mFirstTransfer = true;
     }
 }
 
@@ -320,8 +322,20 @@ void StreamPrimary::stop() {
         return ::android::OK;
     }
 
+    if (!mIsInput && mConvertChannel &&
+            (mConfig->channels == 4 || mConfig->channels == 6 || mConfig->channels == 8)) {
+        if (mConfig->format == PCM_FORMAT_S16_LE) {
+            AudioCardManager::convertChannelS16(buffer, frameCount * mFrameSizeBytes, mConfig->channels);
+        } else if (mConfig->format == PCM_FORMAT_S32_LE) {
+            AudioCardManager::convertChannelS32(buffer, frameCount * mFrameSizeBytes, mConfig->channels);
+        }
+    }
+
     if (mDump && !mIsInput)
         dump(buffer, frameCount * mFrameSizeBytes, kDumpPrimaryOutputFile);
+
+    if (mFirstTransfer)
+        LOG(DEBUG) << __func__ << ": Start first transfer " << frameCount << " frames.";
 
     if (mIsStereoToMono) {
         if (mIsInput) {
@@ -394,6 +408,11 @@ void StreamPrimary::stop() {
             StreamAlsa::transfer(buffer, frameCount, actualFrameCount, latencyMs));
 
 done:
+    if (mFirstTransfer) {
+        mFirstTransfer = false;
+        LOG(DEBUG) << __func__ << ": End first transfer " << *actualFrameCount << " frames.";
+    }
+
     if (mDump && mIsInput)
         dump(buffer, frameCount * mFrameSizeBytes, kDumpPrimaryInputFile);
     LOG(VERBOSE) << __func__ << ": end transfer: " << *actualFrameCount;
@@ -465,6 +484,11 @@ std::vector<alsa::DeviceProfile> StreamPrimary::getDeviceProfiles() {
             mIsStereoToMono = false;
             mIsS32ToS16 = false;
             mConfig = mSavedConfig;
+        }
+
+        if (strstr(card->driver_name, "cs42888")) {
+            mConvertChannel = true;
+            LOG(INFO) << __func__ << ": Convert channels.";
         }
 
         char soc_name[PROPERTY_VALUE_MAX];

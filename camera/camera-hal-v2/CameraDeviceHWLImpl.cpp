@@ -71,6 +71,7 @@ CameraDeviceHwlImpl::CameraDeviceHwlImpl(uint32_t camera_id, ImxEngine cam_copy_
         mCamBlitCscType(cam_csc_hw),
         mUseCpuEncoder(use_cpu_encoder),
         physical_device_map_(std::move(physical_devices)) {
+    ALOGI("enter %s, this %p", __func__, this);
     strncpy(mJpegHw, hw_jpeg, JPEG_HW_NAME_LEN);
     mJpegHw[JPEG_HW_NAME_LEN - 1] = 0;
 
@@ -84,6 +85,7 @@ CameraDeviceHwlImpl::CameraDeviceHwlImpl(uint32_t camera_id, ImxEngine cam_copy_
 }
 
 CameraDeviceHwlImpl::~CameraDeviceHwlImpl() {
+    ALOGI("enter %s, this %p", __func__, this);
     if (m_meta) {
         delete m_meta;
         m_meta = NULL;
@@ -95,11 +97,11 @@ CameraDeviceHwlImpl::~CameraDeviceHwlImpl() {
 }
 
 status_t CameraDeviceHwlImpl::Initialize(std::shared_ptr<libcamera::Camera> &camera) {
-    ALOGI("%s", __func__);
+    ALOGI("enter %s, this %p", __func__, this);
 
     camera_ = camera;
     if (camera_ == nullptr) {
-        ALOGE("%s:  cameraManager->get(%s) failed", __func__, AP1302_95_NAME);
+        ALOGE("%s:  camera null", __func__);
         return BAD_VALUE;
     }
 
@@ -141,15 +143,15 @@ bool CameraDeviceHwlImpl::PickResByMetaData(int width, int height) {
     return false;
 }
 
-static int resCandidatePreview_os08a20[] = {320, 240, 640, 480, 1280, 720, 1920, 1080};
-static int resCandidatePicture_os08a20[] = {320, 240, 640, 480, 1280, 720, 1920, 1080, 3840, 2160};
-static int resCandidatePreview_mx95mbcam[] = {320, 240, 640, 480, 1280, 720, 1920, 1080, 1920, 1280};
-static int resCandidatePicture_mx95mbcam[] = {320, 240, 640, 480, 1280, 720, 1920, 1080, 1920, 1280};
+static int resCandidatePreview_os08a20[] = {320, 240, 640, 480, 1280, 720, 1920, 1080, 1920, 1440, 3840, 2160};
+static int resCandidatePicture_os08a20[] = {320, 240, 640, 480, 1280, 720, 1920, 1080, 1920, 1440, 3840, 2160};
 static int resCandidatePreview_ap1302[] = {320, 240, 640, 480, 1280, 720, 1280, 800};
 static int resCandidatePicture_ap1302[] = {320, 240, 640, 480, 1280, 720, 1280, 800};
-static int resCandidatePreview_ov5640[] = {320, 240, 640, 480, 1024, 768, 1280, 720, 1920, 1080};
+static int resCandidatePreview_ov5640[] = {320, 240, 640, 480, 1024, 768, 1280, 720, 1920, 1080, 1920, 1440};
 static int resCandidatePicture_ov5640[] = {320,  240, 640,  480,  1024, 768,
-                                           1280, 720, 1920, 1080, 2592, 1944};
+                                           1280, 720, 1920, 1080, 1920, 1440, 2592, 1944};
+static int resCandidatePreview_mx95mbcam[] = {320, 240, 640, 480, 1280, 720, 1920, 1080, 1920, 1280};
+static int resCandidatePicture_mx95mbcam[] = {320, 240, 640, 480, 1280, 720, 1920, 1080, 1920, 1280};
 
 status_t CameraDeviceHwlImpl::initSensorStaticData() {
     // first read sensor format.
@@ -163,6 +165,9 @@ status_t CameraDeviceHwlImpl::initSensorStaticData() {
     if (strcmp(mSensorData.v4l2_format, "nv12") == 0) {
         sensorFormats[index] = v4l2_fourcc('N', 'V', '1', '2');
         availFormats[index++] = v4l2_fourcc('N', 'V', '1', '2');
+    } else if (strcmp(mSensorData.v4l2_format, "rgb3") == 0) {
+        sensorFormats[index] = v4l2_fourcc('R', 'G', 'B', '3');
+        availFormats[index++] = v4l2_fourcc('R', 'G', 'B', '3');
     } else {
         sensorFormats[index] = v4l2_fourcc('Y', 'U', 'Y', 'V');
         availFormats[index++] = v4l2_fourcc('Y', 'U', 'Y', 'V');
@@ -249,23 +254,23 @@ status_t CameraDeviceHwlImpl::initSensorStaticData() {
         ALOGI("SupportedPreviewSizes: %d x %d", mPreviewResolutions[i], mPreviewResolutions[i + 1]);
     }
 
-    int fpsRange_os08a20[] = {10, 30, 15, 30, 30, 30};
-    int fpsRange_mx95mbcam[] = {10, 30, 15, 30, 30, 30};
+    int fpsRange_os08a20[] = {10, 30, 15, 30, 30, 30, 15, 60, 60, 60};
     int fpsRange_ap1302[] = {10, 30, 15, 30, 30, 30, 15, 60, 60, 60};
     int fpsRange_ov5640[] = {10, 30, 15, 30, 30, 30};
+    int fpsRange_mx95mbcam[] = {10, 30, 15, 30, 30, 30};
 
     if (strstr(mSensorData.camera_name, "os08a20")) {
         int rangeCount = ARRAY_SIZE(fpsRange_os08a20);
         mFpsRangeCount = rangeCount <= MAX_FPS_RANGE ? rangeCount : MAX_FPS_RANGE;
         memcpy(mTargetFpsRange, fpsRange_os08a20, mFpsRangeCount * sizeof(int));
-    } else if (strstr(mSensorData.camera_name, "mx95mbcam")) {
-        int rangeCount = ARRAY_SIZE(fpsRange_mx95mbcam);
-        mFpsRangeCount = rangeCount <= MAX_FPS_RANGE ? rangeCount : MAX_FPS_RANGE;
-        memcpy(mTargetFpsRange, fpsRange_mx95mbcam, mFpsRangeCount * sizeof(int));
     } else if (strstr(mSensorData.camera_name, "ap1302")) {
         int rangeCount = ARRAY_SIZE(fpsRange_ap1302);
         mFpsRangeCount = rangeCount <= MAX_FPS_RANGE ? rangeCount : MAX_FPS_RANGE;
         memcpy(mTargetFpsRange, fpsRange_ap1302, mFpsRangeCount * sizeof(int));
+    } else if (strstr(mSensorData.camera_name, "mx95mbcam")) {
+        int rangeCount = ARRAY_SIZE(fpsRange_mx95mbcam);
+        mFpsRangeCount = rangeCount <= MAX_FPS_RANGE ? rangeCount : MAX_FPS_RANGE;
+        memcpy(mTargetFpsRange, fpsRange_mx95mbcam, mFpsRangeCount * sizeof(int));
     } else {
         int rangeCount = ARRAY_SIZE(fpsRange_ov5640);
         mFpsRangeCount = rangeCount <= MAX_FPS_RANGE ? rangeCount : MAX_FPS_RANGE;
@@ -280,6 +285,19 @@ status_t CameraDeviceHwlImpl::initSensorStaticData() {
               mMaxHeight);
         mCallback.camera_device_status_change(camera_id_, CameraDeviceStatus::kNotPresent);
     }
+
+    // store supported formats
+    std::unique_ptr<libcamera::CameraConfiguration> config;
+    config = camera_->generateConfiguration({libcamera::StreamRole::Viewfinder});
+    if (config == NULL) {
+        ALOGE("%s: generateConfiguration for Viewfinder failed", __func__);
+        return BAD_VALUE;
+    }
+
+    mSupportedFormats = config->at(0).formats();
+
+    std::vector<libcamera::Size> yuyv_sizes = mSupportedFormats.sizes(libcamera::formats::YUYV);
+    for (auto size : yuyv_sizes) ALOGI("%s: yuyv size %s", __func__, size.toString().c_str());
 
     return NO_ERROR;
 }

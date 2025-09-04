@@ -223,7 +223,7 @@ std::tuple<HWC3::Error, buffer_handle_t> FbdevClient::getComposerTarget(
     return std::make_tuple(HWC3::Error::None, mComposerTargets[displayId][0]);
 }
 
-HWC3::Error FbdevClient::setSecureMode(uint32_t displayId, uint32_t planeId, bool secure) {
+HWC3::Error FbdevClient::setSecureMode(uint32_t displayId, bool secure) {
     if (mDisplays.find(displayId) == mDisplays.end()) {
         DEBUG_LOG("%s: invalid display:%" PRIu32, __FUNCTION__, displayId);
         return HWC3::Error::BadDisplay;

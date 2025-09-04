@@ -41,6 +41,7 @@
         <library name="loudness_enhancer" path="libloudnessenhanceraidl.so"/>
         <library name="nssw" path="libnssw.so"/>
         <library name="env_reverbsw" path="libenvreverbsw.so"/>
+        <library name="pre_processing" path="libpreprocessingaidl.so"/>
         <library name="preset_reverbsw" path="libpresetreverbsw.so"/>
         <library name="reverb" path="libreverbaidl.so"/>
         <library name="virtualizersw" path="libvirtualizersw.so"/>
@@ -87,7 +88,16 @@
         <effect name="volume" library="bundle" uuid="119341a0-8469-11df-81f9-0002a5d5c51b"/>
         <effect name="equalizer" library="bundle" uuid="ce772f20-847d-11df-bb17-0002a5d5c51b"/>
         <effect name="extension_effect" library="extensioneffect" uuid="fa81dd00-588b-11ed-9b6a-0242ac120002" type="fa81de0e-588b-11ed-9b6a-0242ac120002"/>
+        <effect name="acoustic_echo_canceler" library="pre_processing" uuid="bb392ec0-8d4d-11e0-a896-0002a5d5c51b"/>
+        <effect name="noise_suppression" library="pre_processing" uuid="c06c8400-8e06-11e0-9cb6-0002a5d5c51b"/>
     </effects>
+
+    <preprocess>
+        <stream type="voice_communication">
+            <apply effect="acoustic_echo_canceler"/>
+            <apply effect="noise_suppression"/>
+        </stream>
+    </preprocess>
 
     <!-- Audio pre processor configurations.
          The pre processor configuration is described in a "preprocess" element and consists in a

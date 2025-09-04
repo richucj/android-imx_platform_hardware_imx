@@ -98,6 +98,7 @@ using HalConfig = std::unordered_map<uint32_t, HalDisplayConfig>;
 struct HalMultiConfigs {
     uint32_t hwcId;
     uint32_t displayId;
+    uint32_t port;
     int32_t activeConfigId;
     std::shared_ptr<HalConfig> configs;
 };
@@ -122,7 +123,7 @@ bool IsOverlayUserDisabled();
 bool Is2DCompositionUserDisabled();
 bool Is2DCompositionUserPrefered();
 bool IsHdcpUserEnabled();
-std::string getHdcpStatusPath();
+std::string getHdcpInfoPath();
 std::string getFramebufferFormat();
 
 bool customizeGUIResolution(uint32_t& width, uint32_t& height, uint32_t* uiType);

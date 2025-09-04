@@ -78,6 +78,9 @@ class Thermal : public BnThermal {
     ndk::ScopedAStatus unregisterCoolingDeviceChangedCallback(
             const std::shared_ptr<ICoolingDeviceChangedCallback> &callback) override;
 
+    ndk::ScopedAStatus forecastSkinTemperature(int32_t forecastSeconds,
+                                               float* _aidl_return) override;
+
     // Helper function for calling callbacks
     void sendThermalChangedCallback(const std::vector<Temperature> &temps);
 

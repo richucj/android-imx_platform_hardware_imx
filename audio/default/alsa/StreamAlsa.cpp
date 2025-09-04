@@ -24,11 +24,14 @@
 #include <Utils.h>
 #include <audio_utils/clock.h>
 #include <error/expected_utils.h>
+#include <media/AidlConversionCppNdk.h>
 
 #include "core-impl/StreamAlsa.h"
 
 #include <cutils/properties.h>
 #include <fstream>
+
+using aidl::android::hardware::audio::common::getChannelCount;
 
 namespace aidl::android::hardware::audio::core {
 
@@ -51,7 +54,35 @@ StreamAlsa::~StreamAlsa() {
     cleanupWorker();
 }
 
-::android::status_t StreamAlsa::init() {
+::android::NBAIO_Format StreamAlsa::getPipeFormat() const {
+    const audio_format_t audioFormat = VALUE_OR_FATAL(
+            aidl2legacy_AudioFormatDescription_audio_format_t(getContext().getFormat()));
+    const int channelCount = getChannelCount(getContext().getChannelLayout());
+    return ::android::Format_from_SR_C(getContext().getSampleRate(), channelCount, audioFormat);
+}
+
+::android::sp<::android::MonoPipe> StreamAlsa::makeSink(bool writeCanBlock) {
+    const ::android::NBAIO_Format format = getPipeFormat();
+    auto sink = ::android::sp<::android::MonoPipe>::make(mBufferSizeFrames, format, writeCanBlock);
+    const ::android::NBAIO_Format offers[1] = {format};
+    size_t numCounterOffers = 0;
+    ssize_t index = sink->negotiate(offers, 1, nullptr, numCounterOffers);
+    LOG_IF(FATAL, index != 0) << __func__ << ": Negotiation for the sink failed, index = " << index;
+    return sink;
+}
+
+::android::sp<::android::MonoPipeReader> StreamAlsa::makeSource(::android::MonoPipe* pipe) {
+    const ::android::NBAIO_Format format = getPipeFormat();
+    const ::android::NBAIO_Format offers[1] = {format};
+    auto source = ::android::sp<::android::MonoPipeReader>::make(pipe);
+    size_t numCounterOffers = 0;
+    ssize_t index = source->negotiate(offers, 1, nullptr, numCounterOffers);
+    LOG_IF(FATAL, index != 0) << __func__
+                              << ": Negotiation for the source failed, index = " << index;
+    return source;
+}
+
+::android::status_t StreamAlsa::init(DriverCallbackInterface* /*callback*/) {
     return mConfig.has_value() ? ::android::OK : ::android::NO_INIT;
 }
 
@@ -74,7 +105,7 @@ StreamAlsa::~StreamAlsa() {
 }
 
 ::android::status_t StreamAlsa::standby() {
-    mAlsaDeviceProxies.clear();
+    teardownIo();
     return ::android::OK;
 }
 
@@ -84,6 +115,8 @@ StreamAlsa::~StreamAlsa() {
         return ::android::OK;
     }
     decltype(mAlsaDeviceProxies) alsaDeviceProxies;
+    decltype(mSources) sources;
+    decltype(mSinks) sinks;
     for (const auto& device : getDeviceProfiles()) {
         if ((device.direction == PCM_OUT && mIsInput) ||
             (device.direction == PCM_IN && !mIsInput)) {
@@ -105,11 +138,29 @@ StreamAlsa::~StreamAlsa() {
             return ::android::NO_INIT;
         }
         alsaDeviceProxies.push_back(std::move(proxy));
+        auto sink = makeSink(mIsInput);  // Do not block the writer when it is on our thread.
+        if (sink != nullptr) {
+            sinks.push_back(sink);
+        } else {
+            return ::android::NO_INIT;
+        }
+        if (auto source = makeSource(sink.get()); source != nullptr) {
+            sources.push_back(source);
+        } else {
+            return ::android::NO_INIT;
+        }
     }
     if (alsaDeviceProxies.empty()) {
         return ::android::NO_INIT;
     }
     mAlsaDeviceProxies = std::move(alsaDeviceProxies);
+    mSources = std::move(sources);
+    mSinks = std::move(sinks);
+    mIoThreadIsRunning = false;
+    for (size_t i = 0; i < mAlsaDeviceProxies.size(); ++i) {
+        mIoThreads.emplace_back(mIsInput ? &StreamAlsa::inputIoThread : &StreamAlsa::outputIoThread,
+                                this, i);
+    }
     return ::android::OK;
 }
 
@@ -196,12 +247,97 @@ void StreamAlsa::dump(const void *buffer, size_t bytes, const char *name) {
 }
 
 void StreamAlsa::shutdown() {
-    mAlsaDeviceProxies.clear();
+    teardownIo();
 }
 
 ndk::ScopedAStatus StreamAlsa::setGain(float gain) {
     mGain = gain;
     return ndk::ScopedAStatus::ok();
+}
+
+void StreamAlsa::inputIoThread(size_t idx) {
+#if defined(__ANDROID__)
+    setWorkerThreadPriority(pthread_gettid_np(pthread_self()));
+    const std::string threadName = (std::string("in_") + std::to_string(idx)).substr(0, 15);
+    pthread_setname_np(pthread_self(), threadName.c_str());
+#endif
+    const size_t bufferSize = mBufferSizeFrames * mFrameSizeBytes;
+    std::vector<char> buffer(bufferSize);
+    while (mIoThreadIsRunning) {
+        if (int ret = proxy_read_with_retries(mAlsaDeviceProxies[idx].get(), &buffer[0], bufferSize,
+                                              mReadWriteRetries);
+            ret == 0) {
+            size_t bufferFramesWritten = 0;
+            while (bufferFramesWritten < mBufferSizeFrames) {
+                if (!mIoThreadIsRunning) return;
+                ssize_t framesWrittenOrError =
+                        mSinks[idx]->write(&buffer[0], mBufferSizeFrames - bufferFramesWritten);
+                if (framesWrittenOrError >= 0) {
+                    bufferFramesWritten += framesWrittenOrError;
+                } else {
+                    LOG(WARNING) << __func__ << "[" << idx
+                                 << "]: Error while writing into the pipe: "
+                                 << framesWrittenOrError;
+                }
+            }
+        } else {
+            // Errors when the stream is being stopped are expected.
+            LOG_IF(WARNING, mIoThreadIsRunning)
+                    << __func__ << "[" << idx << "]: Error reading from ALSA: " << ret;
+        }
+    }
+}
+
+void StreamAlsa::outputIoThread(size_t idx) {
+#if defined(__ANDROID__)
+    setWorkerThreadPriority(pthread_gettid_np(pthread_self()));
+    const std::string threadName = (std::string("out_") + std::to_string(idx)).substr(0, 15);
+    pthread_setname_np(pthread_self(), threadName.c_str());
+#endif
+    const size_t bufferSize = mBufferSizeFrames * mFrameSizeBytes;
+    std::vector<char> buffer(bufferSize);
+    while (mIoThreadIsRunning) {
+        ssize_t framesReadOrError = mSources[idx]->read(&buffer[0], mBufferSizeFrames);
+        if (framesReadOrError > 0) {
+            int ret = proxy_write_with_retries(mAlsaDeviceProxies[idx].get(), &buffer[0],
+                                               framesReadOrError * mFrameSizeBytes,
+                                               mReadWriteRetries);
+            // Errors when the stream is being stopped are expected.
+            LOG_IF(WARNING, ret != 0 && mIoThreadIsRunning)
+                    << __func__ << "[" << idx << "]: Error writing into ALSA: " << ret;
+        } else if (framesReadOrError == 0) {
+            // MonoPipeReader does not have a blocking read, while use of std::condition_variable
+            // requires use of a mutex. For now, just do a 1ms sleep. Consider using a different
+            // pipe / ring buffer mechanism.
+            if (mIoThreadIsRunning) usleep(1000);
+        } else {
+            LOG(WARNING) << __func__ << "[" << idx
+                         << "]: Error while reading from the pipe: " << framesReadOrError;
+        }
+    }
+}
+
+void StreamAlsa::teardownIo() {
+    mIoThreadIsRunning = false;
+    if (mIsInput) {
+        LOG(DEBUG) << __func__ << ": shutting down pipes";
+        for (auto& sink : mSinks) {
+            sink->shutdown(true);
+        }
+    }
+    LOG(DEBUG) << __func__ << ": stopping PCM streams";
+    for (const auto& proxy : mAlsaDeviceProxies) {
+        proxy_stop(proxy.get());
+    }
+    LOG(DEBUG) << __func__ << ": joining threads";
+    for (auto& thread : mIoThreads) {
+        if (thread.joinable()) thread.join();
+    }
+    mIoThreads.clear();
+    LOG(DEBUG) << __func__ << ": closing PCM devices";
+    mAlsaDeviceProxies.clear();
+    mSources.clear();
+    mSinks.clear();
 }
 
 }  // namespace aidl::android::hardware::audio::core
