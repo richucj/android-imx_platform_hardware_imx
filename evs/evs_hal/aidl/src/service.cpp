@@ -39,7 +39,7 @@ using ::aidl::android::frameworks::automotive::display::ICarDisplayProxy;
 using ::aidl::android::hardware::automotive::evs::implementation::EvsEnumerator;
 
 constexpr std::string_view kDisplayServiceInstanceName = "/default";
-constexpr std::string_view kHwInstanceName = "/EvsEnumeratorHw";
+constexpr std::string_view kHwInstanceName = "/imx/0";
 constexpr int kNumBinderThreads = 1;
 
 }  // namespace

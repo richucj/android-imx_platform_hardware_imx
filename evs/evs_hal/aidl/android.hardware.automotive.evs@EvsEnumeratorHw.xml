@@ -2,5 +2,6 @@
     <hal format="aidl">
         <name>android.hardware.automotive.evs</name>
         <fqname>IEvsEnumerator/imx/0</fqname>
+        <version>2</version>
     </hal>
 </manifest>

@@ -112,9 +112,9 @@ int main(int argc, char** argv) {
         if (strcmp(argv[i], "--test") == 0) {
             useVehicleHal = false;
         } else if (strcmp(argv[i], "--hw") == 0) {
-            evsServiceName = "EvsEnumeratorHw";
+            evsServiceName = "imx/0";
         } else if (strcmp(argv[i], "--mock") == 0) {
-            evsServiceName = "EvsEnumeratorHw-Mock";
+            evsServiceName = "imx/0-Mock";
         } else if (strcmp(argv[i], "--help") == 0) {
             printHelp = true;
         } else if (strcmp(argv[i], "--display") == 0) {
@@ -159,8 +159,8 @@ int main(int argc, char** argv) {
                "but simulate a given mock gear signal instead\n");
         printf("  --gear\n\tMock gear signal for the test mode.");
         printf("  Available options are Reverse and Park (case insensitive)\n");
-        printf("  --hw\n\tBypass EvsManager by connecting directly to EvsEnumeratorHw\n");
-        printf("  --mock\n\tConnect directly to EvsEnumeratorHw-Mock\n");
+        printf("  --hw\n\tBypass EvsManager by connecting directly to /imx/0\n");
+        printf("  --mock\n\tConnect directly to /imx/0-Mock\n");
         printf("  --display\n\tSpecify the display to use.  If this is not set, the first"
                "display in config.json's list will be used.\n");
         printf("  --extmem  <format>\n\t"
