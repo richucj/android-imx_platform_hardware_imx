@@ -1,6 +1,6 @@
 /*
  * Copyright 2022 The Android Open Source Project
- * Copyright 2023-2024 NXP
+ * Copyright 2023-2025 NXP
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -179,15 +179,22 @@ HWC3::Error ClientFrameComposer::unregisterOnHotplugCallback() {
     return HWC3::Error::None;
 }
 
-void ClientFrameComposer::hdcpAuthSuccessCallback(Display* display) {
-    auto [error, client] = getDeviceClient(display->getId());
+void ClientFrameComposer::hdcpAuthSuccessCallback(Display* display, DisplayConnectionType outType) {
+    const auto displayId = display->getId();
+    auto [error, client] = getDeviceClient(displayId);
     if (error != HWC3::Error::None) {
-        ALOGE("%s: display:%d cannot find Drm Client", __FUNCTION__, display->getId());
+        ALOGE("%s: display:%d cannot find Drm Client", __FUNCTION__, displayId);
         return;
     }
-    client->setSecureMode(display->getId(), false);
+
     display->setHdcpThreadEnable(false);
-    display->setHdcpState(false);
+    if (outType == DisplayConnectionType::EXTERNAL) {
+        client->setSecureMode(displayId, false);
+        display->setHdcpThreadEnable(false);
+    } else {
+        display->setHdcpThreadEnable(false);
+    }
+    display->setHdcpState(false, outType != DisplayConnectionType::EXTERNAL);
 }
 
 HWC3::Error ClientFrameComposer::onDisplayCreate(Display* display) {
@@ -216,15 +223,20 @@ HWC3::Error ClientFrameComposer::onDisplayCreate(Display* display) {
 
     // set hdcp thread callback
     if (mHdcpEnabled) {
-        auto Callback = [this](Display* display) {
-            return hdcpAuthSuccessCallback(display);
+        DisplayConnectionType connectionType = DisplayConnectionType::INTERNAL;
+        error = client->getDisplayConnectionType(displayId, &connectionType);
+        if (error != HWC3::Error::None) {
+           return error;
+        }
+        auto Callback = [this, outType = connectionType](Display* display) {
+            return hdcpAuthSuccessCallback(display, outType);
         };
         display->setHdcpCallback(Callback);
         if (mHdcpChangedCallback.has_value()) {
             display->setHdcpChangedCallback(*mHdcpChangedCallback);
         }
         display->setHdcpThreadEnable(true);
-        display->setHdcpState(true);
+        display->setHdcpState(true, connectionType == DisplayConnectionType::INTERNAL);
         client->setSecureMode(displayId, true);
     }
 
@@ -266,6 +278,8 @@ HWC3::Error ClientFrameComposer::onDisplayLayerDestroy(Display* display, Layer* 
     if (layer->getHdrMetadataState() == LAYER_HDR_METADATA_STATE_PROCESSED) {
         client->setHdrMetadata(displayId, NULL); // reset the HDR metadata state
     }
+
+    mG2dComposer->onLayerDestroy(layer);
 
     return HWC3::Error::None;
 }
@@ -539,8 +553,12 @@ HWC3::Error ClientFrameComposer::presentDisplay(
         }
     }
     if (!hasSecureLayer && mHdcpEnabled && layersForOverlay.size() > 0) {
-        client->setSecureMode(displayId, false);
-        display->setHdcpState(false);
+        DisplayConnectionType outType = DisplayConnectionType::INTERNAL;
+        client->getDisplayConnectionType(displayId, &outType);
+        if (outType == DisplayConnectionType::EXTERNAL) {
+            client->setSecureMode(displayId, false);
+            display->setHdcpState(false, false);
+        }
     }
 
     if (layersForComposition.size() > 0) {
@@ -848,6 +866,8 @@ HWC3::Error ClientFrameComposer::startHdcp(Display* display) {
         ALOGE("%s: display:%d cannot find Drm Client", __FUNCTION__, displayId);
         return error;
     }
+
+    display->setHdcpState(true, false);
     client->setSecureMode(displayId, true);
     return HWC3::Error::None;
 }

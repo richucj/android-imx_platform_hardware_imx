@@ -47,6 +47,8 @@ public:
     static struct audio_card* getCardForBus(const char *bus_name);
     static void convertChannelS16(const void *buffer, size_t bytes, int channels);
     static void convertChannelS32(const void *buffer, size_t bytes, int channels);
+    static void printPcmConfig(struct pcm_config *config);
+    static pcm_format pcm_format_from_audio_format(audio_format_t format);
 
 private:
     static std::vector<struct audio_card *>mCards;

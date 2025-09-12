@@ -1,0 +1,232 @@
+{
+  "SPDXID": "SPDXRef-DOCUMENT",
+  "spdxVersion": "SPDX-2.3",
+  "creationInfo": {
+    "created": "2025-08-27T02:03:22Z",
+    "creators": [
+      "Organization: NXP"
+    ],
+    "licenseListVersion": "3.20"
+  },
+  "name": "android-imx_platform_hardware_imx-android-16.0.0_1.0.0",
+  "dataLicense": "CC0-1.0",
+  "documentNamespace": "https://nxp.com/spdx/d1bd5112-87e6-4f4f-8fee-8e699316b98f",
+  "packages": [
+    {
+      "SPDXID": "SPDXRef-package-d1bd5112-87e6-4f4f-8fee-8e699316b98f",
+      "name": "android-imx_platform_hardware_imx",
+      "versionInfo": "android-16.0.0_1.0.0",
+      "licenseConcluded": "(Apache-2.0)",
+      "licenseDeclared": "(Apache-2.0)",
+      "downloadLocation": "https://github.com/nxp-imx-android/android-imx_platform_hardware_imx",
+      "originator": "Organization: android-imx_platform_hardware_imx",
+      "supplier": "NOASSERTION",
+      "externalRefs": [],
+      "filesAnalyzed": false
+    },
+    {
+      "SPDXID": "SPDXRef-package-8bbedded-d540-41a0-984c-794209332e5b",
+      "name": "Android - platform - frameworks - av",
+      "versionInfo": "android-16.0.0_r1",
+      "licenseConcluded": "Apache-2.0",
+      "licenseDeclared": "Apache-2.0",
+      "downloadLocation": "https://android.googlesource.com/platform/frameworks/av",
+      "originator": "Organization: android",
+      "supplier": "NOASSERTION",
+      "externalRefs": [
+        {
+          "referenceCategory": "OTHER",
+          "referenceLocator": "222faa38-792e-4b44-b329-5f19955155df",
+          "referenceType": "BlackDuck-ComponentOrigin"
+        }
+      ],
+      "filesAnalyzed": false
+    },
+    {
+      "SPDXID": "SPDXRef-package-16fffd3a-381f-4c2c-a03e-979e8157c42a",
+      "name": "device-generic-goldfish-opengl",
+      "versionInfo": "android-16.0.0_r1",
+      "licenseConcluded": "Apache-2.0",
+      "licenseDeclared": "Apache-2.0",
+      "downloadLocation": "https://android.googlesource.com/device/generic/goldfish-opengl",
+      "originator": "Organization: device-generic-goldfish-opengl",
+      "supplier": "NOASSERTION",
+      "externalRefs": [],
+      "filesAnalyzed": false
+    },
+    {
+      "SPDXID": "SPDXRef-package-c710a610-be50-4d78-ac8c-95db15e42fb4",
+      "name": "device-google-trout",
+      "versionInfo": "android-16.0.0_r1",
+      "licenseConcluded": "Apache-2.0",
+      "licenseDeclared": "NOASSERTION",
+      "downloadLocation": "https://android.googlesource.com/device/google/trout",
+      "originator": "Organization: device-google-trout",
+      "supplier": "NOASSERTION",
+      "externalRefs": [],
+      "filesAnalyzed": false
+    },
+    {
+      "SPDXID": "SPDXRef-package-4f34f730-c125-419d-a45d-bbf23f1869a1",
+      "name": "intel-cm-compiler",
+      "versionInfo": "1.0.119",
+      "licenseConcluded": "MIT",
+      "licenseDeclared": "MIT",
+      "homepage": "https://github.com/intel/cm-compiler",
+      "downloadLocation": "NOASSERTION",
+      "originator": "Organization: intel-cm-compiler",
+      "supplier": "NOASSERTION",
+      "externalRefs": [],
+      "filesAnalyzed": false
+    },
+    {
+      "SPDXID": "SPDXRef-package-22cd3b1a-86b9-4d03-bde4-8255ebaec9dc",
+      "name": "jellybean",
+      "versionInfo": "1.0.9",
+      "licenseConcluded": "MIT",
+      "licenseDeclared": "MIT",
+      "homepage": "https://github.com/lyu4321/jellybean#readme",
+      "downloadLocation": "NOASSERTION",
+      "originator": "Organization: jellybean",
+      "supplier": "NOASSERTION",
+      "externalRefs": [],
+      "filesAnalyzed": false
+    },
+    {
+      "SPDXID": "SPDXRef-package-0d8c1b79-7966-4571-b8e1-56b29a9b34f9",
+      "name": "platform-external-mockftpserver",
+      "versionInfo": "android-16.0.0_r1",
+      "licenseConcluded": "Apache-2.0",
+      "licenseDeclared": "Apache-2.0",
+      "downloadLocation": "https://android.googlesource.com/platform/external/mockftpserver",
+      "originator": "Organization: platform-external-mockftpserver",
+      "supplier": "NOASSERTION",
+      "externalRefs": [],
+      "filesAnalyzed": false
+    },
+    {
+      "SPDXID": "SPDXRef-package-0b9c6017-8d3f-49f8-b8d0-302166b136b1",
+      "name": "platform-hardware-google-camera",
+      "versionInfo": "android-16.0.0_r1",
+      "licenseConcluded": "Apache-2.0",
+      "licenseDeclared": "NOASSERTION",
+      "downloadLocation": "https://android.googlesource.com/platform/hardware/google/camera",
+      "originator": "Organization: platform-hardware-google-camera",
+      "supplier": "NOASSERTION",
+      "externalRefs": [],
+      "filesAnalyzed": false
+    },
+    {
+      "SPDXID": "SPDXRef-package-70287051-b97e-487f-8bc0-6e02fa89d420",
+      "name": "platform-hardware-google-pixel",
+      "versionInfo": "android-16.0.0_r1",
+      "licenseConcluded": "Apache-2.0",
+      "licenseDeclared": "Apache-2.0",
+      "homepage": "http://developer.android.com/index.html",
+      "downloadLocation": "https://android.googlesource.com/platform/hardware/google/pixel",
+      "originator": "Organization: platform-hardware-google-pixel",
+      "supplier": "NOASSERTION",
+      "externalRefs": [],
+      "filesAnalyzed": false
+    },
+    {
+      "SPDXID": "SPDXRef-package-ed2f0a66-26d3-4694-9e60-ea6d99a148ba",
+      "name": "platform-hardware-interfaces",
+      "versionInfo": "android-16.0.0_r1",
+      "licenseConcluded": "Apache-2.0",
+      "licenseDeclared": "Apache-2.0",
+      "homepage": "NOASSERTION",
+      "downloadLocation": "https://android.googlesource.com/platform/hardware/interfaces",
+      "originator": "Organization: platform-hardware-interfaces",
+      "supplier": "NOASSERTION",
+      "externalRefs": [],
+      "filesAnalyzed": false
+    },
+    {
+      "SPDXID": "SPDXRef-package-64070398-cf5f-410d-8483-da858dbee5fa",
+      "name": "platform-packages-modules-Bluetooth",
+      "versionInfo": "android-15.0.0_r5",
+      "licenseConcluded": "Apache-2.0",
+      "licenseDeclared": "Apache-2.0",
+      "downloadLocation": "https://android.googlesource.com/platform/packages/modules/Bluetooth",
+      "originator": "Organization: platform-packages-modules-Bluetooth",
+      "supplier": "NOASSERTION",
+      "externalRefs": [],
+      "filesAnalyzed": false
+    },
+    {
+      "SPDXID": "SPDXRef-package-bec68305-bb70-4375-955e-882d1441950a",
+      "name": "platform-packages-services-Car",
+      "versionInfo": "android-16.0.0_r1",
+      "licenseConcluded": "Apache-2.0",
+      "licenseDeclared": "Apache-2.0",
+      "downloadLocation": "https://android.googlesource.com/platform/packages/services/Car",
+      "originator": "Organization: platform-packages-services-Car",
+      "supplier": "NOASSERTION",
+      "externalRefs": [],
+      "filesAnalyzed": false
+    }
+  ],
+  "relationships": [
+    {
+      "spdxElementId": "SPDXRef-DOCUMENT",
+      "relationshipType": "DESCRIBES",
+      "relatedSpdxElement": "SPDXRef-package-d1bd5112-87e6-4f4f-8fee-8e699316b98f"
+    },
+    {
+      "spdxElementId": "SPDXRef-package-d1bd5112-87e6-4f4f-8fee-8e699316b98f",
+      "relationshipType": "CONTAINS",
+      "relatedSpdxElement": "SPDXRef-package-0b9c6017-8d3f-49f8-b8d0-302166b136b1"
+    },
+    {
+      "spdxElementId": "SPDXRef-package-d1bd5112-87e6-4f4f-8fee-8e699316b98f",
+      "relationshipType": "CONTAINS",
+      "relatedSpdxElement": "SPDXRef-package-4f34f730-c125-419d-a45d-bbf23f1869a1"
+    },
+    {
+      "spdxElementId": "SPDXRef-package-d1bd5112-87e6-4f4f-8fee-8e699316b98f",
+      "relationshipType": "CONTAINS",
+      "relatedSpdxElement": "SPDXRef-package-16fffd3a-381f-4c2c-a03e-979e8157c42a"
+    },
+    {
+      "spdxElementId": "SPDXRef-package-d1bd5112-87e6-4f4f-8fee-8e699316b98f",
+      "relationshipType": "CONTAINS",
+      "relatedSpdxElement": "SPDXRef-package-ed2f0a66-26d3-4694-9e60-ea6d99a148ba"
+    },
+    {
+      "spdxElementId": "SPDXRef-package-d1bd5112-87e6-4f4f-8fee-8e699316b98f",
+      "relationshipType": "CONTAINS",
+      "relatedSpdxElement": "SPDXRef-package-c710a610-be50-4d78-ac8c-95db15e42fb4"
+    },
+    {
+      "spdxElementId": "SPDXRef-package-d1bd5112-87e6-4f4f-8fee-8e699316b98f",
+      "relationshipType": "CONTAINS",
+      "relatedSpdxElement": "SPDXRef-package-64070398-cf5f-410d-8483-da858dbee5fa"
+    },
+    {
+      "spdxElementId": "SPDXRef-package-d1bd5112-87e6-4f4f-8fee-8e699316b98f",
+      "relationshipType": "CONTAINS",
+      "relatedSpdxElement": "SPDXRef-package-0d8c1b79-7966-4571-b8e1-56b29a9b34f9"
+    },
+    {
+      "spdxElementId": "SPDXRef-package-d1bd5112-87e6-4f4f-8fee-8e699316b98f",
+      "relationshipType": "CONTAINS",
+      "relatedSpdxElement": "SPDXRef-package-70287051-b97e-487f-8bc0-6e02fa89d420"
+    },
+    {
+      "spdxElementId": "SPDXRef-package-d1bd5112-87e6-4f4f-8fee-8e699316b98f",
+      "relationshipType": "CONTAINS",
+      "relatedSpdxElement": "SPDXRef-package-22cd3b1a-86b9-4d03-bde4-8255ebaec9dc"
+    },
+    {
+      "spdxElementId": "SPDXRef-package-d1bd5112-87e6-4f4f-8fee-8e699316b98f",
+      "relationshipType": "CONTAINS",
+      "relatedSpdxElement": "SPDXRef-package-8bbedded-d540-41a0-984c-794209332e5b"
+    },
+    {
+      "spdxElementId": "SPDXRef-package-d1bd5112-87e6-4f4f-8fee-8e699316b98f",
+      "relationshipType": "CONTAINS",
+      "relatedSpdxElement": "SPDXRef-package-bec68305-bb70-4375-955e-882d1441950a"
+    }
+  ]
+}

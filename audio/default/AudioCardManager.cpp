@@ -236,6 +236,33 @@ void AudioCardManager::convertChannelS16(const void *buffer, size_t bytes, int c
     }
 }
 
+void AudioCardManager::printPcmConfig(struct pcm_config *config)
+{
+    if (config) {
+        LOG(INFO) << "  channels: " << config->channels;
+        LOG(INFO) << "  rate: " << config->rate;
+        LOG(INFO) << "  period_size: " << config->period_size;
+        LOG(INFO) << "  period_count: " << config->period_count;
+        LOG(INFO) << "  format: " << config->format;
+    }
+}
+
+pcm_format AudioCardManager::pcm_format_from_audio_format(audio_format_t format) {
+    switch (format) {
+        case AUDIO_FORMAT_PCM_16_BIT:
+            return PCM_FORMAT_S16_LE;
+        case AUDIO_FORMAT_PCM_24_BIT_PACKED:
+            return PCM_FORMAT_S24_3LE;
+        case AUDIO_FORMAT_PCM_32_BIT:
+            return PCM_FORMAT_S32_LE;
+        case AUDIO_FORMAT_PCM_8_24_BIT:
+            return PCM_FORMAT_S24_LE;
+        case AUDIO_FORMAT_PCM_FLOAT: /* there is no equivalent for float */
+        default:
+            return PCM_FORMAT_INVALID;
+    }
+}
+
 std::vector<struct audio_card *>AudioCardManager::mCards;
 std::vector<struct mixer *>AudioCardManager::mMixers;
 
