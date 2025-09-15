@@ -73,6 +73,7 @@ func cameraDefaults(ctx android.LoadHookContext) {
 		} else {
 			cppflags = append(cppflags, "-DIMX8MP=1")
 			cppflags = append(cppflags, "-DISI_COLORSPACE=UYVY8_1X16")
+			cppflags = append(cppflags, "-DCROP_720P=1")
 			p.Target.Android.Srcs = append(p.Target.Android.Srcs, "./camera/CameraProviderHWLImpl.cpp")
 			p.Target.Android.Srcs = append(p.Target.Android.Srcs, "./camera/CameraDeviceHWLImpl.cpp")
 			p.Target.Android.Srcs = append(p.Target.Android.Srcs, "./camera/CameraDeviceSessionHWLImpl.cpp")

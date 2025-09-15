@@ -327,7 +327,9 @@ std::vector<MediaCfg> cfgGroups[1] = {
                 {1, 0,  ISI_COLORSPACE,    1280, 800,  V4L2_FIELD_NONE} // EVS need RGB888_1X24 and camera UYVY8_1X16.
             },
             { // crop
+#ifdef CROP_720P
                 {1, 0,  0, 40, 1280, 720}
+#endif
             },
             {}
         },
@@ -341,7 +343,9 @@ std::vector<MediaCfg> cfgGroups[1] = {
                 {1, 0,  ISI_COLORSPACE,    1280, 800,  V4L2_FIELD_NONE}
             },
             { // crop
+#ifdef CROP_720P
                 {1, 0,  0, 40, 1280, 720}
+#endif
             },
             {}
         },
@@ -355,7 +359,9 @@ std::vector<MediaCfg> cfgGroups[1] = {
                 {1, 0,  ISI_COLORSPACE,    1280, 800,  V4L2_FIELD_NONE}
             },
             { // crop
+#ifdef CROP_720P
                 {1, 0,  0, 40, 1280, 720}
+#endif
             },
             {}
         },
@@ -369,7 +375,9 @@ std::vector<MediaCfg> cfgGroups[1] = {
                 {1, 0,  ISI_COLORSPACE,    1280, 800,  V4L2_FIELD_NONE}
             },
             { // crop
+#ifdef CROP_720P
                 {1, 0,  0, 40, 1280, 720}
+#endif
             },
             {}
         }
