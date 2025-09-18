@@ -15,11 +15,13 @@
  */
 
 package {
+    default_team: "trendy_team_aaos_framework",
     default_applicable_licenses: ["Android-Apache-2.0"],
 }
 
 cc_test {
     name: "JsonConfigLoaderUnitTestImx",
+    team: "trendy_team_aaos_carframework_triage",
     vendor: true,
     srcs: ["*.cpp"],
     static_libs: [
@@ -36,6 +38,7 @@ cc_test {
 
 cc_test {
     name: "JsonConfigLoaderUnitTestEnableTestPropertiesImx",
+    team: "trendy_team_aaos_carframework_triage",
     vendor: true,
     srcs: ["*.cpp"],
     static_libs: [
