@@ -26,3 +26,16 @@ cc_binary {
     vendor: true,
 
 }
+
+cc_binary {
+    name: "evs_service.recovery",
+    recovery: true,
+    stem: "evs_service_recovery",
+
+    srcs: ["evs_service.cpp"],
+
+    shared_libs: [
+        "libcutils",
+        "liblog",
+    ],
+}
