@@ -21,6 +21,7 @@
 #include "glError.h"
 #include "shader.h"
 #include "shader_simpleTex.h"
+#include "shader_dewarpTex.h"
 #include "shader_reverseLine.h"
 
 #include <aidl/android/hardware/automotive/evs/CameraDesc.h>
@@ -69,6 +70,13 @@ RenderDirectView::RenderDirectView(std::shared_ptr<IEvsEnumerator> enumerator,
         sincosf(mCameraInfo.roll, &sinRoll, &cosRoll);
         mRotationMat = {cosRoll, -sinRoll, sinRoll, cosRoll};
     }
+
+    if (camDesc.id.find("mx95mbcam") != std::string::npos) {
+        mDewarpEnabled = 1;
+        LOG(INFO) << "Camera supports dewarp";
+    } else {
+        mDewarpEnabled = 0;
+    }
 }
 
 bool RenderDirectView::activate() {
@@ -78,14 +86,29 @@ bool RenderDirectView::activate() {
         return false;
     }
 
-    // Load our shader program if we don't have it already
-    if (!mShaderProgram) {
-        mShaderProgram = buildShaderProgram(vtxShader_simpleTexture, pixShader_simpleTexture,
-                                            "simpleTexture");
-        if (!mShaderProgram) {
-            LOG(ERROR) << "Error building shader program";
-            return false;
+    // Load our shader program if we don't have it already, first try Dewarp, if it fails do normal one.
+    if (!mShaderProgram && mDewarpEnabled) {
+        mDewarpTexture.reset(createDewarpTexture("/system/etc/automotive/evs/dewarp_coords_ox03c20_1920x1280.bin", 1920, 1280));
+        if (!mDewarpTexture) {
+            LOG(ERROR) << "Failed to load dewarp data.";
+            mDewarpEnabled = false;
+        } else {
+            mShaderProgram = buildShaderProgram(vtxShader_simpleTexture, pixShader_dewarpTexture,
+                                                "simpleTexture");
+            if (!mShaderProgram) {
+                LOG(WARNING) << "Failed to setup dewarp for the camera.";
+                mDewarpEnabled = false;
+                mDewarpTexture.reset(); // Free the allocated memory.
+            }
         }
+    }
+    if (!mShaderProgram) {
+            mShaderProgram = buildShaderProgram(vtxShader_simpleTexture, pixShader_simpleTexture,
+                                                "simpleTexture");
+    }
+    if (!mShaderProgram) {
+        LOG(ERROR) << "Error building shader program";
+        return false;
     }
 
     if (!mLineShaderProgram) {
@@ -145,7 +168,6 @@ bool RenderDirectView::activate() {
         LOG(ERROR) << "Failed to set up video texture for " << mCameraDesc.id;
         return false;
     }
-
     return true;
 }
 
@@ -154,7 +176,6 @@ void RenderDirectView::deactivate() {
     // We can't hold onto it because some other Render object might need the same camera
     mTexture = nullptr;
 }
-
 bool RenderDirectView::drawFrame(const BufferDesc& tgtBuffer) {
     // Tell GL to render to the given buffer
     if (!attachRenderTarget(tgtBuffer)) {
@@ -189,13 +210,25 @@ bool RenderDirectView::drawFrame(const BufferDesc& tgtBuffer) {
     glActiveTexture(GL_TEXTURE0);
     glBindTexture(GL_TEXTURE_2D, mTexture->glId());
 
-    GLint sampler = glGetUniformLocation(mShaderProgram, "tex");
-    if (sampler < 0) {
+    loc = glGetUniformLocation(mShaderProgram, "tex");
+    if (loc < 0) {
         LOG(ERROR) << "Couldn't set shader parameter 'tex'";
         return false;
     } else {
         // Tell the sampler we looked up from the shader to use texture slot 0 as its source
-        glUniform1i(sampler, 0);
+        glUniform1i(loc, 0);
+    }
+
+    if (mDewarpEnabled) {
+        loc = glGetUniformLocation(mShaderProgram, "texDewarpMap");
+        if (loc < 0) {
+            LOG(ERROR) << "Couldn't set shader parameter 'texDewarpMap'";
+            return false;
+        } else {
+            glUniform1i(loc, 1);
+            glActiveTexture(GL_TEXTURE1);
+            glBindTexture(GL_TEXTURE_2D, mDewarpTexture->glId());
+        }
     }
 
     // We want our image to show up opaque regardless of alpha values

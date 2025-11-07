@@ -59,6 +59,7 @@ cc_binary {
         "ImxFakeCamConfig.json",
         "ImxCarFromTop.png",
         "ImxLabeledChecker.png",
+        "dewarp_coords_ox03c20_1920x1280.bin",
     ],
     cflags: [
         "-DLOG_TAG=\"EvsApp\"",
@@ -90,6 +91,12 @@ prebuilt_etc {
 prebuilt_etc {
     name: "ImxLabeledChecker.png",
     src: "res/ImxLabeledChecker.png",
+    sub_dir: "automotive/evs",
+}
+
+prebuilt_etc {
+    name: "dewarp_coords_ox03c20_1920x1280.bin",
+    src: "res/dewarp_coords_ox03c20_1920x1280.bin",
     sub_dir: "automotive/evs",
 }
 

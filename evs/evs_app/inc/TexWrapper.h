@@ -17,6 +17,7 @@
 #define TEXWRAPPER_H
 
 #include <GLES2/gl2.h>
+#include <GLES3/gl3.h>
 
 class TexWrapper {
 public:
@@ -36,5 +37,6 @@ protected:
 };
 
 TexWrapper* createTextureFromPng(const char* filename);
+TexWrapper* createDewarpTexture(const char* filename, uint32_t width, uint32_t height);
 
 #endif  // TEXWRAPPER_H

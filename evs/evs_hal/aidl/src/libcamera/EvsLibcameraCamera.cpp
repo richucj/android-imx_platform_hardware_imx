@@ -692,9 +692,8 @@ void EvsV4lCamera::forwardFrame(EvsV4lCamera::FrameBuffer *aBuff) {
             .deviceId = mDescription.id,
             .timestamp = static_cast<int64_t>(::android::elapsedRealtimeNano() * 1e+3),
         };
-        LOG(WARNING) << __FUNCTION__ << ": bufferDesc mFormat " << static_cast<unsigned>(mFormat) << " handle " << bufferDesc.buffer.handle.toString() << " bufferId " << pBuffer->cookie();
-        auto flag = false;
 
+        auto flag = false;
         if (mEvsStreamClient) {
             mFramesInUse++;
             std::vector<BufferDesc> frames;
@@ -819,8 +818,7 @@ std::shared_ptr<EvsV4lCamera> EvsV4lCamera::Create(
             }
             cfg = (*camCfg)[0];
             evsCamera->mLibcameraCamCfg = std::move(camCfg);
-            evsCamera->mLibCameraStream = *(libCameraStreamSet.begin());
-
+            evsCamera->mLibCameraStream = evsCamera->mLibcameraCamCfg->at(0).stream();
             evsCamera->mFormat = formatV4l2ToAidl(cfg.pixelFormat.fourcc());
             evsCamera->mWidth = cfg.size.width;
             evsCamera->mHeight = cfg.size.height;

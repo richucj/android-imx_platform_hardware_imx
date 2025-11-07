@@ -48,8 +48,10 @@ protected:
     ConfigManager::CameraInfo mCameraInfo;
     aidl::android::hardware::automotive::evs::CameraDesc mCameraDesc;
     const ConfigManager& mConfig;
+    bool mDewarpEnabled;
 
     std::unique_ptr<VideoTex> mTexture;
+    std::unique_ptr<TexWrapper> mDewarpTexture;
 
     GLuint mShaderProgram = 0;
     GLuint mLineShaderProgram = 0;

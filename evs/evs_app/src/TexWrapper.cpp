@@ -1,5 +1,6 @@
 /*
  * Copyright (C) 2017 The Android Open Source Project
+ * Copyright     2025 NXP
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -178,4 +179,115 @@ TexWrapper* createTextureFromPng(const char* filename) {
 
     // Return the texture
     return new TexWrapper(textureId, width, height);
+}
+
+/* Factory to build TexWrapper object for Dewarp map */
+TexWrapper* createDewarpTexture(const char* filename, uint32_t width, uint32_t height) {
+
+    unsigned pixelCnt = width * height;
+    float* map;
+    TexWrapper *retvalNewTexture = nullptr;
+    float max[2] = {0};
+
+    do {
+        // 16b x and y offsets of each pixel.
+        unsigned pixelsToRead = pixelCnt; // Defining here, to use for errorchecking at the end.
+
+        map = new float[pixelCnt * 2];
+        if (map == NULL)
+            break;
+
+        { // Read the dewarp map
+            FILE* file = fopen(filename, "rb");
+            if (file == nullptr)
+                break;
+
+            uint16_t *b = new uint16_t[512];
+            if (b == nullptr)
+                break;
+
+            float *mapWork = map;
+            while (pixelsToRead) {
+                // We read 16b pairs of {uint16_t x, uint16_t y}.
+                unsigned red = fread(b, 4, 512/4, file);
+                if (red == 0) {
+                    break;
+                }
+
+                // Store them as float and find maximums to normalize both arrays.
+                for (unsigned i = 0; i < (2 * red); i += 2) {
+                    float n;
+
+                    n = (float)b[i];
+                    *mapWork++ = n; // Store as float
+                    max[0] = max[0] < n ? n : max[0]; // Find maximum.
+
+                    n = (float)b[i+1];
+                    *mapWork++ = n;
+                    max[1] = max[1] < n ? n : max[1];
+                }
+                if (pixelsToRead < red) {
+                    LOG(ERROR) << "Error: Corrupted coord file, file is too long.\n";
+                    break;
+                }
+                pixelsToRead -= red;
+            }
+            // Close file and read buffer as reading is done. (Could be also upon failure).
+            if (file)
+                fclose(file);
+            else
+                LOG(ERROR) << "Error: Failed to open file " << filename << " because: " << strerror(errno) << "\n";
+
+            if (b)
+                free(b);
+            else
+                LOG(ERROR) << "Error: Not enough memory for b\n";
+
+            // Check if read size matches last as we need close file before exit.
+            if (pixelsToRead > 0) {
+                LOG(ERROR) << "Error: Corrupted file " << pixelsToRead << " pixels missing\n";
+                break;
+            }
+        }
+
+        { // Normalizing to range <0; 1> dividing by maximum values.
+            unsigned floats = pixelCnt * 2;
+            float *mapWork = map;
+
+            for (unsigned cnt = floats; cnt > 0; cnt -= 2 ) {
+                *mapWork++ = *mapWork / max[0];
+                *mapWork++ = *mapWork / max[1];
+            }
+        }
+
+        { // Set up the OpenGL texture to contain this image
+            GLuint textureId;
+            glGenTextures(1, &textureId);
+            glBindTexture(GL_TEXTURE_2D, textureId);
+
+            // Send the image data to GL
+            glTexImage2D(GL_TEXTURE_2D, 0, GL_RG32F, width, height, 0, GL_RG, GL_FLOAT, map);
+
+            // Initialize the sampling properties (it seems the sample may not work if this isn't done)
+            // The user of this texture may very well want to set their own filtering, but we're going
+            // to pay the (minor) price of setting this up for them to avoid the dreaded "black image" if
+            // they forget.
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+
+            // Return value
+            retvalNewTexture = new TexWrapper(textureId, width, height);
+
+            // Clean up
+            glBindTexture(GL_TEXTURE_2D, 0);
+        }
+    } while (0);
+
+    // Having OpenGL texture we don't need it's input buffer anymore.
+    if (map)
+        free(map);
+    else
+        LOG(ERROR) << "Error: Not enough memory for map\n";
+
+    return retvalNewTexture;
 }
