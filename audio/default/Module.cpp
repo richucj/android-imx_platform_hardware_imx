@@ -1367,7 +1367,9 @@ ndk::ScopedAStatus Module::setAudioPortConfigImpl(
                 std::vector<int32_t> gain = out_suggested->gain.value().values;
                 int out_vol_min = mCard->out_volume_min;
                 int out_vol_max = mCard->out_volume_max;
-                int volume = (int)(out_vol_min + ((500.0f + (float)gain[0]) / 500.0f) * (out_vol_max - out_vol_min));
+                float normalizedGain = ((500.0f + (float)gain[0]) / 500.0f);
+                float transformedGain = (float)std::pow(normalizedGain, 0.3);
+                int volume = static_cast<int>(transformedGain * out_vol_max);
 
                 mixer = mixer_open(mCard->card);
                 if (mixer) {
