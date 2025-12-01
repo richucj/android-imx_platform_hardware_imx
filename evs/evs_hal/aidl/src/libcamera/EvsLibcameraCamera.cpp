@@ -683,8 +683,8 @@ void EvsV4lCamera::forwardFrame(EvsV4lCamera::FrameBuffer *aBuff) {
                     .height = static_cast<int32_t>(mHeight),
                     .layers = 1, // TODO - Obtain count (save as a member, get from the buffer).
                     .format = mFormat,
-                    .stride = static_cast<int32_t>(mStride),
                     .usage = static_cast<BufferUsage>(mUsage),
+                    .stride = static_cast<int32_t>(mStride),
                 },
                 .handle = ::android::dupToAidl(pBuffer->handle()),
             },

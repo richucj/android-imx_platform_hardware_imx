@@ -632,10 +632,10 @@ void EvsV4lCamera::forwardFrame(imageBuffer &pV4lBuff, void* pData) {
                                     {
                                             .width = static_cast<int32_t>(mVideo.getWidth()),
                                             .height = static_cast<int32_t>(mVideo.getHeight()),
-                                    .stride = static_cast<int32_t>(mStride),
-                                    .format = static_cast<AidlPixelFormat>(mFormat),
                                             .layers = 1,
+                                            .format = static_cast<AidlPixelFormat>(mFormat),
                                             .usage = static_cast<BufferUsage>(mUsage),
+                                            .stride = static_cast<int32_t>(mStride),
                                     },
                             .handle = ::android::dupToAidl(memHandle),
                     },
