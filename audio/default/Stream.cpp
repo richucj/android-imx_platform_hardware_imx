@@ -336,13 +336,8 @@ StreamInWorkerLogic::Status StreamInWorkerLogic::cycle() {
         case Tag::flush:
             if (mState == StreamDescriptor::State::PAUSED) {
                 if (::android::status_t status = mDriver->flush(); status == ::android::OK) {
-                    if (::android::status_t status = mDriver->standby(); status == ::android::OK) {
-                        populateReply(&reply, mIsConnected);
-                        mState = StreamDescriptor::State::STANDBY;
-                    } else {
-                        LOG(ERROR) << __func__ << ": standby failed: " << status;
-                        mState = StreamDescriptor::State::ERROR;
-                    }
+                    populateReply(&reply, mIsConnected);
+                    mState = StreamDescriptor::State::STANDBY;
                 } else {
                     LOG(ERROR) << __func__ << ": flush failed: " << status;
                     mState = StreamDescriptor::State::ERROR;
@@ -577,7 +572,7 @@ StreamOutWorkerLogic::Status StreamOutWorkerLogic::cycle() {
                         if (asyncCallback == nullptr ||
                             mState != StreamDescriptor::State::DRAIN_PAUSED) {
                             mState = StreamDescriptor::State::PAUSED;
-                        } else {
+                        } else if (mDrainState != DrainState::EN_SENT) {
                             mState = StreamDescriptor::State::TRANSFER_PAUSED;
                         }
                     } else if (mState == StreamDescriptor::State::IDLE ||
@@ -844,6 +839,12 @@ ndk::ScopedAStatus StreamCommonImpl::removeEffect(
     return ndk::ScopedAStatus::fromExceptionCode(EX_UNSUPPORTED_OPERATION);
 }
 
+ndk::ScopedAStatus StreamCommonImpl::createMmapBuffer(MmapBufferDescriptor* _aidl_return) {
+    LOG(DEBUG) << __func__;
+    (void)_aidl_return;
+    return ndk::ScopedAStatus::fromExceptionCode(EX_UNSUPPORTED_OPERATION);
+}
+
 ndk::ScopedAStatus StreamCommonImpl::close() {
     LOG(DEBUG) << __func__;
     if (!isClosed()) {
@@ -876,7 +877,9 @@ void StreamCommonImpl::setWorkerThreadPriority(pid_t workerTid) {
     // FAST workers should be run with a SCHED_FIFO scheduler, however the host process
     // might be lacking the capability to request it, thus a failure to set is not an error.
     if (auto flags = getContext().getFlags();
-        (flags.getTag() == AudioIoFlags::Tag::input) ||
+        (flags.getTag() == AudioIoFlags::Tag::input &&
+         isBitPositionFlagSet(flags.template get<AudioIoFlags::Tag::input>(),
+                              AudioInputFlags::FAST)) ||
         (flags.getTag() == AudioIoFlags::Tag::output &&
          (isBitPositionFlagSet(flags.template get<AudioIoFlags::Tag::output>(),
                                AudioOutputFlags::FAST) ||
@@ -930,12 +933,38 @@ void StreamCommonImpl::stopWorker() {
     mWorkerStopIssued = true;
 }
 
+ndk::ScopedAStatus validateMetadataAttributeTags(const std::vector<std::string>& tags) {
+    for (auto& tag : tags) {
+        if (!common::isVendorExtension(tag)) {
+            LOG(ERROR) << __func__ << ": metadata attribute tag " << tag << " is invalid.";
+            return ndk::ScopedAStatus::fromExceptionCode(EX_ILLEGAL_ARGUMENT);
+        }
+    }
+    return ndk::ScopedAStatus::ok();
+}
+
 ndk::ScopedAStatus StreamCommonImpl::updateMetadataCommon(const Metadata& metadata) {
     LOG(DEBUG) << __func__;
     if (!isClosed()) {
         if (metadata.index() != mMetadata.index()) {
             LOG(FATAL) << __func__ << ": changing metadata variant is not allowed";
         }
+        ndk::ScopedAStatus status = std::visit(
+                [&](const auto& data) -> ndk::ScopedAStatus {
+                    for (const auto& track : data.tracks) {
+                        ndk::ScopedAStatus status = validateMetadataAttributeTags(track.tags);
+                        if (!status.isOk()) {
+                            return status;
+                        }
+                    }
+                    return ndk::ScopedAStatus::ok();
+                },
+                metadata);
+
+        if (!status.isOk()) {
+            return status;
+        }
+
         mMetadata = metadata;
         return ndk::ScopedAStatus::ok();
     }
