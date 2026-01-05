@@ -313,6 +313,15 @@ int32_t ExternalISPWrapper::processAfMode(uint8_t mode, bool force) {
     ALOGV("%s, mode %d, m_lastAfMode %d", __func__, mode, m_lastAfMode);
     if (mode == m_lastAfMode && force == false)
         return 0;
+
+    v4l2_queryctrl queryctrl;
+    ret = queryV4L2Control(m_fd, V4L2_CID_FOCUS_AUTO, queryctrl);
+    if (ret != 0) {
+        ALOGE("%s, control 0x%08x not support!", __func__, V4L2_CID_FOCUS_AUTO);
+        m_lastAfMode = mode;
+        return -1;
+    }
+
     ALOGI("%s: set af mode to %d, force %d", __func__, mode, force);
 
     bool autoFocusMode = false;
@@ -532,8 +541,8 @@ int32_t ExternalISPWrapper::process(CameraMetadata& meta, const char* deviceCard
     // ExposureTime
     entry = meta.find(ANDROID_SENSOR_EXPOSURE_TIME);
     if (entry.count > 0) {
-        // skip for c270 uvc type(card name=UVC Camera) to avoid block issue
-        if (!strstr(deviceCardName, "UVC Camera")) {
+        // skip for c270 uvc type to avoid block issue
+        if (!strstr(deviceCardName, "UVC Camera (046d:0825)")) {
             (void)processExposureTime(entry.data.i64[0]);
         }
     }
@@ -547,13 +556,21 @@ int32_t ExternalISPWrapper::process(CameraMetadata& meta, const char* deviceCard
     // AF
     entry = meta.find(ANDROID_CONTROL_AF_MODE);
     if (entry.count > 0) {
-        (void)processAfMode(entry.data.u8[0]);
+        // Skip c270 as focus adjustment is not supported
+        if (!(strstr(deviceCardName, "UVC Camera (046d:0825)") ||
+              strstr(deviceCardName, "C270 HD WEBCAM"))) {
+            (void)processAfMode(entry.data.u8[0]);
+        }
     }
 
     // Focus Distance
     entry = meta.find(ANDROID_LENS_FOCUS_DISTANCE);
     if (entry.count > 0) {
-        (void)processFocusDistance(entry.data.f[0]);
+        // Skip c270 as focus adjustment is not supported
+        if (!(strstr(deviceCardName, "UVC Camera (046d:0825)") ||
+              strstr(deviceCardName, "C270 HD WEBCAM"))) {
+            (void)processFocusDistance(entry.data.f[0]);
+        }
     }
 
     // brightness

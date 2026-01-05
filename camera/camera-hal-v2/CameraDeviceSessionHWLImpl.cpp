@@ -131,6 +131,7 @@ status_t CameraDeviceSessionHwlImpl::Initialize(uint32_t camera_id,
     mDevPath = pDev->mDevPath;
 
     CameraSensorMetadata *cam_metadata = &(pDev->mSensorData);
+    m_IspWrapper = std::make_unique<ISPWrapper>(cam_metadata);
 
     if ((physical_meta_map_.get() != nullptr) && (!physical_meta_map_->empty())) {
         is_logical_device_ = true;
@@ -233,7 +234,6 @@ CameraDeviceSessionHwlImpl::CameraDeviceSessionHwlImpl(PhysicalMetaMapPtr physic
     camera_ = nullptr;
 
     physical_meta_map_ = std::move(physical_devices);
-    m_IspWrapper = std::make_unique<ISPWrapper>();
 }
 
 CameraDeviceSessionHwlImpl::~CameraDeviceSessionHwlImpl() {
@@ -353,8 +353,18 @@ int32_t CameraDeviceSessionHwlImpl::processFrameBuffer(ImxStreamBuffer *srcBuf,
     ImxStream *srcStream = srcBuf->mStream;
     ImxStream *dstStream = dstBuf->mStream;
 
-    if (srcStream->mWidth == dstStream->mWidth && srcStream->mHeight == dstStream->mHeight &&
-        srcStream->format() == dstStream->format() && srcStream->mZoomRatio <= 1.0)
+    int32_t srcFmt = srcStream->format();
+    int32_t dstFmt = dstStream->format();
+
+    bool bFormatSame = false;
+    if (srcFmt == dstFmt)
+        bFormatSame = true;
+    else if ( ((srcFmt == HAL_PIXEL_FORMAT_YCbCr_420_SP) || (srcFmt == HAL_PIXEL_FORMAT_YCbCr_420_888)) &&
+              ((dstFmt == HAL_PIXEL_FORMAT_YCbCr_420_SP) || (dstFmt == HAL_PIXEL_FORMAT_YCbCr_420_888)) )
+        bFormatSame = true;
+
+    if ((srcStream->mWidth == dstStream->mWidth) && (srcStream->mHeight == dstStream->mHeight) &&
+        bFormatSame && (srcStream->mZoomRatio <= 1.0))
         engine = mCamBlitCopyType;
     else
         engine = mCamBlitCscType;
@@ -674,12 +684,42 @@ status_t CameraDeviceSessionHwlImpl::ConfigLibcameraLocked(uint32_t bufferNum, u
         return -EINVAL;
     }
 
+    // After configure, get the exposure time limits from camera controls
+    const libcamera::ControlInfoMap &controls = camera_->controls();
+    auto exposureTimeIt = controls.find(libcamera::controls::ExposureTime.id());
+    if (exposureTimeIt != controls.end()) {
+        const libcamera::ControlInfo &exposureInfo = exposureTimeIt->second;
+        ALOGI("%s: Exposure time range: min %ld us, max %ld us, default %ld us", __func__,
+              exposureInfo.min().get<int64_t>(), exposureInfo.max().get<int64_t>(),
+              exposureInfo.def().get<int64_t>());
+        m_IspWrapper->m_SensorData->mExposureNsMin =
+                (exposureInfo.min().get<int64_t>()) * NS_PER_US;
+        m_IspWrapper->m_SensorData->mExposureNsMax =
+                (exposureInfo.max().get<int64_t>()) * NS_PER_US;
+    } else {
+        ALOGW("%s: ExposureTime control not found in camera controls", __func__);
+    }
+
     libCameraStreamSet = camera_->streams();
     ALOGI("%s: libCameraStreamSet size %lu, libcameraBuffers %u, previewBuffers %u", __func__,
           libCameraStreamSet.size(), bufferNum, mSensorData.mPreviewBuffers);
 
-    mLibCameraStream = *(libCameraStreamSet.begin());
-    ALOGI("%s: mLibCameraStream %p", __func__, mLibCameraStream);
+    for (auto libcameraStream : libCameraStreamSet) {
+        const libcamera::StreamConfiguration &config = libcameraStream->configuration();
+        ALOGI("%s: check libcamera stream %p, config, format 0x%x, res %dx%d", __func__,
+              libcameraStream, (uint32_t)config.pixelFormat, config.size.width, config.size.height);
+        if ((config.pixelFormat == HalFromat2PixelFormat(format)) &&
+            (config.size.width == configWidth) && (config.size.height == configHeight)) {
+            ALOGI("%s: find the stream", __func__);
+            mLibCameraStream = libcameraStream;
+            break;
+        }
+    }
+
+    if (mLibCameraStream == NULL) {
+        ALOGE("%s: no libcamera stream found", __func__);
+        return -EINVAL;
+    }
 
     // allocate libcamera frame buffers
     uint32_t allocedNum = 0;
@@ -979,10 +1019,11 @@ status_t CameraDeviceSessionHwlImpl::ConfigurePipeline(
         if (stream.format != HAL_PIXEL_FORMAT_BLOB)
             stream.usage |= GRALLOC_USAGE_HW_CAMERA_WRITE;
 
-        if (stream.usage & GRALLOC_USAGE_HW_TEXTURE)
-            stream.usage |= GRALLOC_USAGE_SW_READ_OFTEN;
-
         hal_stream.producer_usage = stream.usage | usage;
+
+        if (hal_stream.producer_usage & GRALLOC_USAGE_HW_TEXTURE)
+            hal_stream.producer_usage |= GRALLOC_USAGE_SW_READ_OFTEN;
+
         hal_stream.consumer_usage = 0;
         hal_stream.id = stream.id;
         hal_stream.override_data_space = stream.data_space;

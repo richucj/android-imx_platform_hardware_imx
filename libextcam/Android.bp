@@ -1,6 +1,6 @@
 //
 // Copyright (C) 2020 The Android Open Source Project
-// Copyright 2023 NXP.
+// Copyright 2023, 2025 NXP.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -50,8 +50,6 @@ cc_library_shared {
         "ExternalCameraOfflineSession.cpp",
         "ExternalCameraUtils.cpp",
         "convert.cpp",
-        "DecoderDev.cpp",
-        "HwDecoder.cpp",
         "ExternalISPWrapper.cpp"
     ],
 
@@ -87,6 +85,7 @@ cc_library_shared {
         "libstagefright_foundation",
         "libbase",
         "libimageprocess",
+        "libcodec2_vndk",
     ],
     static_libs: [
         "android.hardware.camera.common@1.0-helper",
@@ -112,6 +111,10 @@ cc_library_shared {
         "frameworks/native/libs/ui/include",
         "frameworks/native/libs/arect/include",
         "frameworks/native/libs/math/include",
+        "frameworks/av/media/libstagefright/include",
+        "vendor/nxp/imx_android_mm/codec2/video_dec/common",
+        "vendor/nxp/imx_android_mm/codec2/include",
+        "vendor/nxp/imx_android_mm/codec2/base/include",
     ],
 
     export_include_dirs: ["."],
