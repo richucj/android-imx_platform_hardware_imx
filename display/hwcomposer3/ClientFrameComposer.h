@@ -45,7 +45,7 @@ public:
     ClientFrameComposer(ClientFrameComposer&&) = delete;
     ClientFrameComposer& operator=(ClientFrameComposer&&) = delete;
 
-    HWC3::Error init() override;
+    HWC3::Error init(std::shared_ptr<DeviceComposer>& g2d) override;
 
     HWC3::Error registerOnHotplugCallback(const HotplugCallback& cb) override;
 
@@ -58,7 +58,7 @@ public:
     HWC3::Error onDisplayLayerDestroy(Display* display, Layer* layer) override;
 
     HWC3::Error onDisplayClientTargetSet(Display* display) override;
-
+    HWC3::Error onDisplayOutputBufferSet(Display* display) override { return HWC3::Error::None; }
     HWC3::Error onActiveConfigChange(Display* display, int32_t configId) override;
 
     // Determines if this composer can compose the given layers on the given
@@ -85,13 +85,13 @@ public:
         return HWC3::Error::None;
     }
 
-    HWC3::Error startHdcp(Display* display) override;
     HWC3::Error registerOnHdcpChangedCallback(const HdcpChangedCallback& cb) override;
+    HWC3::Error startHdcpNegotiation(
+            Display* display, const aidl::android::hardware::drm::HdcpLevels& levels) override;
 
 private:
     std::tuple<HWC3::Error, DeviceClient*> getDeviceClient(uint32_t displayId);
     HWC3::Error pollDrmThreadCallback(char* file);
-    void hdcpAuthSuccessCallback(Display* display, DisplayConnectionType outType);
 
     struct ValidatedLayers {
         std::unordered_map<uint32_t, Layer*> layersForOverlayPlane; // <planeId, layer>
@@ -119,8 +119,22 @@ private:
     int composeCount = 0;
 #endif
 
+    // HDCP related members
+    struct DisplayHdcpContext {
+        std::unique_ptr<HDCPThread> hdcpThread;
+        DisplayConnectionType connectionType = DisplayConnectionType::INTERNAL;
+        bool hdcpState = false;
+        int64_t hwcId = -1;
+    };
+
     bool mHdcpEnabled = false;
+    std::unordered_map<int64_t, DisplayHdcpContext> mDisplayHdcpContexts;
     std::optional<HdcpChangedCallback> mHdcpChangedCallback;
+    void hdcpAuthSuccessCallback(int64_t displayId, DisplayConnectionType outType);
+    HWC3::Error initHdcpForDisplay(int64_t displayId, int64_t hwcId,
+                                   DisplayConnectionType connectionType);
+    HWC3::Error destroyHdcpForDisplay(int64_t displayId);
+    void notifyFrameworkHdcpState(int64_t displayId, bool state, bool isPrimary);
 };
 
 } // namespace aidl::android::hardware::graphics::composer3::impl

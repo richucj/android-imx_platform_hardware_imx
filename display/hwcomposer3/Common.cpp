@@ -1,6 +1,6 @@
 /*
  * Copyright 2022 The Android Open Source Project
- * Copyright 2023-2024 NXP
+ * Copyright 2023-2025 NXP
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -69,6 +69,13 @@ std::string getFramebufferFormat() {
     return format;
 }
 
+int getMaxG2dInterCompositionResult() {
+    std::string count = ::android::base::GetProperty("vendor.hwc.max_g2d_inter_composition", "2");
+    DEBUG_LOG("%s: property vendor.hwc.max_g2d_inter_composition is %s", __FUNCTION__,
+              count.c_str());
+    return atoi(count.c_str());
+}
+
 std::string toString(HWC3::Error error) {
     switch (error) {
         case HWC3::Error::None:
@@ -106,12 +113,12 @@ bool customizeGUIResolution(uint32_t &width, uint32_t &height, uint32_t *uiType)
     property_get("ro.boot.gui_resolution", value, "p");
     DEBUG_LOG("%s: sysprop ro.boot.gui_resolution is %s", __FUNCTION__, value);
 
-    if (!strncmp(value, "shw", 3) && (sscanf(value, "shw%[0-9]x%[0-9]", w_buf, h_buf) == 2)) {
+    if (!strncmp(value, "shw", 3) && (sscanf(value, "shw%9[0-9]x%9[0-9]", w_buf, h_buf) == 2)) {
         w = static_cast<uint32_t>(std::stoul(w_buf));
         h = static_cast<uint32_t>(std::stoul(h_buf));
         *uiType = UI_SCALE_HARDWARE;
     } else if (!strncmp(value, "ssw", 3) &&
-               (sscanf(value, "ssw%[0-9]x%[0-9]", w_buf, h_buf) == 2)) {
+               (sscanf(value, "ssw%9[0-9]x%9[0-9]", w_buf, h_buf) == 2)) {
         w = static_cast<uint32_t>(std::stoul(w_buf));
         h = static_cast<uint32_t>(std::stoul(h_buf));
         *uiType = UI_SCALE_SOFTWARE;
@@ -291,7 +298,7 @@ static void dump_frame_to_file(void *pbuf, int size, char *filename) {
     }
 }
 
-static void dump_frame(buffer_handle_t handle, std::string prefix, uint32_t count, uint32_t index) {
+static void dump_frame(buffer_handle_t handle, std::string prefix, uint32_t count, int64_t index) {
     HandleInfo info;
     if (handle == nullptr || (getInfoFromHandle(handle, &info) != 0)) {
         ALOGE("%s: invalid native handle", __FUNCTION__);
@@ -302,7 +309,7 @@ static void dump_frame(buffer_handle_t handle, std::string prefix, uint32_t coun
     memset(filename, 0, 128);
     char *sequence = (char *)&(info.drm_format);
     std::string s(sequence, 4);
-    sprintf(filename, "/data/vendor/hwc/%s-%d-%s-%dx%d-%d.dat", prefix.c_str(), count, s.c_str(),
+    sprintf(filename, "/data/vendor/hwc/%s-%d-%s-%dx%d-%ld.dat", prefix.c_str(), count, s.c_str(),
             info.stride, info.height, index);
 
     if (info.base == 0) {
@@ -331,16 +338,12 @@ static void dump_frame(buffer_handle_t handle, std::string prefix, uint32_t coun
 }
 
 static bool start_dump = false;
-static bool dump_frame_last = false;
 static int dumpped_count = 0;
-void debug_dump_framebuffer(buffer_handle_t handle) {
+static int request_frame_count = 0;
+void prepare_dump_buffer(void) {
     static int prev_request_frame_count = 0;
-    static int request_frame_count = 0;
 
     if (!start_dump) {
-#ifdef DEBUG_DUMP_LAYER_BUFFER
-        dump_frame_last = false;
-#endif
         char value[PROPERTY_VALUE_MAX];
         property_get("vendor.hwc.debug.dump_frame", value, "0");
         request_frame_count = atoi(value);
@@ -354,23 +357,22 @@ void debug_dump_framebuffer(buffer_handle_t handle) {
         else
             start_dump = false;
     }
-
+}
+// dump framebuffer should be later than layer
+void debug_dump_framebuffer(buffer_handle_t handle) {
     if ((start_dump) && (request_frame_count >= 1)) {
-        dump_frame(handle, "fb", ++dumpped_count, 0);
+        dump_frame(handle, "fb", dumpped_count++, 0);
 
         request_frame_count--;
         if (request_frame_count == 0) {
             start_dump = false;
-#ifdef DEBUG_DUMP_LAYER_BUFFER
-            dump_frame_last = true;
-#endif
             property_set("vendor.hwc.debug.dump_frame", "0"); // disable dump when completed
         }
     }
 }
-#ifdef DEBUG_DUMP_LAYER_BUFFER
-void debug_dump_layerbuffer(buffer_handle_t handle, uint32_t index) {
-    if (start_dump || dump_frame_last) {
+#if defined(DEBUG_DUMP_LAYER_BUFFER) || defined(DEBUG_DUMP_G2D_INTER_COMPOSITION)
+void debug_dump_layerbuffer(buffer_handle_t handle, int64_t index) {
+    if (start_dump) {
         dump_frame(handle, "layer", dumpped_count, index);
     }
 }

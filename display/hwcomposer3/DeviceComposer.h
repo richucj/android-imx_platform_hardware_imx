@@ -34,11 +34,45 @@ typedef int (*hwc_func4)(void* handle, void* arg1, void* arg2, void* arg3);
 typedef int (*hwc_func5)(void* handle, void* arg1, void* arg2, void* arg3, void* arg4);
 typedef void* (*hwc_buf_func)(void* arg1);
 
+struct G2dInterLayer {
+    int64_t id;
+    int32_t zorder;
+    uint8_t alpha;
+    Composition type;
+    common::BlendMode mode;
+    common::Rect drect;
+    common::Rect srect;
+    common::Transform transform;
+    std::vector<common::Rect>* visible;
+    common::Rect visibleRect;
+    Layer* priv;
+    uint32_t keep_count;
+    uint64_t buffer_id;
+};
+
+#define LAYER_LEAST_KEEP_CNT 10
+#define LAYER_LEAST_ADJACENT_CNT 2
+#define G2D_INTERLAYER_ID (-1)
 enum {
-    G2D_CACHE_TYPE_NONE,
-    G2D_CACHE_TYPE_SCALING,
-    G2D_CACHE_TYPE_ROTATION,
-    G2D_CACHE_TYPE_CSC, // format conversion
+    INTER_STATE_INVALID = 0,
+    INTER_STATE_VALIDATED,
+    INTER_STATE_COMPOSED,
+};
+struct G2dInterComposition {
+    buffer_handle_t hnd; // buffer that store intermediate composition reault
+    HandleInfo info;
+    uint32_t state;
+    int32_t zorder;
+    std::vector<int64_t> composedIds;
+    std::vector<common::Rect> visible;
+    G2dInterLayer interlayer;
+};
+
+enum {
+    G2D_CONVERSION_TYPE_NONE,
+    G2D_CONVERSION_TYPE_SCALING,
+    G2D_CONVERSION_TYPE_ROTATION,
+    G2D_CONVERSION_TYPE_CSC, // format conversion
 };
 
 struct G2dInterBuffer {
@@ -51,9 +85,14 @@ struct G2dInterBuffer {
 
 struct G2dBuffer {
     buffer_handle_t hnd;
-    HandleInfo info;
+    HandleInfo* infoPtr;
     uint64_t originPhys; // used in lockSurface()/unlockSurface()
-    G2dInterBuffer* interPtr;
+    bool isInterComposition;
+    G2dInterBuffer* interPtr; // convert layer buffer(format/size/...)
+    G2dInterLayer* layer;     // cache composition result of some layers
+};
+struct G2dCachedBuffer : G2dBuffer {
+    HandleInfo info;
 };
 
 using ::android::Mutex;
@@ -64,6 +103,7 @@ public:
     ~DeviceComposer();
 
     bool isValid();
+    bool prefered() { return mG2dPrefered; }
     int alignTile(int* width, int* height, int format, int usage);
 
     bool checkMustDeviceComposition(Layer* layer);
@@ -73,20 +113,31 @@ public:
                                  bool secure);
     int freeDeviceFrameBuffer(std::vector<buffer_handle_t>& buffers);
     int freeSolidColorBuffer();
-    int onLayerDestroy(Layer* layer);
+    int onDisplayCreate(uint32_t displayId);
+    int onDisplayDestroy(uint32_t displayId);
+    int onDisplayLayerDestroy(uint32_t displayId, Layer* layer);
 
-    std::tuple<bool, ::android::base::unique_fd> composeLayers(std::vector<Layer*> layers,
+    int convertBuffer(buffer_handle_t inBuf, HandleInfo* inInfoPtr, buffer_handle_t outBuf,
+                      HandleInfo* outInfoPtr, bool useOcl);
+    std::tuple<bool, ::android::base::unique_fd> composeLayers(uint32_t displayId,
+                                                               std::vector<Layer*>& layers,
                                                                buffer_handle_t target);
 
 private:
     void* getHandle();
 
     // clear worm hole introduced by layers not cover whole screen.
-    int clearWormHole(std::vector<Layer*>& layers, G2dBuffer& target);
+    int clearWormHole(uint32_t displayId, std::vector<int64_t>& layerIds, G2dBuffer& target);
     G2dInterBuffer* preComposition(Layer* layer, buffer_handle_t handle);
     // compose display layer.
-    int composeLayerLocked(Layer* layer, G2dBuffer& layerBuffer, G2dBuffer& targetBuffer,
-                           bool bypass);
+    int composeLayerLocked(G2dBuffer& layerBuffer, G2dBuffer& targetBuffer, bool bypass);
+    std::optional<std::vector<int64_t>> cacheG2dLayersStats(uint32_t displayId,
+                                                            std::vector<Layer*>& layers);
+    int composeInterLayer(uint32_t displayId, int64_t interId,
+                          G2dInterComposition& interComposition);
+    void composeG2dLayers(uint32_t displayId, std::vector<int64_t>& layerIds,
+                          G2dBuffer& targetBuffer);
+
     // sync 2D blit engine.
     int finishComposite();
     bool isFeatureSupported(g2d_feature feature);
@@ -99,7 +150,7 @@ private:
                         struct g2d_surface& dst);
     int prepareSolidColorBuffer(G2dBuffer& target);
     int prepareG2dTempBuffer(G2dBuffer& srcBuffer, uint32_t newFormat, G2dBuffer* tempBuffer);
-    int clearRect(G2dBuffer& buff, common::Rect& rect);
+    int clearRect(G2dBuffer& buff, common::Rect& rect, uint32_t color);
 
     int getAlignedSize(G2dBuffer& buff, int* width, int* height);
     int getFlipOffset(G2dBuffer& buff, uint32_t* offset);
@@ -129,9 +180,18 @@ private:
 
     bool mG2dPrefered;
 
-    G2dBuffer mTarget;
-    G2dBuffer mSolidColorBuffer;
-    std::unordered_map<uint64_t, G2dInterBuffer> mG2dCachedBuffers;
+    G2dCachedBuffer mTarget;
+    G2dCachedBuffer mSolidColorBuffer;
+    std::unordered_map<uint64_t, G2dInterBuffer> mInterBuffers; // used for conversion in layer
+
+    struct G2dCachedDisplay {
+        std::unordered_map<int64_t, G2dInterLayer> cachedLayers;
+        std::unordered_map<int64_t, G2dInterComposition> cachedCompositions;
+    };
+    std::unordered_map<uint32_t, G2dCachedDisplay> mCachedDisplays;
+
+    int64_t mInterId = G2D_INTERLAYER_ID;
+    size_t mInterCount = 0;
 
     hwc_func3 mGetAlignedSize;
     hwc_func2 mGetFlipOffset;

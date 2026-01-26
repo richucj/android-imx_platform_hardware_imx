@@ -17,6 +17,7 @@
 #include "OpenCLConverter.h"
 
 #include <dlfcn.h>
+#include <drm_fourcc.h>
 #include <graphics_ext.h>
 #include <log/log.h>
 #include <vndksupport/linker.h>
@@ -45,7 +46,11 @@ OclConverter::OclConverter() {
         ALOGE("%s: dlsym failed, err: %s", __func__, dlerror());
     }
 
+#ifdef G2D_OCL_WITH_DMA_BUF
+    mOclBufferType = OCL_MEM_TYPE_DEVICE;
+#else
     mOclBufferType = OCL_MEM_TYPE_GPU;
+#endif
 }
 
 OclConverter::~OclConverter() {
@@ -81,36 +86,41 @@ bool OclConverter::isValid() {
 
 void OclConverter::G2dBufferToOclFormat(G2dBuffer &buff, OCL_FORMAT &oclFormat) {
     OCL_PIXEL_FORMAT oclPixelFormat;
-    switch (buff.info.format) {
-        case HAL_PIXEL_FORMAT_YCbCr_420_888:
-        case HAL_PIXEL_FORMAT_YCbCr_420_SP:
+    switch (buff.infoPtr->drm_format) {
+        case DRM_FORMAT_NV12:
             oclPixelFormat = OCL_FORMAT_NV12;
             break;
-        case HAL_PIXEL_FORMAT_YCbCr_422_I:
+        case DRM_FORMAT_YUYV:
             oclPixelFormat = OCL_FORMAT_YUYV;
             break;
-        case HAL_PIXEL_FORMAT_YCbCr_422_SP:
+        case DRM_FORMAT_NV16:
             oclPixelFormat = OCL_FORMAT_NV16;
             break;
-        case HAL_PIXEL_FORMAT_P010_TILED:
-            oclPixelFormat = OCL_FORMAT_NV15_TILED;
+        case DRM_FORMAT_NV15:
+            if (buff.infoPtr->modifier != DRM_FORMAT_MOD_LINEAR)
+                oclPixelFormat = OCL_FORMAT_NV15_TILED;
+            else
+                oclPixelFormat = OCL_FORMAT_NV15;
+            break;
+        case DRM_FORMAT_ABGR8888:
+            oclPixelFormat = OCL_FORMAT_RGBA8888;
             break;
         default:
             ALOGW("%s: unsupported pixel format 0x%x, use OCL_FORMAT_YUYV by default", __func__,
-                  buff.info.format);
+                  buff.infoPtr->format);
             oclPixelFormat = OCL_FORMAT_YUYV;
             break;
     }
 
     oclFormat.format = oclPixelFormat;
-    oclFormat.width = buff.info.width;
-    oclFormat.height = buff.info.height;
-    oclFormat.stride = buff.info.stride;
-    oclFormat.sliceheight = buff.info.height;
+    oclFormat.width = buff.infoPtr->width;
+    oclFormat.height = buff.infoPtr->height;
+    oclFormat.stride = buff.infoPtr->stride;
+    oclFormat.sliceheight = buff.infoPtr->height;
     oclFormat.left = 0;
     oclFormat.top = 0;
-    oclFormat.right = buff.info.width;
-    oclFormat.bottom = buff.info.height;
+    oclFormat.right = buff.infoPtr->width;
+    oclFormat.bottom = buff.infoPtr->height;
     oclFormat.colorspace = OCL_COLORSPACE_BT709;
 
     return;
@@ -135,20 +145,20 @@ void OclConverter::G2dBufferToOclBuffer(G2dBuffer &buff, OCL_BUFFER &oclBuf, OCL
 
     if (mOclBufferType == OCL_MEM_TYPE_GPU) {
         for (int i = 0; i < oclBuf.plane_num; i++) {
-            oclBuf.planes[i].paddr = (long long)buff.info.phys + (long long)offset;
+            oclBuf.planes[i].paddr = (long long)buff.infoPtr->phys + (long long)offset;
             oclBuf.planes[i].size = plane_info.plane_size[i];
             offset += oclBuf.planes[i].size;
         }
     } else if (mOclBufferType == OCL_MEM_TYPE_DEVICE) {
         for (int i = 0; i < oclBuf.plane_num; i++) {
-            oclBuf.planes[i].fd = (long long)buff.info.fd;
+            oclBuf.planes[i].fd = (long long)buff.infoPtr->fd;
             oclBuf.planes[i].offset = (long long)offset;
-            oclBuf.planes[i].size = plane_info.plane_size[i] + offset;
+            oclBuf.planes[i].size = plane_info.plane_size[i];
             offset += oclBuf.planes[i].size;
         }
     } else {
         for (int i = 0; i < oclBuf.plane_num; i++) {
-            oclBuf.planes[i].vaddr = (long long)buff.info.base + offset;
+            oclBuf.planes[i].vaddr = (long long)buff.infoPtr->base + offset;
             oclBuf.planes[i].size = plane_info.plane_size[i];
             offset += oclBuf.planes[i].size;
         }
@@ -161,8 +171,11 @@ int OclConverter::openclConvert(G2dBuffer &srcBuf, G2dBuffer &dstBuf) {
     int status = G2D_STATUS_OK;
     int ret = 0;
 
-    if ((srcBuf.hnd == nullptr) || (dstBuf.hnd == nullptr))
+    if ((srcBuf.hnd == nullptr) || (srcBuf.infoPtr == nullptr) || (dstBuf.hnd == nullptr) ||
+        (dstBuf.infoPtr == nullptr)) {
+        ALOGE("%s: invalid input parameters", __func__);
         return G2D_STATUS_FAIL;
+    }
 
     OCL_FORMAT inFormat;
     OCL_FORMAT outFormat;

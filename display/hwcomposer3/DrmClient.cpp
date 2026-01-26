@@ -217,7 +217,7 @@ bool DrmClient::loadDrmDisplays(uint32_t displayBaseId) {
 
     ALOGI("%s: there are %zu crtcs, %zu connectors, %zu planes in DrmClient:%d", __FUNCTION__,
           crtcs.size(), connectors.size(), planes.size(), mFd.get());
-    if (crtcs.size() < connectors.size()) {
+    if (crtcs.size() < connectors.size() || connectors.size() == 0) {
         ALOGE("%s: Failed assumption mCrtcs.size():%zu larger than or equal mConnectors.size():%zu",
               __FUNCTION__, crtcs.size(), connectors.size());
         return false;
@@ -635,6 +635,13 @@ HWC3::Error DrmClient::checkOverlayLimitation(uint32_t displayId, Layer* layer) 
                   __FUNCTION__, layer->getId(), srcW, srcH);
         return HWC3::Error::Unsupported;
     }
+
+    if (srect.left != 0 || srect.top != 0) {
+        // The overlay plane has some limitation for uv address, need to make sure crop=(0,0,x,x)
+        DEBUG_LOG("%s: layer %" PRId64 " source crop(%d, %d, %d, %d) check failed", __FUNCTION__,
+                  layer->getId(), srect.left, srect.top, srect.right, srect.bottom);
+        return HWC3::Error::Unsupported;
+    }
 #endif
     DEBUG_LOG("%s: Overlay check pass for layer=%" PRId64, __FUNCTION__, layer->getId());
 
@@ -825,11 +832,10 @@ HWC3::Error DrmClient::setSecureMode(uint32_t displayId, bool secure) {
 int DrmClient::loadBacklightDevices() {
     struct dirent** dirEntry = nullptr;
     std::string path("/sys/class/backlight/");
-    int count = -1;
     mBacklight.path = "";
     mBacklight.maxBrightness = -1;
 
-    count = scandir(path.c_str(), &dirEntry, 0, alphasort);
+    int count = scandir(path.c_str(), &dirEntry, 0, alphasort);
     if (count < 0) {
         ALOGE("%s: Cannot find any backlight device in '%s'", __FUNCTION__, path.c_str());
     }
@@ -1017,5 +1023,13 @@ HWC3::Error DrmClient::waitVBlank(uint32_t displayId, int64_t* timestamp) {
             (int64_t)vblank.reply.tval_sec * nsecsPerSec + (int64_t)vblank.reply.tval_usec * 1000;
 
     return HWC3::Error::None;
+}
+
+bool DrmClient::isSecureDisplay(int64_t displayId) {
+    if (mDisplays[displayId]->isSecureDisplay()) {
+        return true;
+    } else {
+        return false;
+    }
 }
 } // namespace aidl::android::hardware::graphics::composer3::impl

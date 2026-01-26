@@ -104,7 +104,7 @@ HWC3::Error ClientFrameComposer::pollDrmThreadCallback(char* file) {
                     ALOGE("%s: connector exist, but not connect display.", __FUNCTION__);
                     continue;
                 }
-                for (const HalMultiConfigs deviceConfig : deviceConfigs) {
+                for (const HalMultiConfigs& deviceConfig : deviceConfigs) {
                     auto cfg = std::make_unique<HalMultiConfigs>(std::move(deviceConfig));
                     if (mHotplugCallback) {
                         (*mHotplugCallback)(true, std::move(cfg));
@@ -122,7 +122,7 @@ HWC3::Error ClientFrameComposer::pollDrmThreadCallback(char* file) {
     return HWC3::Error::NoResources;
 }
 
-HWC3::Error ClientFrameComposer::init() {
+HWC3::Error ClientFrameComposer::init(std::shared_ptr<DeviceComposer>& g2d) {
     DEBUG_LOG("%s", __FUNCTION__);
 
     HWC3::Error ret;
@@ -152,10 +152,9 @@ HWC3::Error ClientFrameComposer::init() {
         mDrmThread->start("/dev/dri");
     }
 
-    mG2dComposer = std::make_shared<DeviceComposer>();
-    if (mG2dComposer->isValid()) {
-    }
-
+    mG2dComposer = g2d;
+    if (!mG2dComposer->isValid())
+        ALOGW("%s: G2D composition is not valid", __FUNCTION__);
     mHdcpEnabled = IsHdcpUserEnabled();
 
     return HWC3::Error::None;
@@ -179,22 +178,73 @@ HWC3::Error ClientFrameComposer::unregisterOnHotplugCallback() {
     return HWC3::Error::None;
 }
 
-void ClientFrameComposer::hdcpAuthSuccessCallback(Display* display, DisplayConnectionType outType) {
-    const auto displayId = display->getId();
+void ClientFrameComposer::hdcpAuthSuccessCallback(int64_t displayId,
+                                                  DisplayConnectionType outType) {
+    DEBUG_LOG("%s: display:%" PRId64, __FUNCTION__, displayId);
+
     auto [error, client] = getDeviceClient(displayId);
     if (error != HWC3::Error::None) {
-        ALOGE("%s: display:%d cannot find Drm Client", __FUNCTION__, displayId);
+        ALOGE("%s: display:%" PRId64 " cannot find Drm Client", __FUNCTION__, displayId);
         return;
     }
 
-    display->setHdcpThreadEnable(false);
+    auto it = mDisplayHdcpContexts.find(displayId);
+    if (it == mDisplayHdcpContexts.end()) {
+        ALOGE("%s: display:%" PRId64 " HDCP context not found", __FUNCTION__, displayId);
+        return;
+    }
+
+    auto& hdcpContext = it->second;
+    if (hdcpContext.hdcpThread) {
+        hdcpContext.hdcpThread->setHdcpThreadEnabled(false);
+    }
+
     if (outType == DisplayConnectionType::EXTERNAL) {
         client->setSecureMode(displayId, false);
-        display->setHdcpThreadEnable(false);
-    } else {
-        display->setHdcpThreadEnable(false);
     }
-    display->setHdcpState(false, outType != DisplayConnectionType::EXTERNAL);
+
+    notifyFrameworkHdcpState(displayId, false, outType != DisplayConnectionType::EXTERNAL);
+}
+
+HWC3::Error ClientFrameComposer::initHdcpForDisplay(int64_t displayId, int64_t hwcId,
+                                                    DisplayConnectionType connectionType) {
+    DEBUG_LOG("%s: display:%" PRId64, __FUNCTION__, displayId);
+
+    // Create HDCP context
+    auto& hdcpContext = mDisplayHdcpContexts[displayId];
+    hdcpContext.connectionType = connectionType;
+    hdcpContext.hwcId = hwcId;
+    hdcpContext.hdcpThread = std::make_unique<HDCPThread>(displayId);
+
+    // Set callbacks
+    auto authCallback = [this, displayId, connectionType]() {
+        hdcpAuthSuccessCallback(displayId, connectionType);
+    };
+    hdcpContext.hdcpThread->setCallbacks(authCallback);
+
+    // Start HDCP thread
+    hdcpContext.hdcpThread->start();
+    hdcpContext.hdcpThread->setHdcpThreadEnabled(true);
+
+    // Set initial HDCP state
+    bool isPrimary = (connectionType == DisplayConnectionType::INTERNAL);
+    notifyFrameworkHdcpState(displayId, true, isPrimary);
+
+    return HWC3::Error::None;
+}
+
+HWC3::Error ClientFrameComposer::destroyHdcpForDisplay(int64_t displayId) {
+    DEBUG_LOG("%s: display:%" PRId64, __FUNCTION__, displayId);
+
+    auto it = mDisplayHdcpContexts.find(displayId);
+    if (it != mDisplayHdcpContexts.end()) {
+        if (it->second.hdcpThread) {
+            it->second.hdcpThread->stop();
+        }
+        mDisplayHdcpContexts.erase(it);
+    }
+
+    return HWC3::Error::None;
 }
 
 HWC3::Error ClientFrameComposer::onDisplayCreate(Display* display) {
@@ -221,24 +271,21 @@ HWC3::Error ClientFrameComposer::onDisplayCreate(Display* display) {
         display->setEdid(*edid);
     }
 
-    // set hdcp thread callback
+    int64_t hwcId = display->getHwcId();
+    // Initialize HDCP for this display
     if (mHdcpEnabled) {
         DisplayConnectionType connectionType = DisplayConnectionType::INTERNAL;
         error = client->getDisplayConnectionType(displayId, &connectionType);
-        if (error != HWC3::Error::None) {
-           return error;
+        if (error == HWC3::Error::None) {
+            if (client->isSecureDisplay(displayId)) {
+                ALOGI("Display %d support HDCP, start hdcp", displayId);
+                initHdcpForDisplay(displayId, hwcId, connectionType);
+                client->setSecureMode(displayId, true);
+            }
         }
-        auto Callback = [this, outType = connectionType](Display* display) {
-            return hdcpAuthSuccessCallback(display, outType);
-        };
-        display->setHdcpCallback(Callback);
-        if (mHdcpChangedCallback.has_value()) {
-            display->setHdcpChangedCallback(*mHdcpChangedCallback);
-        }
-        display->setHdcpThreadEnable(true);
-        display->setHdcpState(true, connectionType == DisplayConnectionType::INTERNAL);
-        client->setSecureMode(displayId, true);
     }
+
+    mG2dComposer->onDisplayCreate(displayId);
 
     return HWC3::Error::None;
 }
@@ -258,9 +305,13 @@ HWC3::Error ClientFrameComposer::onDisplayDestroy(Display* display) {
         return error;
     }
 
+    mG2dComposer->onDisplayDestroy(displayId);
     client->resetDisplayConfig(displayId);
 
     mDisplayBuffers.erase(it);
+
+    // Destroy HDCP for this display
+    destroyHdcpForDisplay(displayId);
 
     return HWC3::Error::None;
 }
@@ -279,7 +330,7 @@ HWC3::Error ClientFrameComposer::onDisplayLayerDestroy(Display* display, Layer* 
         client->setHdrMetadata(displayId, NULL); // reset the HDR metadata state
     }
 
-    mG2dComposer->onLayerDestroy(layer);
+    mG2dComposer->onDisplayLayerDestroy(displayId, layer);
 
     return HWC3::Error::None;
 }
@@ -451,7 +502,7 @@ HWC3::Error ClientFrameComposer::validateDisplay(Display* display, DisplayChange
 
     if (!mG2dComposer->isValid() ||
         (!mustDeviceComposition &&
-         (!deviceComposition || fallBackToClient ||
+         (!(deviceComposition && mG2dComposer->prefered()) || fallBackToClient ||
           display->getColorTransformHint() != common::ColorTransform::IDENTITY))) {
         /* currently Device Composer(G2D/DPU) cannot process color transform */
         for (auto& layer : layersForComposition) {
@@ -513,6 +564,10 @@ HWC3::Error ClientFrameComposer::presentDisplay(
         return error;
     }
 
+#ifdef DEBUG_DUMP_FRAME
+    buffer_handle_t dumpBuffer = NULL;
+    prepare_dump_buffer(); // check property if need to dump or not
+#endif
     ::android::base::unique_fd fbInFence; // in fence of framebuffer that pass to DRM
     int32_t activeConfigId = -1;
     if (display->getActiveConfig(&activeConfigId) != HWC3::Error::None) {
@@ -552,12 +607,13 @@ HWC3::Error ClientFrameComposer::presentDisplay(
             }
         }
     }
+
     if (!hasSecureLayer && mHdcpEnabled && layersForOverlay.size() > 0) {
-        DisplayConnectionType outType = DisplayConnectionType::INTERNAL;
-        client->getDisplayConnectionType(displayId, &outType);
-        if (outType == DisplayConnectionType::EXTERNAL) {
+        auto it = mDisplayHdcpContexts.find(displayId);
+        if (it != mDisplayHdcpContexts.end() &&
+            it->second.connectionType == DisplayConnectionType::EXTERNAL) {
             client->setSecureMode(displayId, false);
-            display->setHdcpState(false, false);
+            notifyFrameworkHdcpState(displayId, false, false);
         }
     }
 
@@ -580,7 +636,8 @@ HWC3::Error ClientFrameComposer::presentDisplay(
 #ifdef DEBUG_DUMP_G2D_CONSUMPTION
         nsecs_t composeStart = systemTime(CLOCK_MONOTONIC);
 #endif
-        auto [ret, composeFence] = mG2dComposer->composeLayers(layersForComposition, renderTarget);
+        auto [ret, composeFence] =
+                mG2dComposer->composeLayers(displayId, layersForComposition, renderTarget);
 #ifdef DEBUG_DUMP_G2D_CONSUMPTION
         nsecs_t composeEnd = systemTime(CLOCK_MONOTONIC);
         totalCostTime += composeEnd - composeStart;
@@ -616,26 +673,12 @@ HWC3::Error ClientFrameComposer::presentDisplay(
         }
         displayBuffer.clientTargetDrmBuffer = std::move(drmBuffer);
 #ifdef DEBUG_DUMP_FRAME
-        if (fbInFence.ok()) {
-            int err = sync_wait(fbInFence.get(), 3000);
-            if (err < 0 && errno == ETIME) {
-                ALOGE("%s waited on g2d fence %" PRId32 " for 3000 ms", __FUNCTION__,
-                      fbInFence.get());
-            }
-        }
-        debug_dump_framebuffer(renderTarget);
+        dumpBuffer = renderTarget;
 #endif
     } else if (displayBuffer.clientTargetDrmBuffer) {
         fbInFence = std::move(display->getClientTarget().getFence());
 #ifdef DEBUG_DUMP_FRAME
-        if (fbInFence.ok()) {
-            int err = sync_wait(fbInFence.get(), 3000);
-            if (err < 0 && errno == ETIME) {
-                ALOGE("%s waited on gpu fence %" PRId32 " for 3000 ms", __FUNCTION__,
-                      fbInFence.get());
-            }
-        }
-        debug_dump_framebuffer(display->getClientTarget().getBuffer());
+        dumpBuffer = display->getClientTarget().getBuffer();
 #endif
     } else if (luckyLayer != nullptr) {
         common::Rect rectFrame = luckyLayer->getDisplayFrame();
@@ -651,7 +694,7 @@ HWC3::Error ClientFrameComposer::presentDisplay(
         displayBuffer.clientTargetDrmBuffer = drmBuffer;
         fbInFence = ::android::base::unique_fd(); // not need in fence
 #ifdef DEBUG_DUMP_FRAME
-        debug_dump_framebuffer(buffer);
+        dumpBuffer = buffer;
 #endif
     } else {
         fbInFence = ::android::base::unique_fd(); // not need in fence
@@ -672,12 +715,18 @@ HWC3::Error ClientFrameComposer::presentDisplay(
             common::Rect rectFrame = layer->getDisplayFrame();
             common::Rect rectSource = layer->getSourceCropInt();
             std::vector<buffer_handle_t> buffers;
-            mG2dComposer->prepareDeviceFrameBuffer(static_cast<uint32_t>(rectFrame.right -
-                                                                         rectFrame.left),
-                                                   static_cast<uint32_t>(rectFrame.bottom -
-                                                                         rectFrame.top),
-                                                   static_cast<int>(common::PixelFormat::RGBA_8888),
-                                                   buffers, 1, false);
+            uint32_t width = static_cast<uint32_t>(rectFrame.right - rectFrame.left);
+            uint32_t height = static_cast<uint32_t>(rectFrame.bottom - rectFrame.top);
+            auto ret =
+                    mG2dComposer->prepareDeviceFrameBuffer(width, height,
+                                                           static_cast<int>(
+                                                                   common::PixelFormat::RGBA_8888),
+                                                           buffers, 1, false);
+            if (ret) {
+                ALOGE("%s: display:%d failed to allocate buffer", __FUNCTION__, displayId);
+                return HWC3::Error::NoResources;
+            }
+
             auto [createError, drmBuffer] =
                     client->create(buffers[0], rectFrame, rectSource, DRM_BUFFER_NONE);
             if (createError != HWC3::Error::None) {
@@ -726,6 +775,7 @@ HWC3::Error ClientFrameComposer::presentDisplay(
     }
     *outDisplayFence = std::move(flushCompleteFence);
 
+#ifdef DEBUG_DUMP_FRAME
 #ifdef DEBUG_DUMP_LAYER_BUFFER
     const std::vector<Layer*>& layers = display->getOrderedLayers();
     for (Layer* layer : layers) {
@@ -734,6 +784,15 @@ HWC3::Error ClientFrameComposer::presentDisplay(
             debug_dump_layerbuffer(buff, layer->getId());
     }
 #endif
+    if (fbInFence.ok()) {
+        int err = sync_wait(fbInFence.get(), 3000);
+        if (err < 0 && errno == ETIME) {
+            ALOGE("%s waited on g2d fence %" PRId32 " for 3000 ms", __FUNCTION__, fbInFence.get());
+        }
+    }
+    debug_dump_framebuffer(dumpBuffer);
+#endif
+
     displayBuffer.clientTargetDrmBuffer = nullptr;
     displayBuffer.planeDrmBuffer.clear();
 
@@ -858,22 +917,82 @@ HWC3::Error ClientFrameComposer::waitHardwareVsyncTimestamp(Display* display, in
     return client->waitVBlank(displayId, timestamp);
 }
 
-HWC3::Error ClientFrameComposer::startHdcp(Display* display) {
+HWC3::Error ClientFrameComposer::registerOnHdcpChangedCallback(const HdcpChangedCallback& cb) {
+    mHdcpChangedCallback = cb;
+    return HWC3::Error::None;
+}
+
+HWC3::Error ClientFrameComposer::startHdcpNegotiation(
+        Display* display, const aidl::android::hardware::drm::HdcpLevels& levels) {
     const auto displayId = display->getId();
-    DEBUG_LOG("%s display:%d", __FUNCTION__, displayId);
+    DEBUG_LOG("%s: display:%d", __FUNCTION__, displayId);
+
+    if (!mHdcpEnabled) {
+        DEBUG_LOG("%s, HDCP not enabled", __FUNCTION__);
+        return HWC3::Error::Unsupported;
+    }
+
     auto [error, client] = getDeviceClient(displayId);
     if (error != HWC3::Error::None) {
         ALOGE("%s: display:%d cannot find Drm Client", __FUNCTION__, displayId);
         return error;
     }
 
-    display->setHdcpState(true, false);
+    // find the hdcp context of this display
+    auto it = mDisplayHdcpContexts.find(displayId);
+    if (it == mDisplayHdcpContexts.end()) {
+        ALOGE("%s: display:%d HDCP context not found", __FUNCTION__, displayId);
+        return HWC3::Error::NoResources;
+    }
+
+    auto& hdcpContext = it->second;
+
+    // get current HDCP levels
+    aidl::android::hardware::drm::HdcpLevel connectedLevel = levels.connectedLevel;
+    aidl::android::hardware::drm::HdcpLevel maxLevel = levels.maxLevel;
+    aidl::android::hardware::drm::HdcpLevels curLevels;
+
+    hdcpContext.hdcpThread->getHdcpLevels(curLevels);
+
+    // Check HDCP level whether meet the requirement from framework
+    if (curLevels.connectedLevel < connectedLevel || curLevels.maxLevel > maxLevel) {
+        ALOGE("%s: current display doesn't meet the hdcp requirement from framework, "
+              "current connectedLevel:%d, expected connectedLevel:%d, "
+              "current maxLevel:%d, expected maxLevel:%d",
+              __FUNCTION__, static_cast<int>(curLevels.connectedLevel),
+              static_cast<int>(connectedLevel), static_cast<int>(curLevels.maxLevel),
+              static_cast<int>(maxLevel));
+        return HWC3::Error::Unsupported;
+    }
+
+    // start HDCP
+    if (client->isSecureDisplay(displayId)) {
+        notifyFrameworkHdcpState(displayId, true, false);
+    }
     client->setSecureMode(displayId, true);
+
     return HWC3::Error::None;
 }
 
-HWC3::Error ClientFrameComposer::registerOnHdcpChangedCallback(const HdcpChangedCallback& cb) {
-    mHdcpChangedCallback = cb;
-    return HWC3::Error::None;
+void ClientFrameComposer::notifyFrameworkHdcpState(int64_t displayId, bool state, bool isPrimary) {
+    auto it = mDisplayHdcpContexts.find(displayId);
+    if (it != mDisplayHdcpContexts.end()) {
+        auto& hdcpContext = it->second;
+        aidl::android::hardware::drm::HdcpLevels curLevels;
+        hdcpContext.hdcpThread->getHdcpLevels(curLevels);
+        if (!isPrimary) {
+            // for external display, hdcp state will be changed according to secure layer.
+            if (hdcpContext.hdcpState != state) {
+                hdcpContext.hdcpState = state;
+                (*mHdcpChangedCallback)(hdcpContext.hwcId, hdcpContext.hdcpState, curLevels);
+            }
+        } else {
+            // for primary display, hdcp will be always on.
+            (*mHdcpChangedCallback)(hdcpContext.hwcId, /* hdcp_state */ true, curLevels);
+        }
+    } else {
+        ALOGE("there is no display hdcp context for displayId:%" PRId64, displayId);
+    }
 }
+
 } // namespace aidl::android::hardware::graphics::composer3::impl

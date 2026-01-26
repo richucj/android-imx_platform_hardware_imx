@@ -1,6 +1,6 @@
 /*
  * Copyright (C) 2022 The Android Open Source Project
- * Copyright 2023-2024 NXP
+ * Copyright 2023-2025 NXP
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -38,22 +38,20 @@ class FrameComposer {
 public:
     virtual ~FrameComposer() {}
 
-    virtual HWC3::Error init() = 0;
+    virtual HWC3::Error init(std::shared_ptr<DeviceComposer>& g2d) = 0;
 
     using HotplugCallback = std::function<void(bool /*connected*/, //
                                                std::unique_ptr<HalMultiConfigs> /*configs*/)>;
 
     virtual HWC3::Error registerOnHotplugCallback(const HotplugCallback& cb) = 0;
-
     virtual HWC3::Error unregisterOnHotplugCallback() = 0;
 
     virtual HWC3::Error onDisplayCreate(Display* display) = 0;
-
     virtual HWC3::Error onDisplayDestroy(Display* display) = 0;
-
     virtual HWC3::Error onDisplayLayerDestroy(Display* display, Layer* layer) = 0;
 
     virtual HWC3::Error onDisplayClientTargetSet(Display* display) = 0;
+    virtual HWC3::Error onDisplayOutputBufferSet(Display* display) = 0;
 
     // Determines if this composer can compose the given layers and requests
     // changes for layers that can't not be composed.
@@ -76,12 +74,13 @@ public:
 
     virtual HWC3::Error getAllDeviceClients(std::map<uint32_t, DeviceClient*>& clients) = 0;
 
-    virtual HWC3::Error startHdcp(Display* display) = 0;
-
     using HdcpChangedCallback = std::function<void(long /* displayId */,
                                                    bool state,
                                                    aidl::android::hardware::drm::HdcpLevels /* levels */)>;
     virtual HWC3::Error registerOnHdcpChangedCallback(const HdcpChangedCallback& cb) = 0;
+
+    virtual HWC3::Error startHdcpNegotiation(
+            Display* display, const aidl::android::hardware::drm::HdcpLevels& levels) = 0;
 };
 
 } // namespace aidl::android::hardware::graphics::composer3::impl

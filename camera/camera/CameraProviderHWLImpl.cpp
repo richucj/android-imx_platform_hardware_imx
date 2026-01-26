@@ -1,5 +1,5 @@
 /*
- *  Copyright 2020 NXP.
+ *  Copyright 2020, 2025 NXP.
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -495,6 +495,11 @@ status_t CameraProviderHwlImpl::CreateCameraDeviceHwl(
         physicalIds.push_back(0);
     }
 
+    if (devPaths.size() > 1) {
+        ALOGE("%s: not support logical camera", __func__);
+        return BAD_VALUE;
+    }
+
     *camera_device_hwl =
             CameraDeviceHwlImpl::Create(camera_id, std::move(devPaths), std::move(physicalIds),
                                         mCameraDef.cam_blit_copy_hw, mCameraDef.cam_blit_csc_hw,
@@ -535,6 +540,10 @@ status_t CameraProviderHwlImpl::GetConcurrentStreamingCameraIds(
 
     combinations->emplace_back(std::move(candidate_ids));
     return OK;
+}
+
+status_t CameraProviderHwlImpl::DumpState(int fd) {
+     return OK;
 }
 
 status_t CameraProviderHwlImpl::IsConcurrentStreamCombinationSupported(

@@ -57,6 +57,9 @@
 #include "Time.h"
 #include "VsyncThread.h"
 
+#define HWC_MAX_VIRTUAL_DISPLAY_COUNT 16U
+#define HWC_VIRTUAL_DISPLAY_BASE_ID 1000
+
 namespace aidl::android::hardware::graphics::composer3::impl {
 
 class FrameComposer;
@@ -154,7 +157,10 @@ public:
     common::ColorTransform getColorTransformHint() { return mColorTransformHint; }
     PowerMode getPowerMode() const { return mPowerMode; }
 
+    void setFormat(common::PixelFormat format) { mFbFormat = format; }
+    common::PixelFormat getFormat() { return mFbFormat; }
     FencedBuffer& getClientTarget() { return mClientTarget; }
+    FencedBuffer& getOutputBuffer() { return mOutputBuffer; }
     buffer_handle_t waitAndGetClientTargetBuffer();
     ClientTargetProperty& getClientTargetProperty();
 
@@ -168,15 +174,6 @@ public:
     std::optional<TimePoint>& getExpectedPresentTime() { return mExpectedPresentTime; }
     HWC3::Error checkAndWaitNextVsync(int64_t* timestamp);
 
-    using HDCPThreadCallback = std::function<void (Display*)>;
-    void setHdcpCallback(const HDCPThreadCallback& callback);
-    void setHdcpThreadEnable(bool enable);
-
-    using HdcpChangedCallback = std::function<void(long /* displayId */,
-                                                   bool state,
-                                                   aidl::android::hardware::drm::HdcpLevels /* levels */)>;
-    void setHdcpState(bool state, bool isPrimary);
-    void setHdcpChangedCallback(const HdcpChangedCallback& callback);
 private:
     bool hasConfig(int32_t configId) const;
     DisplayConfig* getConfig(int32_t configId);
@@ -200,10 +197,9 @@ private:
     std::string mName;
     PowerMode mPowerMode = PowerMode::OFF;
     bool mVsyncStarted = false;
-    bool mHdcpStarted = false;
     VsyncThread mVsyncThread;
-    HDCPThread mHdcpThread;
     FencedBuffer mClientTarget;
+    FencedBuffer mOutputBuffer;
     FencedBuffer mReadbackBuffer;
     // Will only be non-null after the Display has been validated and
     // before it has been accepted.
@@ -229,6 +225,7 @@ private:
     common::ColorTransform mColorTransformHint = common::ColorTransform::IDENTITY;
     ClientTargetProperty mClientTargetProperty{common::PixelFormat::RGBA_8888,
                                                common::Dataspace::SRGB_LINEAR};
+    common::PixelFormat mFbFormat = common::PixelFormat::UNSPECIFIED; // used for virtual display
 };
 
 } // namespace aidl::android::hardware::graphics::composer3::impl

@@ -14,7 +14,6 @@
 // limitations under the License.
 soong_namespace {
     imports: ["hardware/google/pixel",
-              "hardware/google/interfaces/power"
     ],
 }
 
@@ -45,6 +44,7 @@ cc_binary {
     static_libs: [
         "libgmock",
         "libgtest",
+        "powerhal_flags-aconfig-cc",
     ],
 
     srcs: [
