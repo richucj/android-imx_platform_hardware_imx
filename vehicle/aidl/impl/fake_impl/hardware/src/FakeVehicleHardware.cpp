@@ -2186,7 +2186,7 @@ std::string FakeVehicleHardware::dumpSetSupportedValues(const std::vector<std::s
     }
     triggerSupportedValueChange(maybeInfo->propId, maybeInfo->areaId);
     return StringPrintf("Supported values list for propId: %s, areaId: %s set\n",
-                        maybeInfo->propIdStr.c_str(), maybeInfo->propIdStr.c_str());
+                        maybeInfo->propIdStr.c_str(), maybeInfo->areaIdStr.c_str());
 }
 
 void FakeVehicleHardware::triggerSupportedValueChange(int32_t propId, int32_t areaId) {
