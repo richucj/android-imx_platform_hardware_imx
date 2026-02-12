@@ -1,0 +1,2195 @@
+{
+  "SPDXID": "SPDXRef-DOCUMENT",
+  "spdxVersion": "SPDX-2.3",
+  "creationInfo": {
+    "created": "2026-02-03T03:03:50Z",
+    "creators": [
+      "Organization: NXP"
+    ],
+    "licenseListVersion": "3.26"
+  },
+  "name": "android-imx_platform_hardware_imx-automotive-16.0.0_1.1.0",
+  "dataLicense": "CC0-1.0",
+  "hasExtractedLicensingInfos": [
+    {
+      "licenseId": "LicenseRef-7822bb4b-a324-4185-bd50-dc611473aacf",
+      "extractedText": "BigInteger License\n==================\n\nCopyright (c) 2002 Chew Keong TAN\nAll rights reserved.\n\nPermission is hereby granted, free of charge, to any person obtaining a copy of\nthis software and associated documentation files (the \"Software\"), to deal in the\nSoftware without restriction, including without limitation the rights to use,\ncopy, modify, merge, publish, distribute, and/or sell copies of the Software, and\nto permit persons to whom the Software is furnished to do so, provided that the\nabove copyright notice(s) and this permission notice appear in all copies of the\nSoftware and that both the above copyright notice(s) and this permission notice\nappear in supporting documentation.\n\nTHE SOFTWARE IS PROVIDED \"AS IS\", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR\nIMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS\nFOR A PARTICULAR PURPOSE AND NONINFRINGEMENT OF THIRD PARTY RIGHTS. IN NO EVENT\nSHALL THE COPYRIGHT HOLDER OR HOLDERS INCLUDED IN THIS NOTICE BE LIABLE FOR ANY\nCLAIM, OR ANY SPECIAL INDIRECT OR CONSEQUENTIAL DAMAGES, OR ANY DAMAGES\nWHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN AN ACTION OF\nCONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF OR IN CONNECTION\nWITH THE USE OR PERFORMANCE OF THIS SOFTWARE.\n\nDisclaimer\n----------\n\nAlthough reasonable care has been taken to ensure the correctness of this\nimplementation, this code should never be used in any application without proper\nverification and testing. I disclaim all liability and responsibility to any\nperson or entity with respect to any loss or damage caused, or alleged to be\ncaused, directly or indirectly, by the use of this BigInteger class.",
+      "name": "BigInteger License"
+    }
+  ],
+  "documentNamespace": "https://nxp.com/spdx/ef7191ea-c2c0-463f-a408-cd16f7da7839",
+  "packages": [
+    {
+      "SPDXID": "SPDXRef-package-095ad166-0b9a-4a8d-a37b-4b9e1721e278",
+      "name": "platform-hardware-interfaces",
+      "versionInfo": "android-8.1.0_r1",
+      "licenseConcluded": "Apache-2.0",
+      "licenseDeclared": "Apache-2.0",
+      "homepage": "https://android.googlesource.com/platform/hardware/interfaces",
+      "downloadLocation": "NOASSERTION",
+      "originator": "Organization: android",
+      "supplier": "NOASSERTION",
+      "externalRefs": [
+        {
+          "referenceCategory": "SECURITY",
+          "referenceLocator": "cpe:2.3:a:android_package:platform-hardware-interfaces:android-8.1.0_r1:*:*:*:*:*:*:*",
+          "referenceType": "cpe23Type"
+        },
+        {
+          "referenceCategory": "OTHER",
+          "referenceLocator": "240f07b6-598d-454e-bd3f-fc579c3d15d2",
+          "referenceType": "BlackDuck-ComponentOrigin"
+        }
+      ],
+      "filesAnalyzed": false
+    },
+    {
+      "SPDXID": "SPDXRef-package-0b0c7323-c302-4ffd-b6d9-3a7d0cdd0311",
+      "name": "platform-hardware-interfaces",
+      "versionInfo": "android-o-preview-1",
+      "licenseConcluded": "Apache-2.0",
+      "licenseDeclared": "Apache-2.0",
+      "homepage": "https://android.googlesource.com/platform/hardware/interfaces",
+      "downloadLocation": "NOASSERTION",
+      "originator": "Organization: android",
+      "supplier": "NOASSERTION",
+      "externalRefs": [
+        {
+          "referenceCategory": "OTHER",
+          "referenceLocator": "ae324df0-ec71-4a6b-a568-4cb070e5439c",
+          "referenceType": "BlackDuck-ComponentOrigin"
+        }
+      ],
+      "filesAnalyzed": false
+    },
+    {
+      "SPDXID": "SPDXRef-package-0b459ada-0b3c-4fef-929b-b3f0ad3231a9",
+      "name": "platform-external-mockftpserver",
+      "versionInfo": "android-15.0.0_r9",
+      "licenseConcluded": "Apache-2.0",
+      "licenseDeclared": "Apache-2.0",
+      "homepage": "https://android.googlesource.com/platform/external/mockftpserver",
+      "downloadLocation": "NOASSERTION",
+      "originator": "Organization: platform-external-mockftpserver",
+      "supplier": "NOASSERTION",
+      "externalRefs": [],
+      "filesAnalyzed": false
+    },
+    {
+      "SPDXID": "SPDXRef-package-0f7b6239-cdc3-438b-b9a3-802115654e12",
+      "name": "device-generic-goldfish-opengl",
+      "versionInfo": "android-security-15.0.0_r9",
+      "licenseConcluded": "Apache-2.0",
+      "licenseDeclared": "Apache-2.0",
+      "homepage": "https://android.googlesource.com/device/generic/goldfish-opengl",
+      "downloadLocation": "NOASSERTION",
+      "originator": "Organization: device-generic-goldfish-opengl",
+      "supplier": "NOASSERTION",
+      "externalRefs": [],
+      "filesAnalyzed": false
+    },
+    {
+      "SPDXID": "SPDXRef-package-1221a51f-88b9-4c6b-b906-c65aafb5702b",
+      "name": "Open Source Mali GPUs Android Gralloc Module",
+      "versionInfo": "VX504X08X-SW-99005-r40p0-01eac0",
+      "licenseConcluded": "Apache-2.0",
+      "licenseDeclared": "Apache-2.0",
+      "homepage": "https://developer.arm.com/downloads/-/mali-drivers/android-gralloc-module",
+      "downloadLocation": "https://developer.arm.com/downloads/-/mali-drivers/android-gralloc-module",
+      "originator": "Organization: Open Source Mali GPUs Android Gralloc Module",
+      "supplier": "NOASSERTION",
+      "externalRefs": [],
+      "filesAnalyzed": false
+    },
+    {
+      "SPDXID": "SPDXRef-package-1243f7d9-ba0d-4c93-8355-aa7a3beabc40",
+      "name": "Android",
+      "versionInfo": "android-15.0.0_r26",
+      "licenseConcluded": "Apache-2.0",
+      "licenseDeclared": "Apache-2.0",
+      "homepage": "http://www.android.com",
+      "downloadLocation": "NOASSERTION",
+      "originator": "Organization: Android",
+      "supplier": "NOASSERTION",
+      "externalRefs": [],
+      "filesAnalyzed": false
+    },
+    {
+      "SPDXID": "SPDXRef-package-14f5f99f-4db5-4f8f-8ebe-acf17b2d1a70",
+      "name": "platform-hardware-interfaces",
+      "versionInfo": "android-11.0.0_r38",
+      "licenseConcluded": "Apache-2.0",
+      "licenseDeclared": "Apache-2.0",
+      "homepage": "https://android.googlesource.com/platform/hardware/interfaces",
+      "downloadLocation": "NOASSERTION",
+      "originator": "Organization: android",
+      "supplier": "NOASSERTION",
+      "externalRefs": [
+        {
+          "referenceCategory": "SECURITY",
+          "referenceLocator": "cpe:2.3:a:android_package:platform-hardware-interfaces:android-11.0.0_r38:*:*:*:*:*:*:*",
+          "referenceType": "cpe23Type"
+        },
+        {
+          "referenceCategory": "OTHER",
+          "referenceLocator": "45e37395-530d-4b6f-9b7d-7c850a220d7a",
+          "referenceType": "BlackDuck-ComponentOrigin"
+        }
+      ],
+      "filesAnalyzed": false
+    },
+    {
+      "SPDXID": "SPDXRef-package-190fde4c-fa29-4443-b730-123ff28db74e",
+      "name": "platform-hardware-interfaces",
+      "versionInfo": "android-14.0.0_r1",
+      "licenseConcluded": "Apache-2.0",
+      "licenseDeclared": "Apache-2.0",
+      "homepage": "https://android.googlesource.com/platform/hardware/interfaces",
+      "downloadLocation": "NOASSERTION",
+      "originator": "Organization: android",
+      "supplier": "NOASSERTION",
+      "externalRefs": [
+        {
+          "referenceCategory": "OTHER",
+          "referenceLocator": "f0f3a294-55f1-49cf-a8fe-9af2b81f4650",
+          "referenceType": "BlackDuck-ComponentOrigin"
+        }
+      ],
+      "filesAnalyzed": false
+    },
+    {
+      "SPDXID": "SPDXRef-package-19eeac78-239d-42be-8199-569233b28876",
+      "name": "platform_frameworks_base",
+      "versionInfo": "android-2.2_r1",
+      "licenseConcluded": "(LicenseRef-7822bb4b-a324-4185-bd50-dc611473aacf AND Apache-2.0)",
+      "licenseDeclared": "(LicenseRef-7822bb4b-a324-4185-bd50-dc611473aacf AND Apache-2.0)",
+      "homepage": "http://github.com/android/platform_frameworks_base",
+      "downloadLocation": "NOASSERTION",
+      "originator": "Organization: android",
+      "supplier": "NOASSERTION",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceLocator": "pkg:github/android/platform_frameworks_base@android-2.2_r1",
+          "referenceType": "purl"
+        },
+        {
+          "referenceCategory": "OTHER",
+          "referenceLocator": "d341e4e0-61f1-42c6-85e3-434015c95c7d",
+          "referenceType": "BlackDuck-ComponentOrigin"
+        }
+      ],
+      "filesAnalyzed": false
+    },
+    {
+      "SPDXID": "SPDXRef-package-1ce0bf9e-ac93-4d08-80a5-2118e76bbc5a",
+      "name": "android_frameworks_native",
+      "versionInfo": "android-sdk-tools_r7",
+      "licenseConcluded": "Apache-2.0",
+      "licenseDeclared": "Apache-2.0",
+      "homepage": "https://github.com/CyanogenMod/android_frameworks_native",
+      "downloadLocation": "NOASSERTION",
+      "originator": "Organization: android_frameworks_native",
+      "supplier": "NOASSERTION",
+      "externalRefs": [],
+      "filesAnalyzed": false
+    },
+    {
+      "SPDXID": "SPDXRef-package-21ff4921-8ba7-44df-969b-8a5a76049276",
+      "name": "CyanogenMod - android_device_samsung_omap4-common",
+      "versionInfo": "cm-10.1-M3",
+      "licenseConcluded": "Apache-2.0",
+      "licenseDeclared": "Apache-2.0",
+      "downloadLocation": "https://github.com/CyanogenMod/android_device_motorola_omap4-common/tree/cm-10.1-M3",
+      "originator": "Organization: cyanogenmod",
+      "supplier": "NOASSERTION",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceLocator": "pkg:github/CyanogenMod/android_device_motorola_omap4-common@cm-10.1-M3",
+          "referenceType": "purl"
+        },
+        {
+          "referenceCategory": "OTHER",
+          "referenceLocator": "5a8532ec-5041-4ef5-a145-4e6582296ea8",
+          "referenceType": "BlackDuck-ComponentOrigin"
+        }
+      ],
+      "filesAnalyzed": false
+    },
+    {
+      "SPDXID": "SPDXRef-package-2356a22f-7f26-461f-866a-a33d6734740d",
+      "name": "platform-hardware-google-pixel",
+      "versionInfo": "android-15.0.0_r9",
+      "licenseConcluded": "Apache-2.0",
+      "licenseDeclared": "Apache-2.0",
+      "homepage": "https://android.googlesource.com/platform/hardware/google/pixel/",
+      "downloadLocation": "NOASSERTION",
+      "originator": "Organization: platform-hardware-google-pixel",
+      "supplier": "NOASSERTION",
+      "externalRefs": [],
+      "filesAnalyzed": false
+    },
+    {
+      "SPDXID": "SPDXRef-package-23e70da9-6c0b-4393-af73-9df495b23cc2",
+      "name": "platform-hardware-interfaces",
+      "versionInfo": "platform-tools-35.0.2",
+      "licenseConcluded": "Apache-2.0",
+      "licenseDeclared": "Apache-2.0",
+      "homepage": "https://android.googlesource.com/platform/hardware/interfaces",
+      "downloadLocation": "NOASSERTION",
+      "originator": "Organization: android",
+      "supplier": "NOASSERTION",
+      "externalRefs": [
+        {
+          "referenceCategory": "OTHER",
+          "referenceLocator": "e8cb181b-9ecf-499e-95f0-5af19ad02b99",
+          "referenceType": "BlackDuck-ComponentOrigin"
+        }
+      ],
+      "filesAnalyzed": false
+    },
+    {
+      "SPDXID": "SPDXRef-package-25581244-bf3a-4ac3-adef-22adb5fc2487",
+      "name": "platform-hardware-google-pixel",
+      "versionInfo": "platform-tools-35.0.2",
+      "licenseConcluded": "Apache-2.0",
+      "licenseDeclared": "Apache-2.0",
+      "homepage": "https://android.googlesource.com/platform/hardware/google/pixel/",
+      "downloadLocation": "NOASSERTION",
+      "originator": "Organization: android",
+      "supplier": "NOASSERTION",
+      "externalRefs": [
+        {
+          "referenceCategory": "OTHER",
+          "referenceLocator": "48a9e314-8717-434c-a297-d4132f3c0137",
+          "referenceType": "BlackDuck-ComponentOrigin"
+        }
+      ],
+      "filesAnalyzed": false
+    },
+    {
+      "SPDXID": "SPDXRef-package-26942a87-0f12-48ce-9ce7-f2d68fcfc605",
+      "name": "platform-hardware-google-pixel",
+      "versionInfo": "aml_sta_351416000",
+      "licenseConcluded": "Apache-2.0",
+      "licenseDeclared": "Apache-2.0",
+      "homepage": "https://android.googlesource.com/platform/hardware/google/pixel/",
+      "downloadLocation": "NOASSERTION",
+      "originator": "Organization: android",
+      "supplier": "NOASSERTION",
+      "externalRefs": [
+        {
+          "referenceCategory": "OTHER",
+          "referenceLocator": "635060c9-172d-42f1-8eb3-766c73a90dda",
+          "referenceType": "BlackDuck-ComponentOrigin"
+        }
+      ],
+      "filesAnalyzed": false
+    },
+    {
+      "SPDXID": "SPDXRef-package-28c20b1f-e4e7-49e5-848c-1b32b7f7574d",
+      "name": "platform-hardware-google-pixel",
+      "versionInfo": "android-14.0.0_r62",
+      "licenseConcluded": "Apache-2.0",
+      "licenseDeclared": "Apache-2.0",
+      "homepage": "https://android.googlesource.com/platform/hardware/google/pixel/",
+      "downloadLocation": "NOASSERTION",
+      "originator": "Organization: android",
+      "supplier": "NOASSERTION",
+      "externalRefs": [
+        {
+          "referenceCategory": "OTHER",
+          "referenceLocator": "fe78a3e7-84ee-4448-8066-d0275d774253",
+          "referenceType": "BlackDuck-ComponentOrigin"
+        }
+      ],
+      "filesAnalyzed": false
+    },
+    {
+      "SPDXID": "SPDXRef-package-2a09e258-f32e-4c26-b5e5-cce3549991aa",
+      "name": "platform-hardware-google-camera",
+      "versionInfo": "android-15.0.0_r9",
+      "licenseConcluded": "Apache-2.0",
+      "licenseDeclared": "NOASSERTION",
+      "homepage": "https://android.googlesource.com/platform/hardware/google/camera",
+      "downloadLocation": "NOASSERTION",
+      "originator": "Organization: platform-hardware-google-camera",
+      "supplier": "NOASSERTION",
+      "externalRefs": [],
+      "filesAnalyzed": false
+    },
+    {
+      "SPDXID": "SPDXRef-package-2a1fdd31-6386-4cc5-b13b-7a1874119c32",
+      "name": "android-tools-fastboot",
+      "versionInfo": "35.0.1",
+      "licenseConcluded": "(MIT AND Apache-2.0)",
+      "licenseDeclared": "(MIT AND Apache-2.0)",
+      "homepage": "http://developer.android.com/guide/developing/tools/adb.html",
+      "downloadLocation": "NOASSERTION",
+      "originator": "Organization: opensuse",
+      "supplier": "NOASSERTION",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceLocator": "pkg:rpm/opensuse/android-tools@35.0.1-1.1?arch=x86_64",
+          "referenceType": "purl"
+        },
+        {
+          "referenceCategory": "OTHER",
+          "referenceLocator": "e18537e9-c789-4048-ae07-d21413757b36",
+          "referenceType": "BlackDuck-ComponentOrigin"
+        }
+      ],
+      "filesAnalyzed": false
+    },
+    {
+      "SPDXID": "SPDXRef-package-2adcd204-6915-451a-973a-a7cbf3e95b06",
+      "name": "Android Open Kang Project",
+      "versionInfo": "android-cts-4.0_r1",
+      "licenseConcluded": "Apache-2.0",
+      "licenseDeclared": "NOASSERTION",
+      "homepage": "http://aokp.co",
+      "downloadLocation": "NOASSERTION",
+      "originator": "Organization: Android Open Kang Project",
+      "supplier": "NOASSERTION",
+      "externalRefs": [],
+      "filesAnalyzed": false
+    },
+    {
+      "SPDXID": "SPDXRef-package-2f9cbe7a-d764-4cc1-98c9-8c90311e8e84",
+      "name": "platform-system-chre",
+      "versionInfo": "android-15.0.0_r1",
+      "licenseConcluded": "(BSD-3-Clause AND Apache-2.0)",
+      "licenseDeclared": "(BSD-3-Clause AND Apache-2.0)",
+      "homepage": "https://android.googlesource.com/platform/system/chre",
+      "downloadLocation": "NOASSERTION",
+      "originator": "Organization: platform-system-chre",
+      "supplier": "NOASSERTION",
+      "externalRefs": [],
+      "filesAnalyzed": false
+    },
+    {
+      "SPDXID": "SPDXRef-package-31058d81-d948-4d00-95c8-c1b70dbb3f35",
+      "name": "device-generic-goldfish-opengl",
+      "versionInfo": "android-u-beta-1-gpl",
+      "licenseConcluded": "Apache-2.0",
+      "licenseDeclared": "Apache-2.0",
+      "homepage": "https://android.googlesource.com/device/generic/goldfish-opengl",
+      "downloadLocation": "NOASSERTION",
+      "originator": "Organization: android",
+      "supplier": "NOASSERTION",
+      "externalRefs": [
+        {
+          "referenceCategory": "OTHER",
+          "referenceLocator": "0ba0aaaf-4b47-4a34-b3c0-cd1b47ac099b",
+          "referenceType": "BlackDuck-ComponentOrigin"
+        }
+      ],
+      "filesAnalyzed": false
+    },
+    {
+      "SPDXID": "SPDXRef-package-32f542d4-d2b4-40e6-8848-6143fa35a8bb",
+      "name": "platform-hardware-interfaces",
+      "versionInfo": "android-13.0.0_r1",
+      "licenseConcluded": "Apache-2.0",
+      "licenseDeclared": "Apache-2.0",
+      "homepage": "https://android.googlesource.com/platform/hardware/interfaces",
+      "downloadLocation": "NOASSERTION",
+      "originator": "Organization: android",
+      "supplier": "NOASSERTION",
+      "externalRefs": [
+        {
+          "referenceCategory": "SECURITY",
+          "referenceLocator": "cpe:2.3:a:android_package:platform-hardware-interfaces:android-13.0.0_r1:*:*:*:*:*:*:*",
+          "referenceType": "cpe23Type"
+        },
+        {
+          "referenceCategory": "OTHER",
+          "referenceLocator": "ae7a93a5-8d9e-4cf3-94b2-7c6ae2517d41",
+          "referenceType": "BlackDuck-ComponentOrigin"
+        }
+      ],
+      "filesAnalyzed": false
+    },
+    {
+      "SPDXID": "SPDXRef-package-34a75777-226e-45dc-a015-90c0f4b8752f",
+      "name": "platform-hardware-google-pixel",
+      "versionInfo": "aml_tz6_351400020",
+      "licenseConcluded": "Apache-2.0",
+      "licenseDeclared": "Apache-2.0",
+      "homepage": "https://android.googlesource.com/platform/hardware/google/pixel/",
+      "downloadLocation": "NOASSERTION",
+      "originator": "Organization: android",
+      "supplier": "NOASSERTION",
+      "externalRefs": [
+        {
+          "referenceCategory": "OTHER",
+          "referenceLocator": "d52cc793-0438-4419-9d2f-ff66bf1f09b6",
+          "referenceType": "BlackDuck-ComponentOrigin"
+        }
+      ],
+      "filesAnalyzed": false
+    },
+    {
+      "SPDXID": "SPDXRef-package-357b3a81-30a2-442b-ad99-950fd730927f",
+      "name": "platform-hardware-interfaces",
+      "versionInfo": "android-14.0.0_r52",
+      "licenseConcluded": "Apache-2.0",
+      "licenseDeclared": "Apache-2.0",
+      "homepage": "https://android.googlesource.com/platform/hardware/interfaces",
+      "downloadLocation": "NOASSERTION",
+      "originator": "Organization: android",
+      "supplier": "NOASSERTION",
+      "externalRefs": [
+        {
+          "referenceCategory": "OTHER",
+          "referenceLocator": "9b77232d-feda-49e4-b7b4-c282b7f00bc6",
+          "referenceType": "BlackDuck-ComponentOrigin"
+        }
+      ],
+      "filesAnalyzed": false
+    },
+    {
+      "SPDXID": "SPDXRef-package-38ac9ef8-9922-4b01-aa52-8a4187dc86dc",
+      "name": "platform-hardware-google-pixel",
+      "versionInfo": "aml_doc_351412000",
+      "licenseConcluded": "Apache-2.0",
+      "licenseDeclared": "Apache-2.0",
+      "homepage": "https://android.googlesource.com/platform/hardware/google/pixel/",
+      "downloadLocation": "NOASSERTION",
+      "originator": "Organization: android",
+      "supplier": "NOASSERTION",
+      "externalRefs": [
+        {
+          "referenceCategory": "OTHER",
+          "referenceLocator": "dbf02976-1bec-4446-aa54-a70d7d947442",
+          "referenceType": "BlackDuck-ComponentOrigin"
+        }
+      ],
+      "filesAnalyzed": false
+    },
+    {
+      "SPDXID": "SPDXRef-package-3d9b9e0b-c692-4e15-a5fe-b07773a8cb65",
+      "name": "platform-hardware-google-pixel",
+      "versionInfo": "aml_mpr_351311140",
+      "licenseConcluded": "Apache-2.0",
+      "licenseDeclared": "Apache-2.0",
+      "homepage": "https://android.googlesource.com/platform/hardware/google/pixel/",
+      "downloadLocation": "NOASSERTION",
+      "originator": "Organization: android",
+      "supplier": "NOASSERTION",
+      "externalRefs": [
+        {
+          "referenceCategory": "OTHER",
+          "referenceLocator": "f0b8fab2-d10f-4ab7-bf81-60e6b2669cb5",
+          "referenceType": "BlackDuck-ComponentOrigin"
+        }
+      ],
+      "filesAnalyzed": false
+    },
+    {
+      "SPDXID": "SPDXRef-package-4982c240-fe5d-4bc4-a2d1-d328c8042785",
+      "name": "platform-hardware-interfaces",
+      "versionInfo": "aml_sta_351311000",
+      "licenseConcluded": "Apache-2.0",
+      "licenseDeclared": "Apache-2.0",
+      "homepage": "https://android.googlesource.com/platform/hardware/interfaces",
+      "downloadLocation": "NOASSERTION",
+      "originator": "Organization: android",
+      "supplier": "NOASSERTION",
+      "externalRefs": [
+        {
+          "referenceCategory": "OTHER",
+          "referenceLocator": "12e58411-cc21-48fb-8908-e01cb0ac56bc",
+          "referenceType": "BlackDuck-ComponentOrigin"
+        }
+      ],
+      "filesAnalyzed": false
+    },
+    {
+      "SPDXID": "SPDXRef-package-49a273da-6846-4036-a8d0-71172b761922",
+      "name": "platform-external-minigbm",
+      "versionInfo": "android-15.0.0_r9",
+      "licenseConcluded": "BSD-3-Clause",
+      "licenseDeclared": "BSD-3-Clause",
+      "homepage": "http://developer.android.com/index.html",
+      "downloadLocation": "NOASSERTION",
+      "originator": "Organization: platform-external-minigbm",
+      "supplier": "NOASSERTION",
+      "externalRefs": [],
+      "filesAnalyzed": false
+    },
+    {
+      "SPDXID": "SPDXRef-package-49a863eb-b2e9-47c0-ad57-982a0428accc",
+      "name": "Android - device - generic - goldfish",
+      "versionInfo": "android-cts-8.0_r1",
+      "licenseConcluded": "Apache-2.0",
+      "licenseDeclared": "Apache-2.0",
+      "downloadLocation": "NOASSERTION",
+      "originator": "Organization: android",
+      "supplier": "NOASSERTION",
+      "externalRefs": [
+        {
+          "referenceCategory": "OTHER",
+          "referenceLocator": "2ba9edb5-225c-4754-b83f-40a565ea5b55",
+          "referenceType": "BlackDuck-ComponentOrigin"
+        }
+      ],
+      "filesAnalyzed": false
+    },
+    {
+      "SPDXID": "SPDXRef-package-4b38a5c7-f2f4-4043-9d97-535ee149d4ac",
+      "name": "platform-packages-modules-NeuralNetworks",
+      "versionInfo": "android-s-beta-3",
+      "licenseConcluded": "Apache-2.0",
+      "licenseDeclared": "NOASSERTION",
+      "homepage": "https://android.googlesource.com/platform/packages/modules/NeuralNetworks",
+      "downloadLocation": "NOASSERTION",
+      "originator": "Organization: android",
+      "supplier": "NOASSERTION",
+      "externalRefs": [
+        {
+          "referenceCategory": "OTHER",
+          "referenceLocator": "e5d282a9-5ca0-4db7-aa39-fbf0245f4ccf",
+          "referenceType": "BlackDuck-ComponentOrigin"
+        }
+      ],
+      "filesAnalyzed": false
+    },
+    {
+      "SPDXID": "SPDXRef-package-4dccd4c4-e956-4c97-b335-73be022d74c9",
+      "name": "platform-hardware-interfaces",
+      "versionInfo": "android-cts-12.0_r1",
+      "licenseConcluded": "Apache-2.0",
+      "licenseDeclared": "Apache-2.0",
+      "homepage": "https://android.googlesource.com/platform/hardware/interfaces",
+      "downloadLocation": "NOASSERTION",
+      "originator": "Organization: android",
+      "supplier": "NOASSERTION",
+      "externalRefs": [
+        {
+          "referenceCategory": "OTHER",
+          "referenceLocator": "3cdbed29-945c-4dd3-aa54-8f4aedaf703c",
+          "referenceType": "BlackDuck-ComponentOrigin"
+        }
+      ],
+      "filesAnalyzed": false
+    },
+    {
+      "SPDXID": "SPDXRef-package-4ea3cd92-7200-4867-bb7c-39946ca212db",
+      "name": "platform-hardware-interfaces",
+      "versionInfo": "aml_ext_351312060",
+      "licenseConcluded": "Apache-2.0",
+      "licenseDeclared": "Apache-2.0",
+      "homepage": "https://android.googlesource.com/platform/hardware/interfaces",
+      "downloadLocation": "NOASSERTION",
+      "originator": "Organization: android",
+      "supplier": "NOASSERTION",
+      "externalRefs": [
+        {
+          "referenceCategory": "OTHER",
+          "referenceLocator": "343f9623-64b9-4221-87b1-2e54fb531bcb",
+          "referenceType": "BlackDuck-ComponentOrigin"
+        }
+      ],
+      "filesAnalyzed": false
+    },
+    {
+      "SPDXID": "SPDXRef-package-4f34f730-c125-419d-a45d-bbf23f1869a1",
+      "name": "intel-cm-compiler",
+      "versionInfo": "1.0.119",
+      "licenseConcluded": "MIT",
+      "licenseDeclared": "MIT",
+      "homepage": "https://github.com/intel/cm-compiler",
+      "downloadLocation": "https://bodhi.fedoraproject.org/updates/intel-cm-compiler-1.0.119-1.fc36",
+      "originator": "Organization: fedora",
+      "supplier": "NOASSERTION",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceLocator": "pkg:rpm/fedora/intel-cm-compiler@1.0.119-1.fc36?arch=i686",
+          "referenceType": "purl"
+        },
+        {
+          "referenceCategory": "OTHER",
+          "referenceLocator": "25684ab0-61a3-44d6-a69f-6b9a00e96305",
+          "referenceType": "BlackDuck-ComponentOrigin"
+        }
+      ],
+      "filesAnalyzed": false
+    },
+    {
+      "SPDXID": "SPDXRef-package-52a10a45-d0a6-48db-a817-18d584263741",
+      "name": "platform-hardware-interfaces",
+      "versionInfo": "android-12.1.0_r1",
+      "licenseConcluded": "Apache-2.0",
+      "licenseDeclared": "Apache-2.0",
+      "homepage": "https://android.googlesource.com/platform/hardware/interfaces",
+      "downloadLocation": "NOASSERTION",
+      "originator": "Organization: android",
+      "supplier": "NOASSERTION",
+      "externalRefs": [
+        {
+          "referenceCategory": "OTHER",
+          "referenceLocator": "19a87826-0384-46ba-a2b6-c29163c6c112",
+          "referenceType": "BlackDuck-ComponentOrigin"
+        }
+      ],
+      "filesAnalyzed": false
+    },
+    {
+      "SPDXID": "SPDXRef-package-57bb4888-5493-4b45-a600-e504492c91e6",
+      "name": "platform-hardware-google-pixel",
+      "versionInfo": "aml_sta_351311000",
+      "licenseConcluded": "Apache-2.0",
+      "licenseDeclared": "Apache-2.0",
+      "homepage": "https://android.googlesource.com/platform/hardware/google/pixel/",
+      "downloadLocation": "NOASSERTION",
+      "originator": "Organization: android",
+      "supplier": "NOASSERTION",
+      "externalRefs": [
+        {
+          "referenceCategory": "OTHER",
+          "referenceLocator": "5fb3e84e-3093-451f-92a3-8ad6dc82b1a6",
+          "referenceType": "BlackDuck-ComponentOrigin"
+        }
+      ],
+      "filesAnalyzed": false
+    },
+    {
+      "SPDXID": "SPDXRef-package-5851742b-c1ef-40ef-a8f2-91c0c33f8ebc",
+      "name": "platform-hardware-interfaces",
+      "versionInfo": "android-11.0.0_r1",
+      "licenseConcluded": "Apache-2.0",
+      "licenseDeclared": "Apache-2.0",
+      "homepage": "https://android.googlesource.com/platform/hardware/interfaces",
+      "downloadLocation": "NOASSERTION",
+      "originator": "Organization: android",
+      "supplier": "NOASSERTION",
+      "externalRefs": [
+        {
+          "referenceCategory": "SECURITY",
+          "referenceLocator": "cpe:2.3:a:android_package:platform-hardware-interfaces:android-11.0.0_r1:*:*:*:*:*:*:*",
+          "referenceType": "cpe23Type"
+        },
+        {
+          "referenceCategory": "OTHER",
+          "referenceLocator": "24f04a2e-f7fd-4d7a-a3bb-5793ef639324",
+          "referenceType": "BlackDuck-ComponentOrigin"
+        }
+      ],
+      "filesAnalyzed": false
+    },
+    {
+      "SPDXID": "SPDXRef-package-58b4ec68-d27c-4d36-8177-351bbe560b15",
+      "name": "CyanogenMod - android_device_samsung_n7100",
+      "versionInfo": "cm-10.1.3",
+      "licenseConcluded": "Apache-2.0",
+      "licenseDeclared": "NOASSERTION",
+      "downloadLocation": "https://github.com/CyanogenMod/android_device_samsung_n7100/tree/cm-10.1.3",
+      "originator": "Organization: cyanogenmod",
+      "supplier": "NOASSERTION",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceLocator": "pkg:github/CyanogenMod/android_device_samsung_n7100@cm-10.1.3",
+          "referenceType": "purl"
+        },
+        {
+          "referenceCategory": "OTHER",
+          "referenceLocator": "f9fdaf47-b786-4ef0-b557-9b68f85d38ba",
+          "referenceType": "BlackDuck-ComponentOrigin"
+        }
+      ],
+      "filesAnalyzed": false
+    },
+    {
+      "SPDXID": "SPDXRef-package-5bc7c044-ad49-4404-b822-399a7cf2cc86",
+      "name": "device-google-sunfish",
+      "versionInfo": "android-13.0.0_r1",
+      "licenseConcluded": "Apache-2.0",
+      "licenseDeclared": "Apache-2.0",
+      "downloadLocation": "NOASSERTION",
+      "originator": "Organization: device-google-sunfish",
+      "supplier": "NOASSERTION",
+      "externalRefs": [],
+      "filesAnalyzed": false
+    },
+    {
+      "SPDXID": "SPDXRef-package-5cccb27b-942f-405b-b6ed-aa49491439d1",
+      "name": "trusty-lib",
+      "versionInfo": "android-14.0.0_r50",
+      "licenseConcluded": "MIT",
+      "licenseDeclared": "MIT",
+      "homepage": "https://android.googlesource.com/trusty/lib",
+      "downloadLocation": "NOASSERTION",
+      "originator": "Organization: android",
+      "supplier": "NOASSERTION",
+      "externalRefs": [
+        {
+          "referenceCategory": "OTHER",
+          "referenceLocator": "3f3ec32b-2b3e-4f8c-ab67-39e1c889fb6e",
+          "referenceType": "BlackDuck-ComponentOrigin"
+        }
+      ],
+      "filesAnalyzed": false
+    },
+    {
+      "SPDXID": "SPDXRef-package-5db42f2f-6f7a-4379-a8d0-6b6278ce0cfd",
+      "name": "platform-external-minigbm",
+      "versionInfo": "android-11.0.0_r1",
+      "licenseConcluded": "BSD-3-Clause",
+      "licenseDeclared": "BSD-3-Clause",
+      "homepage": "http://developer.android.com/index.html",
+      "downloadLocation": "NOASSERTION",
+      "originator": "Organization: android",
+      "supplier": "NOASSERTION",
+      "externalRefs": [
+        {
+          "referenceCategory": "OTHER",
+          "referenceLocator": "256277af-6296-4c4d-b267-461b11e9e08b",
+          "referenceType": "BlackDuck-ComponentOrigin"
+        }
+      ],
+      "filesAnalyzed": false
+    },
+    {
+      "SPDXID": "SPDXRef-package-5edafea7-47a0-454a-b49b-b49f1db28053",
+      "name": "platform-hardware-google-camera",
+      "versionInfo": "android-11.0.0_r1",
+      "licenseConcluded": "Apache-2.0",
+      "licenseDeclared": "Apache-2.0",
+      "homepage": "https://android.googlesource.com/platform/hardware/google/camera",
+      "downloadLocation": "NOASSERTION",
+      "originator": "Organization: android",
+      "supplier": "NOASSERTION",
+      "externalRefs": [
+        {
+          "referenceCategory": "OTHER",
+          "referenceLocator": "c89e5a1e-5d47-4b8e-a47f-90b605715b5c",
+          "referenceType": "BlackDuck-ComponentOrigin"
+        }
+      ],
+      "filesAnalyzed": false
+    },
+    {
+      "SPDXID": "SPDXRef-package-64070398-cf5f-410d-8483-da858dbee5fa",
+      "name": "platform-packages-modules-Bluetooth",
+      "versionInfo": "android-15.0.0_r5",
+      "licenseConcluded": "Apache-2.0",
+      "licenseDeclared": "Apache-2.0",
+      "homepage": "https://android.googlesource.com/platform/packages/modules/Bluetooth",
+      "downloadLocation": "NOASSERTION",
+      "originator": "Organization: android",
+      "supplier": "NOASSERTION",
+      "externalRefs": [
+        {
+          "referenceCategory": "OTHER",
+          "referenceLocator": "0de7bf2b-1db5-4cb3-9a03-0a202d04eee8",
+          "referenceType": "BlackDuck-ComponentOrigin"
+        }
+      ],
+      "filesAnalyzed": false
+    },
+    {
+      "SPDXID": "SPDXRef-package-6be0492d-2606-4433-b9f4-6a8712baabf2",
+      "name": "device-google-trout",
+      "versionInfo": "android-15.0.0_r9",
+      "licenseConcluded": "Apache-2.0",
+      "licenseDeclared": "NOASSERTION",
+      "homepage": "https://android.googlesource.com/device/google/trout",
+      "downloadLocation": "NOASSERTION",
+      "originator": "Organization: android",
+      "supplier": "NOASSERTION",
+      "externalRefs": [
+        {
+          "referenceCategory": "OTHER",
+          "referenceLocator": "c7d48bdc-ee18-4d55-9862-d5eeddd716b3",
+          "referenceType": "BlackDuck-ComponentOrigin"
+        }
+      ],
+      "filesAnalyzed": false
+    },
+    {
+      "SPDXID": "SPDXRef-package-6c074349-aa33-494c-be64-06ab9660fe0a",
+      "name": "device-amlogic-yukawa",
+      "versionInfo": "android-s-v2-beta-3",
+      "licenseConcluded": "Apache-2.0",
+      "licenseDeclared": "NOASSERTION",
+      "downloadLocation": "NOASSERTION",
+      "originator": "Organization: android",
+      "supplier": "NOASSERTION",
+      "externalRefs": [
+        {
+          "referenceCategory": "OTHER",
+          "referenceLocator": "ec2b9545-593a-4232-aca8-80544ece5f8c",
+          "referenceType": "BlackDuck-ComponentOrigin"
+        }
+      ],
+      "filesAnalyzed": false
+    },
+    {
+      "SPDXID": "SPDXRef-package-6cae6a38-576b-4cf0-8fc1-ac6b176dfbf9",
+      "name": "platform-hardware-google-pixel",
+      "versionInfo": "aml_ext_351312060",
+      "licenseConcluded": "Apache-2.0",
+      "licenseDeclared": "Apache-2.0",
+      "homepage": "https://android.googlesource.com/platform/hardware/google/pixel/",
+      "downloadLocation": "NOASSERTION",
+      "originator": "Organization: android",
+      "supplier": "NOASSERTION",
+      "externalRefs": [
+        {
+          "referenceCategory": "OTHER",
+          "referenceLocator": "c87b1655-031b-4689-a15f-4751be443c0f",
+          "referenceType": "BlackDuck-ComponentOrigin"
+        }
+      ],
+      "filesAnalyzed": false
+    },
+    {
+      "SPDXID": "SPDXRef-package-6de4d3e6-0751-46e3-81e7-225d3585e503",
+      "name": "platform-hardware-interfaces",
+      "versionInfo": "android-cts-8.0_r1",
+      "licenseConcluded": "Apache-2.0",
+      "licenseDeclared": "Apache-2.0",
+      "homepage": "https://android.googlesource.com/platform/hardware/interfaces",
+      "downloadLocation": "NOASSERTION",
+      "originator": "Organization: android",
+      "supplier": "NOASSERTION",
+      "externalRefs": [
+        {
+          "referenceCategory": "OTHER",
+          "referenceLocator": "4e19efb2-fffd-4add-b7de-e88bafcbb318",
+          "referenceType": "BlackDuck-ComponentOrigin"
+        }
+      ],
+      "filesAnalyzed": false
+    },
+    {
+      "SPDXID": "SPDXRef-package-6e13a78f-281e-4635-9564-49292ef2237c",
+      "name": "platform-hardware-interfaces",
+      "versionInfo": "android-8.0.0_r21",
+      "licenseConcluded": "Apache-2.0",
+      "licenseDeclared": "Apache-2.0",
+      "homepage": "https://android.googlesource.com/platform/hardware/interfaces",
+      "downloadLocation": "NOASSERTION",
+      "originator": "Organization: android",
+      "supplier": "NOASSERTION",
+      "externalRefs": [
+        {
+          "referenceCategory": "SECURITY",
+          "referenceLocator": "cpe:2.3:a:android_package:platform-hardware-interfaces:android-8.0.0_r21:*:*:*:*:*:*:*",
+          "referenceType": "cpe23Type"
+        },
+        {
+          "referenceCategory": "OTHER",
+          "referenceLocator": "f6109ada-4634-4e35-8a5d-ca326ce4906f",
+          "referenceType": "BlackDuck-ComponentOrigin"
+        }
+      ],
+      "filesAnalyzed": false
+    },
+    {
+      "SPDXID": "SPDXRef-package-77e47822-9076-4287-90b5-d63d71f8d613",
+      "name": "platform-hardware-google-pixel",
+      "versionInfo": "aml_ips_351410000",
+      "licenseConcluded": "Apache-2.0",
+      "licenseDeclared": "Apache-2.0",
+      "homepage": "https://android.googlesource.com/platform/hardware/google/pixel/",
+      "downloadLocation": "NOASSERTION",
+      "originator": "Organization: android",
+      "supplier": "NOASSERTION",
+      "externalRefs": [
+        {
+          "referenceCategory": "OTHER",
+          "referenceLocator": "4f5c6742-803f-4a02-a70b-13c61f1cdad2",
+          "referenceType": "BlackDuck-ComponentOrigin"
+        }
+      ],
+      "filesAnalyzed": false
+    },
+    {
+      "SPDXID": "SPDXRef-package-78f7ff95-9cd7-400c-b0b8-dc641a8ccf12",
+      "name": "platform-hardware-google-camera",
+      "versionInfo": "android-cts-12.0_r1",
+      "licenseConcluded": "Apache-2.0",
+      "licenseDeclared": "Apache-2.0",
+      "homepage": "https://android.googlesource.com/platform/hardware/google/camera",
+      "downloadLocation": "NOASSERTION",
+      "originator": "Organization: android",
+      "supplier": "NOASSERTION",
+      "externalRefs": [
+        {
+          "referenceCategory": "OTHER",
+          "referenceLocator": "b459937b-630f-4952-9315-ed0ae13a2490",
+          "referenceType": "BlackDuck-ComponentOrigin"
+        }
+      ],
+      "filesAnalyzed": false
+    },
+    {
+      "SPDXID": "SPDXRef-package-7ae88af8-3d87-40b6-b70c-b976fbceda74",
+      "name": "platform-hardware-google-pixel",
+      "versionInfo": "frc_340818110",
+      "licenseConcluded": "Apache-2.0",
+      "licenseDeclared": "Apache-2.0",
+      "homepage": "https://android.googlesource.com/platform/hardware/google/pixel/",
+      "downloadLocation": "NOASSERTION",
+      "originator": "Organization: android",
+      "supplier": "NOASSERTION",
+      "externalRefs": [
+        {
+          "referenceCategory": "OTHER",
+          "referenceLocator": "1d9ae7b2-8347-4e1d-8801-1510aa24866c",
+          "referenceType": "BlackDuck-ComponentOrigin"
+        }
+      ],
+      "filesAnalyzed": false
+    },
+    {
+      "SPDXID": "SPDXRef-package-829a883c-66a5-40ab-98e0-c4a5e75c47e0",
+      "name": "CyanogenMod - android_hardware_samsung_slsi_exynos5",
+      "versionInfo": "cm-10.2-M1",
+      "licenseConcluded": "Apache-2.0",
+      "licenseDeclared": "Apache-2.0",
+      "homepage": "http://github.com/CyanogenMod/android_hardware_samsung_slsi_exynos5/",
+      "downloadLocation": "https://github.com/CyanogenMod/android_hardware_samsung_slsi_exynos5/tree/cm-10.2-M1",
+      "originator": "Organization: cyanogenmod",
+      "supplier": "NOASSERTION",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceLocator": "pkg:github/CyanogenMod/android_hardware_samsung_slsi_exynos5@cm-10.2-M1",
+          "referenceType": "purl"
+        },
+        {
+          "referenceCategory": "OTHER",
+          "referenceLocator": "f545a961-3b04-4064-ba74-d346737eb29e",
+          "referenceType": "BlackDuck-ComponentOrigin"
+        }
+      ],
+      "filesAnalyzed": false
+    },
+    {
+      "SPDXID": "SPDXRef-package-8395352e-b9e3-47b3-a32b-909bb38d59d2",
+      "name": "platform-packages-services-Car",
+      "versionInfo": "android-16.0.0_r1",
+      "licenseConcluded": "Apache-2.0",
+      "licenseDeclared": "Apache-2.0",
+      "homepage": "https://android.googlesource.com/platform/packages/services/Car",
+      "downloadLocation": "NOASSERTION",
+      "originator": "Organization: platform-packages-services-Car",
+      "supplier": "NOASSERTION",
+      "externalRefs": [],
+      "filesAnalyzed": false
+    },
+    {
+      "SPDXID": "SPDXRef-package-8691948a-d10e-4cea-8ede-43f1ebfe3c00",
+      "name": "platform-hardware-interfaces",
+      "versionInfo": "aml_sta_351110040",
+      "licenseConcluded": "Apache-2.0",
+      "licenseDeclared": "Apache-2.0",
+      "homepage": "https://android.googlesource.com/platform/hardware/interfaces",
+      "downloadLocation": "NOASSERTION",
+      "originator": "Organization: android",
+      "supplier": "NOASSERTION",
+      "externalRefs": [
+        {
+          "referenceCategory": "OTHER",
+          "referenceLocator": "99fc553f-a9a1-4aeb-9775-de3b499bef51",
+          "referenceType": "BlackDuck-ComponentOrigin"
+        }
+      ],
+      "filesAnalyzed": false
+    },
+    {
+      "SPDXID": "SPDXRef-package-907a4d3b-880e-4ccc-9800-5260b32894f1",
+      "name": "device-google-wahoo",
+      "versionInfo": "android-11.0.0_r9",
+      "licenseConcluded": "Apache-2.0",
+      "licenseDeclared": "Apache-2.0",
+      "homepage": "http://developer.android.com/index.html",
+      "downloadLocation": "NOASSERTION",
+      "originator": "Organization: device-google-wahoo",
+      "supplier": "NOASSERTION",
+      "externalRefs": [],
+      "filesAnalyzed": false
+    },
+    {
+      "SPDXID": "SPDXRef-package-909ae8f5-f6f5-43a5-983e-09fc81a2e543",
+      "name": "platform-hardware-google-pixel",
+      "versionInfo": "android-14.0.0_r29",
+      "licenseConcluded": "Apache-2.0",
+      "licenseDeclared": "Apache-2.0",
+      "homepage": "https://android.googlesource.com/platform/hardware/google/pixel/",
+      "downloadLocation": "NOASSERTION",
+      "originator": "Organization: android",
+      "supplier": "NOASSERTION",
+      "externalRefs": [
+        {
+          "referenceCategory": "OTHER",
+          "referenceLocator": "6c04921b-41c3-44a7-952a-77b3f078d73c",
+          "referenceType": "BlackDuck-ComponentOrigin"
+        }
+      ],
+      "filesAnalyzed": false
+    },
+    {
+      "SPDXID": "SPDXRef-package-940679ef-a269-4411-870d-3214fd61017b",
+      "name": "CyanogenMod - android_hardware_qcom_audio",
+      "versionInfo": "cm-11.0-XNPH22R-bacon-03d77315ea",
+      "licenseConcluded": "Apache-2.0",
+      "licenseDeclared": "Apache-2.0",
+      "downloadLocation": "https://github.com/CyanogenMod/android_hardware_qcom_audio/tree/cm-11.0-XNPH22R-bacon-03d77315ea",
+      "originator": "Organization: cyanogenmod",
+      "supplier": "NOASSERTION",
+      "externalRefs": [
+        {
+          "referenceCategory": "OTHER",
+          "referenceLocator": "9eadff09-a518-490e-a1e0-b322171621a1",
+          "referenceType": "BlackDuck-ComponentOrigin"
+        },
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceLocator": "pkg:github/CyanogenMod/android_hardware_qcom_audio@cm-11.0-XNPH22R-bacon-03d77315ea",
+          "referenceType": "purl"
+        }
+      ],
+      "filesAnalyzed": false
+    },
+    {
+      "SPDXID": "SPDXRef-package-96fc2ceb-8716-48c0-83be-b84a9a636a33",
+      "name": "Android - platform - hardware - qcom - audio",
+      "versionInfo": "android-8.1.0_r1",
+      "licenseConcluded": "Apache-2.0",
+      "licenseDeclared": "Apache-2.0",
+      "downloadLocation": "NOASSERTION",
+      "originator": "Organization: android",
+      "supplier": "NOASSERTION",
+      "externalRefs": [
+        {
+          "referenceCategory": "OTHER",
+          "referenceLocator": "ae1f1d38-5951-41ae-8d6b-11c2eca8f4b1",
+          "referenceType": "BlackDuck-ComponentOrigin"
+        }
+      ],
+      "filesAnalyzed": false
+    },
+    {
+      "SPDXID": "SPDXRef-package-9ac9c589-ce99-4d6d-9614-8ec7ecb63257",
+      "name": "mbed TLS",
+      "versionInfo": "features/new-code-style/test/new/6863",
+      "licenseConcluded": "Apache-2.0",
+      "licenseDeclared": "Apache-2.0",
+      "homepage": "https://www.trustedfirmware.org/",
+      "downloadLocation": "NOASSERTION",
+      "originator": "Organization: armmbed",
+      "supplier": "NOASSERTION",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceLocator": "pkg:github/ARMmbed/mbedtls@features/new-code-style/test/new/6863",
+          "referenceType": "purl"
+        },
+        {
+          "referenceCategory": "OTHER",
+          "referenceLocator": "58bc8f09-b579-4d25-a78a-ba520f5080e5",
+          "referenceType": "BlackDuck-ComponentOrigin"
+        }
+      ],
+      "filesAnalyzed": false
+    },
+    {
+      "SPDXID": "SPDXRef-package-9dea4a36-6749-4ee8-9239-6f9e6b85c2e8",
+      "name": "platform-hardware-interfaces",
+      "versionInfo": "aml_hef_351120040",
+      "licenseConcluded": "Apache-2.0",
+      "licenseDeclared": "Apache-2.0",
+      "homepage": "https://android.googlesource.com/platform/hardware/interfaces",
+      "downloadLocation": "NOASSERTION",
+      "originator": "Organization: android",
+      "supplier": "NOASSERTION",
+      "externalRefs": [
+        {
+          "referenceCategory": "OTHER",
+          "referenceLocator": "16ea4e15-fa0d-4d05-8ac2-1a138a4bbf94",
+          "referenceType": "BlackDuck-ComponentOrigin"
+        }
+      ],
+      "filesAnalyzed": false
+    },
+    {
+      "SPDXID": "SPDXRef-package-9ee8ae52-74e5-46d2-b1fe-bb09f30dedf6",
+      "name": "Android-platform-frameworks-base",
+      "versionInfo": "android-8.1.0_r1",
+      "licenseConcluded": "Apache-2.0",
+      "licenseDeclared": "Apache-2.0",
+      "homepage": "http://github.com/android/platform_system_core/",
+      "downloadLocation": "NOASSERTION",
+      "originator": "Organization: Android-platform-frameworks-base",
+      "supplier": "NOASSERTION",
+      "externalRefs": [
+        {
+          "referenceCategory": "SECURITY",
+          "referenceLocator": "cpe:2.3:a:android:platform_frameworks_base:8.1.0:r1:*:*:*:*:*:*",
+          "referenceType": "cpe23Type"
+        },
+        {
+          "referenceCategory": "SECURITY",
+          "referenceLocator": "cpe:2.3:a:android_package:platform-frameworks-base:android-8.1.0_r1:*:*:*:*:*:*:*",
+          "referenceType": "cpe23Type"
+        }
+      ],
+      "filesAnalyzed": false
+    },
+    {
+      "SPDXID": "SPDXRef-package-a44de3ef-9505-47f0-ae47-c989a5c4731c",
+      "name": "platform-hardware-interfaces",
+      "versionInfo": "android-15.0.0_r21",
+      "licenseConcluded": "Apache-2.0",
+      "licenseDeclared": "Apache-2.0",
+      "homepage": "https://android.googlesource.com/platform/hardware/interfaces",
+      "downloadLocation": "NOASSERTION",
+      "originator": "Organization: android",
+      "supplier": "NOASSERTION",
+      "externalRefs": [
+        {
+          "referenceCategory": "OTHER",
+          "referenceLocator": "9d2d9a18-eb71-485a-b11a-05d3ec015964",
+          "referenceType": "BlackDuck-ComponentOrigin"
+        }
+      ],
+      "filesAnalyzed": false
+    },
+    {
+      "SPDXID": "SPDXRef-package-a8aba032-2e67-420c-8bf1-861a527ca1e2",
+      "name": "platform-hardware-interfaces",
+      "versionInfo": "android-15.0.0_r9",
+      "licenseConcluded": "Apache-2.0",
+      "licenseDeclared": "Apache-2.0",
+      "homepage": "https://android.googlesource.com/platform/hardware/interfaces",
+      "downloadLocation": "NOASSERTION",
+      "originator": "Organization: android",
+      "supplier": "NOASSERTION",
+      "externalRefs": [
+        {
+          "referenceCategory": "OTHER",
+          "referenceLocator": "079046d6-cb74-4ea5-8637-5b6021932c64",
+          "referenceType": "BlackDuck-ComponentOrigin"
+        }
+      ],
+      "filesAnalyzed": false
+    },
+    {
+      "SPDXID": "SPDXRef-package-aa3909f6-ff55-4a62-94b4-cb7a6156c02c",
+      "name": "kernelflinger",
+      "versionInfo": "20170804-snapshot-9c9f8584",
+      "licenseConcluded": "BSD-2-Clause",
+      "licenseDeclared": "BSD-2-Clause",
+      "homepage": "https://github.com/01org/kernelflinger",
+      "downloadLocation": "NOASSERTION",
+      "originator": "Organization: 01org",
+      "supplier": "NOASSERTION",
+      "externalRefs": [
+        {
+          "referenceCategory": "OTHER",
+          "referenceLocator": "f8995774-a372-43a9-a7f2-b11156193b5c",
+          "referenceType": "BlackDuck-ComponentOrigin"
+        },
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceLocator": "pkg:github/01org/kernelflinger@9c9f85846152a343c5871c97c4e5c5cf5971db80",
+          "referenceType": "purl"
+        }
+      ],
+      "filesAnalyzed": false
+    },
+    {
+      "SPDXID": "SPDXRef-package-accb15e7-46c3-4247-93e9-97cb30f78dee",
+      "name": "mbed TLS",
+      "versionInfo": "mbedtls-2.22.0",
+      "licenseConcluded": "Apache-2.0",
+      "licenseDeclared": "Apache-2.0",
+      "homepage": "https://www.trustedfirmware.org/",
+      "downloadLocation": "NOASSERTION",
+      "originator": "Organization: armmbed",
+      "supplier": "NOASSERTION",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceLocator": "pkg:github/ARMmbed/mbedtls@mbedtls-2.22.0",
+          "referenceType": "purl"
+        },
+        {
+          "referenceCategory": "OTHER",
+          "referenceLocator": "9f080616-d495-4fe1-8957-3278deeb0155",
+          "referenceType": "BlackDuck-ComponentOrigin"
+        },
+        {
+          "referenceCategory": "SECURITY",
+          "referenceLocator": "cpe:2.3:a:mbed:mbedtls:2.22.0:d0:*:*:*:*:*:*",
+          "referenceType": "cpe23Type"
+        },
+        {
+          "referenceCategory": "SECURITY",
+          "referenceLocator": "cpe:2.3:a:mbed:mbedtls:2.22.0:*:*:*:*:*:*:*",
+          "referenceType": "cpe23Type"
+        }
+      ],
+      "filesAnalyzed": false
+    },
+    {
+      "SPDXID": "SPDXRef-package-af422e80-e18f-44a6-894b-79fafdb53804",
+      "name": "platform-hardware-interfaces",
+      "versionInfo": "android-14.0.0_r50",
+      "licenseConcluded": "Apache-2.0",
+      "licenseDeclared": "Apache-2.0",
+      "homepage": "https://android.googlesource.com/platform/hardware/interfaces",
+      "downloadLocation": "NOASSERTION",
+      "originator": "Organization: android",
+      "supplier": "NOASSERTION",
+      "externalRefs": [
+        {
+          "referenceCategory": "OTHER",
+          "referenceLocator": "0deb0fdd-65b4-4d87-ad74-470e2b8a593b",
+          "referenceType": "BlackDuck-ComponentOrigin"
+        }
+      ],
+      "filesAnalyzed": false
+    },
+    {
+      "SPDXID": "SPDXRef-package-bd5217ec-9d18-4d32-9977-242743722764",
+      "name": "device-generic-goldfish-opengl",
+      "versionInfo": "android-15.0.0_r9",
+      "licenseConcluded": "Apache-2.0",
+      "licenseDeclared": "Apache-2.0",
+      "homepage": "https://android.googlesource.com/device/generic/goldfish-opengl",
+      "downloadLocation": "NOASSERTION",
+      "originator": "Organization: android",
+      "supplier": "NOASSERTION",
+      "externalRefs": [
+        {
+          "referenceCategory": "OTHER",
+          "referenceLocator": "95d38007-7e68-4ade-a7a2-273f4167e9cb",
+          "referenceType": "BlackDuck-ComponentOrigin"
+        }
+      ],
+      "filesAnalyzed": false
+    },
+    {
+      "SPDXID": "SPDXRef-package-c8be0e71-ddf3-4af1-b922-57a67e75283c",
+      "name": "platform-hardware-interfaces",
+      "versionInfo": "android-u-beta-1-gpl",
+      "licenseConcluded": "Apache-2.0",
+      "licenseDeclared": "Apache-2.0",
+      "homepage": "https://android.googlesource.com/platform/hardware/interfaces",
+      "downloadLocation": "NOASSERTION",
+      "originator": "Organization: android",
+      "supplier": "NOASSERTION",
+      "externalRefs": [
+        {
+          "referenceCategory": "OTHER",
+          "referenceLocator": "f3deabf9-4d0f-4af2-96c7-42e1af18b142",
+          "referenceType": "BlackDuck-ComponentOrigin"
+        }
+      ],
+      "filesAnalyzed": false
+    },
+    {
+      "SPDXID": "SPDXRef-package-cd744a28-37bb-4f96-9ce6-27e18a16cf55",
+      "name": "platform-hardware-google-pixel",
+      "versionInfo": "frc_350820260",
+      "licenseConcluded": "Apache-2.0",
+      "licenseDeclared": "Apache-2.0",
+      "homepage": "https://android.googlesource.com/platform/hardware/google/pixel/",
+      "downloadLocation": "NOASSERTION",
+      "originator": "Organization: android",
+      "supplier": "NOASSERTION",
+      "externalRefs": [
+        {
+          "referenceCategory": "OTHER",
+          "referenceLocator": "72f3dd2d-61d5-47ff-bbe6-4760b7a773c3",
+          "referenceType": "BlackDuck-ComponentOrigin"
+        }
+      ],
+      "filesAnalyzed": false
+    },
+    {
+      "SPDXID": "SPDXRef-package-ce1345db-2516-4f24-b019-7a76e7fc4f8a",
+      "name": "Mbed OS",
+      "versionInfo": "mbed-os-5.11.0-rc1",
+      "licenseConcluded": "Apache-2.0",
+      "licenseDeclared": "Apache-2.0",
+      "homepage": "https://mbed.com",
+      "downloadLocation": "NOASSERTION",
+      "originator": "Organization: armmbed",
+      "supplier": "NOASSERTION",
+      "externalRefs": [
+        {
+          "referenceCategory": "SECURITY",
+          "referenceLocator": "cpe:2.3:a:arm:mbed-os:5.11.0:rc1:*:*:*:*:*:*",
+          "referenceType": "cpe23Type"
+        },
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceLocator": "pkg:github/ARMmbed/mbed-os@mbed-os-5.11.0-rc1",
+          "referenceType": "purl"
+        },
+        {
+          "referenceCategory": "SECURITY",
+          "referenceLocator": "cpe:2.3:a:armmbed:mbed_os:5.11.0:rc1:*:*:*:*:*:*",
+          "referenceType": "cpe23Type"
+        },
+        {
+          "referenceCategory": "OTHER",
+          "referenceLocator": "9845a01b-35d2-4f0c-9541-8335a1122f27",
+          "referenceType": "BlackDuck-ComponentOrigin"
+        }
+      ],
+      "filesAnalyzed": false
+    },
+    {
+      "SPDXID": "SPDXRef-package-d2ad1ecb-5dee-4c1f-8ce3-b6f8ae6e28da",
+      "name": "platform-external-nos-host-android",
+      "versionInfo": "android-10.0.0_r47",
+      "licenseConcluded": "Apache-2.0",
+      "licenseDeclared": "Apache-2.0",
+      "homepage": "http://developer.android.com/index.html",
+      "downloadLocation": "NOASSERTION",
+      "originator": "Organization: platform-external-nos-host-android",
+      "supplier": "NOASSERTION",
+      "externalRefs": [],
+      "filesAnalyzed": false
+    },
+    {
+      "SPDXID": "SPDXRef-package-d3ff80c2-e4cc-473e-8cc0-0494fe5d12b3",
+      "name": "platform-hardware-interfaces",
+      "versionInfo": "android-14.0.0_r29",
+      "licenseConcluded": "Apache-2.0",
+      "licenseDeclared": "Apache-2.0",
+      "homepage": "https://android.googlesource.com/platform/hardware/interfaces",
+      "downloadLocation": "NOASSERTION",
+      "originator": "Organization: android",
+      "supplier": "NOASSERTION",
+      "externalRefs": [
+        {
+          "referenceCategory": "OTHER",
+          "referenceLocator": "31922b03-7753-432b-9236-c2e491b1be41",
+          "referenceType": "BlackDuck-ComponentOrigin"
+        }
+      ],
+      "filesAnalyzed": false
+    },
+    {
+      "SPDXID": "SPDXRef-package-d49e1a7b-53d1-4273-ac4e-0470131497df",
+      "name": "platform-hardware-interfaces",
+      "versionInfo": "android-9.0.0_r1",
+      "licenseConcluded": "Apache-2.0",
+      "licenseDeclared": "Apache-2.0",
+      "homepage": "https://android.googlesource.com/platform/hardware/interfaces",
+      "downloadLocation": "https://android.googlesource.com/platform/hardware/interfaces/+/android-9.0.0_r1",
+      "originator": "Organization: android",
+      "supplier": "NOASSERTION",
+      "externalRefs": [
+        {
+          "referenceCategory": "OTHER",
+          "referenceLocator": "012b3655-0b0f-4df7-8469-b946bfcc112d",
+          "referenceType": "BlackDuck-ComponentOrigin"
+        }
+      ],
+      "filesAnalyzed": false
+    },
+    {
+      "SPDXID": "SPDXRef-package-d9af129d-ae19-4b95-b15a-116689b5c000",
+      "name": "platform-hardware-interfaces",
+      "versionInfo": "android-t-beta-3",
+      "licenseConcluded": "Apache-2.0",
+      "licenseDeclared": "Apache-2.0",
+      "homepage": "https://android.googlesource.com/platform/hardware/interfaces",
+      "downloadLocation": "NOASSERTION",
+      "originator": "Organization: android",
+      "supplier": "NOASSERTION",
+      "externalRefs": [
+        {
+          "referenceCategory": "OTHER",
+          "referenceLocator": "85b25c37-1c1a-4043-8216-b54b11d465ba",
+          "referenceType": "BlackDuck-ComponentOrigin"
+        }
+      ],
+      "filesAnalyzed": false
+    },
+    {
+      "SPDXID": "SPDXRef-package-dcafc4b9-0732-4ed2-afb1-36d21481fa64",
+      "name": "platform-hardware-interfaces",
+      "versionInfo": "android-mainline-10.0.0_r9",
+      "licenseConcluded": "Apache-2.0",
+      "licenseDeclared": "Apache-2.0",
+      "homepage": "https://android.googlesource.com/platform/hardware/interfaces",
+      "downloadLocation": "NOASSERTION",
+      "originator": "Organization: android",
+      "supplier": "NOASSERTION",
+      "externalRefs": [
+        {
+          "referenceCategory": "OTHER",
+          "referenceLocator": "bd187b97-4552-4bbe-9e48-fa3c342e1557",
+          "referenceType": "BlackDuck-ComponentOrigin"
+        }
+      ],
+      "filesAnalyzed": false
+    },
+    {
+      "SPDXID": "SPDXRef-package-dfa49660-71f7-4cb9-8003-41b7c6af5fa7",
+      "name": "platform-hardware-interfaces",
+      "versionInfo": "android-15.0.0_r6",
+      "licenseConcluded": "Apache-2.0",
+      "licenseDeclared": "Apache-2.0",
+      "homepage": "https://android.googlesource.com/platform/hardware/interfaces",
+      "downloadLocation": "NOASSERTION",
+      "originator": "Organization: android",
+      "supplier": "NOASSERTION",
+      "externalRefs": [
+        {
+          "referenceCategory": "OTHER",
+          "referenceLocator": "3ed56706-4364-4458-8688-f3e68d091cd9",
+          "referenceType": "BlackDuck-ComponentOrigin"
+        }
+      ],
+      "filesAnalyzed": false
+    },
+    {
+      "SPDXID": "SPDXRef-package-e2314e29-7089-4d09-8fcc-c30fa21d8167",
+      "name": "platform-hardware-bsp-freescale",
+      "versionInfo": "20160620-snapshot-d074ce13",
+      "licenseConcluded": "Apache-2.0",
+      "licenseDeclared": "NOASSERTION",
+      "homepage": "https://android.googlesource.com/platform/hardware/bsp/freescale",
+      "downloadLocation": "NOASSERTION",
+      "originator": "Organization: android",
+      "supplier": "NOASSERTION",
+      "externalRefs": [
+        {
+          "referenceCategory": "OTHER",
+          "referenceLocator": "2f754991-237b-49d6-8abf-f921943dc852",
+          "referenceType": "BlackDuck-ComponentOrigin"
+        }
+      ],
+      "filesAnalyzed": false
+    },
+    {
+      "SPDXID": "SPDXRef-package-e35fbea9-2bf8-4f5b-9083-ad7ce9426a34",
+      "name": "platform_hardware_libhardware",
+      "versionInfo": "android-cts-12.0_r1",
+      "licenseConcluded": "Apache-2.0",
+      "licenseDeclared": "Apache-2.0",
+      "homepage": "http://github.com/android/platform_hardware_libhardware",
+      "downloadLocation": "NOASSERTION",
+      "originator": "Organization: platform_hardware_libhardware",
+      "supplier": "NOASSERTION",
+      "externalRefs": [],
+      "filesAnalyzed": false
+    },
+    {
+      "SPDXID": "SPDXRef-package-e39234da-42c0-45f3-b1cb-3ae09986bd92",
+      "name": "platform-hardware-interfaces",
+      "versionInfo": "aml_tz6_351400020",
+      "licenseConcluded": "Apache-2.0",
+      "licenseDeclared": "Apache-2.0",
+      "homepage": "https://android.googlesource.com/platform/hardware/interfaces",
+      "downloadLocation": "NOASSERTION",
+      "originator": "Organization: android",
+      "supplier": "NOASSERTION",
+      "externalRefs": [
+        {
+          "referenceCategory": "OTHER",
+          "referenceLocator": "c8731c7a-3f88-4b3b-9de8-ce918bbcb5de",
+          "referenceType": "BlackDuck-ComponentOrigin"
+        }
+      ],
+      "filesAnalyzed": false
+    },
+    {
+      "SPDXID": "SPDXRef-package-e46fddee-285a-4549-b75c-88e16a1e0ac8",
+      "name": "platform-hardware-interfaces",
+      "versionInfo": "android-o-preview-4",
+      "licenseConcluded": "Apache-2.0",
+      "licenseDeclared": "Apache-2.0",
+      "homepage": "https://android.googlesource.com/platform/hardware/interfaces",
+      "downloadLocation": "NOASSERTION",
+      "originator": "Organization: android",
+      "supplier": "NOASSERTION",
+      "externalRefs": [
+        {
+          "referenceCategory": "OTHER",
+          "referenceLocator": "cebebe35-f66c-424c-95a8-12eb1f923219",
+          "referenceType": "BlackDuck-ComponentOrigin"
+        }
+      ],
+      "filesAnalyzed": false
+    },
+    {
+      "SPDXID": "SPDXRef-package-e74d9bd0-a3b6-4f07-9df6-169129e95382",
+      "name": "Android - platform - frameworks - av",
+      "versionInfo": "android-15.0.0_r9",
+      "licenseConcluded": "Apache-2.0",
+      "licenseDeclared": "Apache-2.0",
+      "downloadLocation": "NOASSERTION",
+      "originator": "Organization: android",
+      "supplier": "NOASSERTION",
+      "externalRefs": [
+        {
+          "referenceCategory": "OTHER",
+          "referenceLocator": "00b55860-8498-456d-9bbf-c149dfd748c2",
+          "referenceType": "BlackDuck-ComponentOrigin"
+        }
+      ],
+      "filesAnalyzed": false
+    },
+    {
+      "SPDXID": "SPDXRef-package-e77538c3-f71e-4361-9070-945b25755b4d",
+      "name": "device-google-trout",
+      "versionInfo": "android-11.0.0_r38",
+      "licenseConcluded": "Apache-2.0",
+      "licenseDeclared": "NOASSERTION",
+      "homepage": "https://android.googlesource.com/device/google/trout",
+      "downloadLocation": "NOASSERTION",
+      "originator": "Organization: android",
+      "supplier": "NOASSERTION",
+      "externalRefs": [
+        {
+          "referenceCategory": "OTHER",
+          "referenceLocator": "b18ce78c-121a-41ba-9aba-2a876d6b7b84",
+          "referenceType": "BlackDuck-ComponentOrigin"
+        }
+      ],
+      "filesAnalyzed": false
+    },
+    {
+      "SPDXID": "SPDXRef-package-eaf142e9-b0fc-4472-9d2a-6c818ef83ecb",
+      "name": "platform-hardware-interfaces",
+      "versionInfo": "android-14.0.0_r16",
+      "licenseConcluded": "Apache-2.0",
+      "licenseDeclared": "Apache-2.0",
+      "homepage": "https://android.googlesource.com/platform/hardware/interfaces",
+      "downloadLocation": "NOASSERTION",
+      "originator": "Organization: android",
+      "supplier": "NOASSERTION",
+      "externalRefs": [
+        {
+          "referenceCategory": "OTHER",
+          "referenceLocator": "222522b5-cc96-4d59-af1d-6195a4609cb6",
+          "referenceType": "BlackDuck-ComponentOrigin"
+        }
+      ],
+      "filesAnalyzed": false
+    },
+    {
+      "SPDXID": "SPDXRef-package-ebabe755-369a-40f2-813e-b790db975141",
+      "name": "platform-hardware-google-pixel",
+      "versionInfo": "aml_cbr_351410000",
+      "licenseConcluded": "Apache-2.0",
+      "licenseDeclared": "Apache-2.0",
+      "homepage": "https://android.googlesource.com/platform/hardware/google/pixel/",
+      "downloadLocation": "NOASSERTION",
+      "originator": "Organization: android",
+      "supplier": "NOASSERTION",
+      "externalRefs": [
+        {
+          "referenceCategory": "OTHER",
+          "referenceLocator": "b4c6c8fe-f231-4630-85e4-9750c41bc027",
+          "referenceType": "BlackDuck-ComponentOrigin"
+        }
+      ],
+      "filesAnalyzed": false
+    },
+    {
+      "SPDXID": "SPDXRef-package-ed2f0a66-26d3-4694-9e60-ea6d99a148ba",
+      "name": "platform-hardware-interfaces",
+      "versionInfo": "android-16.0.0_r2",
+      "licenseConcluded": "Apache-2.0",
+      "licenseDeclared": "Apache-2.0",
+      "homepage": "https://android.googlesource.com/platform/hardware/interfaces",
+      "downloadLocation": "NOASSERTION",
+      "originator": "Organization: android",
+      "supplier": "NOASSERTION",
+      "externalRefs": [
+        {
+          "referenceCategory": "OTHER",
+          "referenceLocator": "4887641e-73b2-4b10-8a6d-56bebb0719f9",
+          "referenceType": "BlackDuck-ComponentOrigin"
+        }
+      ],
+      "filesAnalyzed": false
+    },
+    {
+      "SPDXID": "SPDXRef-package-ef7191ea-c2c0-463f-a408-cd16f7da7839",
+      "name": "android-imx_platform_hardware_imx",
+      "versionInfo": "automotive-16.0.0_1.1.0",
+      "licenseConcluded": "(Apache-2.0)",
+      "licenseDeclared": "(Apache-2.0)",
+      "downloadLocation": "https://github.com/nxp-imx-android/android-imx_platform_hardware_imx",
+      "originator": "Organization: android-imx_platform_hardware_imx",
+      "supplier": "NOASSERTION",
+      "externalRefs": [],
+      "filesAnalyzed": false
+    },
+    {
+      "SPDXID": "SPDXRef-package-f2502613-6fe3-43f6-974f-86164f150b17",
+      "name": "device-google-bonito",
+      "versionInfo": "android-cts-12.0_r4",
+      "licenseConcluded": "Apache-2.0",
+      "licenseDeclared": "Apache-2.0",
+      "homepage": "http://developer.android.com/index.html",
+      "downloadLocation": "NOASSERTION",
+      "originator": "Organization: android",
+      "supplier": "NOASSERTION",
+      "externalRefs": [
+        {
+          "referenceCategory": "OTHER",
+          "referenceLocator": "9023f618-801d-40b4-ac40-b4170fe21ea8",
+          "referenceType": "BlackDuck-ComponentOrigin"
+        }
+      ],
+      "filesAnalyzed": false
+    },
+    {
+      "SPDXID": "SPDXRef-package-f33a501c-1daa-4964-8ab4-b5ff614d7d17",
+      "name": "android_frameworks_native",
+      "versionInfo": "cm-10.2-M1",
+      "licenseConcluded": "Apache-2.0",
+      "licenseDeclared": "Apache-2.0",
+      "homepage": "https://github.com/CyanogenMod/android_frameworks_native",
+      "downloadLocation": "https://github.com/CyanogenMod/android_device_generic_goldfish/tree/cm-10.2-M1",
+      "originator": "Organization: cyanogenmod",
+      "supplier": "NOASSERTION",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceLocator": "pkg:github/CyanogenMod/android_device_generic_goldfish@cm-10.2-M1",
+          "referenceType": "purl"
+        },
+        {
+          "referenceCategory": "OTHER",
+          "referenceLocator": "f2b42776-8d05-4dfb-8bc2-1439c448df22",
+          "referenceType": "BlackDuck-ComponentOrigin"
+        }
+      ],
+      "filesAnalyzed": false
+    },
+    {
+      "SPDXID": "SPDXRef-package-f33eea61-c8c7-40ca-ba20-7863c769b1d8",
+      "name": "platform-hardware-interfaces",
+      "versionInfo": "android-10.0.0_r1",
+      "licenseConcluded": "Apache-2.0",
+      "licenseDeclared": "Apache-2.0",
+      "homepage": "https://android.googlesource.com/platform/hardware/interfaces",
+      "downloadLocation": "https://android.googlesource.com/platform/hardware/interfaces/+/android-10.0.0_r1",
+      "originator": "Organization: android",
+      "supplier": "NOASSERTION",
+      "externalRefs": [
+        {
+          "referenceCategory": "OTHER",
+          "referenceLocator": "8c80456e-5078-49c5-af35-03e5ff110756",
+          "referenceType": "BlackDuck-ComponentOrigin"
+        },
+        {
+          "referenceCategory": "SECURITY",
+          "referenceLocator": "cpe:2.3:a:android_package:platform-hardware-interfaces:android-10.0.0_r1:*:*:*:*:*:*:*",
+          "referenceType": "cpe23Type"
+        }
+      ],
+      "filesAnalyzed": false
+    },
+    {
+      "SPDXID": "SPDXRef-package-f4608531-a0e0-4970-be77-ae62842ad3ab",
+      "name": "device-google-trout",
+      "versionInfo": "platform-tools-35.0.1",
+      "licenseConcluded": "Apache-2.0",
+      "licenseDeclared": "NOASSERTION",
+      "homepage": "https://android.googlesource.com/device/google/trout",
+      "downloadLocation": "NOASSERTION",
+      "originator": "Organization: android",
+      "supplier": "NOASSERTION",
+      "externalRefs": [
+        {
+          "referenceCategory": "OTHER",
+          "referenceLocator": "4f3b4234-e3de-401d-b77c-10bbf3cca139",
+          "referenceType": "BlackDuck-ComponentOrigin"
+        }
+      ],
+      "filesAnalyzed": false
+    },
+    {
+      "SPDXID": "SPDXRef-package-f57e32c1-1aca-471d-8c1e-9e97f213caf4",
+      "name": "platform-hardware-google-pixel",
+      "versionInfo": "aml_mpr_350914160",
+      "licenseConcluded": "Apache-2.0",
+      "licenseDeclared": "Apache-2.0",
+      "homepage": "https://android.googlesource.com/platform/hardware/google/pixel/",
+      "downloadLocation": "NOASSERTION",
+      "originator": "Organization: android",
+      "supplier": "NOASSERTION",
+      "externalRefs": [
+        {
+          "referenceCategory": "OTHER",
+          "referenceLocator": "3ef345ac-484a-42d5-baf3-8c23ea6f5b66",
+          "referenceType": "BlackDuck-ComponentOrigin"
+        }
+      ],
+      "filesAnalyzed": false
+    }
+  ],
+  "relationships": [
+    {
+      "spdxElementId": "SPDXRef-package-ef7191ea-c2c0-463f-a408-cd16f7da7839",
+      "relationshipType": "CONTAINS",
+      "relatedSpdxElement": "SPDXRef-package-095ad166-0b9a-4a8d-a37b-4b9e1721e278"
+    },
+    {
+      "spdxElementId": "SPDXRef-package-ef7191ea-c2c0-463f-a408-cd16f7da7839",
+      "relationshipType": "CONTAINS",
+      "relatedSpdxElement": "SPDXRef-package-0b0c7323-c302-4ffd-b6d9-3a7d0cdd0311"
+    },
+    {
+      "spdxElementId": "SPDXRef-package-ef7191ea-c2c0-463f-a408-cd16f7da7839",
+      "relationshipType": "CONTAINS",
+      "relatedSpdxElement": "SPDXRef-package-0b459ada-0b3c-4fef-929b-b3f0ad3231a9"
+    },
+    {
+      "spdxElementId": "SPDXRef-package-ef7191ea-c2c0-463f-a408-cd16f7da7839",
+      "relationshipType": "CONTAINS",
+      "relatedSpdxElement": "SPDXRef-package-0f7b6239-cdc3-438b-b9a3-802115654e12"
+    },
+    {
+      "spdxElementId": "SPDXRef-package-ef7191ea-c2c0-463f-a408-cd16f7da7839",
+      "relationshipType": "CONTAINS",
+      "relatedSpdxElement": "SPDXRef-package-1221a51f-88b9-4c6b-b906-c65aafb5702b"
+    },
+    {
+      "spdxElementId": "SPDXRef-package-ef7191ea-c2c0-463f-a408-cd16f7da7839",
+      "relationshipType": "CONTAINS",
+      "relatedSpdxElement": "SPDXRef-package-1243f7d9-ba0d-4c93-8355-aa7a3beabc40"
+    },
+    {
+      "spdxElementId": "SPDXRef-package-ef7191ea-c2c0-463f-a408-cd16f7da7839",
+      "relationshipType": "CONTAINS",
+      "relatedSpdxElement": "SPDXRef-package-14f5f99f-4db5-4f8f-8ebe-acf17b2d1a70"
+    },
+    {
+      "spdxElementId": "SPDXRef-package-ef7191ea-c2c0-463f-a408-cd16f7da7839",
+      "relationshipType": "CONTAINS",
+      "relatedSpdxElement": "SPDXRef-package-190fde4c-fa29-4443-b730-123ff28db74e"
+    },
+    {
+      "spdxElementId": "SPDXRef-package-ef7191ea-c2c0-463f-a408-cd16f7da7839",
+      "relationshipType": "CONTAINS",
+      "relatedSpdxElement": "SPDXRef-package-19eeac78-239d-42be-8199-569233b28876"
+    },
+    {
+      "spdxElementId": "SPDXRef-package-ef7191ea-c2c0-463f-a408-cd16f7da7839",
+      "relationshipType": "CONTAINS",
+      "relatedSpdxElement": "SPDXRef-package-1ce0bf9e-ac93-4d08-80a5-2118e76bbc5a"
+    },
+    {
+      "spdxElementId": "SPDXRef-package-ef7191ea-c2c0-463f-a408-cd16f7da7839",
+      "relationshipType": "CONTAINS",
+      "relatedSpdxElement": "SPDXRef-package-21ff4921-8ba7-44df-969b-8a5a76049276"
+    },
+    {
+      "spdxElementId": "SPDXRef-package-ef7191ea-c2c0-463f-a408-cd16f7da7839",
+      "relationshipType": "CONTAINS",
+      "relatedSpdxElement": "SPDXRef-package-2356a22f-7f26-461f-866a-a33d6734740d"
+    },
+    {
+      "spdxElementId": "SPDXRef-package-ef7191ea-c2c0-463f-a408-cd16f7da7839",
+      "relationshipType": "CONTAINS",
+      "relatedSpdxElement": "SPDXRef-package-23e70da9-6c0b-4393-af73-9df495b23cc2"
+    },
+    {
+      "spdxElementId": "SPDXRef-package-ef7191ea-c2c0-463f-a408-cd16f7da7839",
+      "relationshipType": "CONTAINS",
+      "relatedSpdxElement": "SPDXRef-package-25581244-bf3a-4ac3-adef-22adb5fc2487"
+    },
+    {
+      "spdxElementId": "SPDXRef-package-ef7191ea-c2c0-463f-a408-cd16f7da7839",
+      "relationshipType": "CONTAINS",
+      "relatedSpdxElement": "SPDXRef-package-26942a87-0f12-48ce-9ce7-f2d68fcfc605"
+    },
+    {
+      "spdxElementId": "SPDXRef-package-ef7191ea-c2c0-463f-a408-cd16f7da7839",
+      "relationshipType": "CONTAINS",
+      "relatedSpdxElement": "SPDXRef-package-28c20b1f-e4e7-49e5-848c-1b32b7f7574d"
+    },
+    {
+      "spdxElementId": "SPDXRef-package-ef7191ea-c2c0-463f-a408-cd16f7da7839",
+      "relationshipType": "CONTAINS",
+      "relatedSpdxElement": "SPDXRef-package-2a09e258-f32e-4c26-b5e5-cce3549991aa"
+    },
+    {
+      "spdxElementId": "SPDXRef-package-ef7191ea-c2c0-463f-a408-cd16f7da7839",
+      "relationshipType": "CONTAINS",
+      "relatedSpdxElement": "SPDXRef-package-2a1fdd31-6386-4cc5-b13b-7a1874119c32"
+    },
+    {
+      "spdxElementId": "SPDXRef-package-ef7191ea-c2c0-463f-a408-cd16f7da7839",
+      "relationshipType": "CONTAINS",
+      "relatedSpdxElement": "SPDXRef-package-2adcd204-6915-451a-973a-a7cbf3e95b06"
+    },
+    {
+      "spdxElementId": "SPDXRef-package-ef7191ea-c2c0-463f-a408-cd16f7da7839",
+      "relationshipType": "CONTAINS",
+      "relatedSpdxElement": "SPDXRef-package-2f9cbe7a-d764-4cc1-98c9-8c90311e8e84"
+    },
+    {
+      "spdxElementId": "SPDXRef-package-ef7191ea-c2c0-463f-a408-cd16f7da7839",
+      "relationshipType": "CONTAINS",
+      "relatedSpdxElement": "SPDXRef-package-31058d81-d948-4d00-95c8-c1b70dbb3f35"
+    },
+    {
+      "spdxElementId": "SPDXRef-package-ef7191ea-c2c0-463f-a408-cd16f7da7839",
+      "relationshipType": "CONTAINS",
+      "relatedSpdxElement": "SPDXRef-package-32f542d4-d2b4-40e6-8848-6143fa35a8bb"
+    },
+    {
+      "spdxElementId": "SPDXRef-package-ef7191ea-c2c0-463f-a408-cd16f7da7839",
+      "relationshipType": "CONTAINS",
+      "relatedSpdxElement": "SPDXRef-package-34a75777-226e-45dc-a015-90c0f4b8752f"
+    },
+    {
+      "spdxElementId": "SPDXRef-package-ef7191ea-c2c0-463f-a408-cd16f7da7839",
+      "relationshipType": "CONTAINS",
+      "relatedSpdxElement": "SPDXRef-package-357b3a81-30a2-442b-ad99-950fd730927f"
+    },
+    {
+      "spdxElementId": "SPDXRef-package-ef7191ea-c2c0-463f-a408-cd16f7da7839",
+      "relationshipType": "CONTAINS",
+      "relatedSpdxElement": "SPDXRef-package-38ac9ef8-9922-4b01-aa52-8a4187dc86dc"
+    },
+    {
+      "spdxElementId": "SPDXRef-package-ef7191ea-c2c0-463f-a408-cd16f7da7839",
+      "relationshipType": "CONTAINS",
+      "relatedSpdxElement": "SPDXRef-package-3d9b9e0b-c692-4e15-a5fe-b07773a8cb65"
+    },
+    {
+      "spdxElementId": "SPDXRef-package-ef7191ea-c2c0-463f-a408-cd16f7da7839",
+      "relationshipType": "CONTAINS",
+      "relatedSpdxElement": "SPDXRef-package-4982c240-fe5d-4bc4-a2d1-d328c8042785"
+    },
+    {
+      "spdxElementId": "SPDXRef-package-ef7191ea-c2c0-463f-a408-cd16f7da7839",
+      "relationshipType": "CONTAINS",
+      "relatedSpdxElement": "SPDXRef-package-49a273da-6846-4036-a8d0-71172b761922"
+    },
+    {
+      "spdxElementId": "SPDXRef-package-ef7191ea-c2c0-463f-a408-cd16f7da7839",
+      "relationshipType": "CONTAINS",
+      "relatedSpdxElement": "SPDXRef-package-49a863eb-b2e9-47c0-ad57-982a0428accc"
+    },
+    {
+      "spdxElementId": "SPDXRef-package-ef7191ea-c2c0-463f-a408-cd16f7da7839",
+      "relationshipType": "CONTAINS",
+      "relatedSpdxElement": "SPDXRef-package-4b38a5c7-f2f4-4043-9d97-535ee149d4ac"
+    },
+    {
+      "spdxElementId": "SPDXRef-package-ef7191ea-c2c0-463f-a408-cd16f7da7839",
+      "relationshipType": "CONTAINS",
+      "relatedSpdxElement": "SPDXRef-package-4dccd4c4-e956-4c97-b335-73be022d74c9"
+    },
+    {
+      "spdxElementId": "SPDXRef-package-ef7191ea-c2c0-463f-a408-cd16f7da7839",
+      "relationshipType": "CONTAINS",
+      "relatedSpdxElement": "SPDXRef-package-4ea3cd92-7200-4867-bb7c-39946ca212db"
+    },
+    {
+      "spdxElementId": "SPDXRef-package-ef7191ea-c2c0-463f-a408-cd16f7da7839",
+      "relationshipType": "CONTAINS",
+      "relatedSpdxElement": "SPDXRef-package-4f34f730-c125-419d-a45d-bbf23f1869a1"
+    },
+    {
+      "spdxElementId": "SPDXRef-package-ef7191ea-c2c0-463f-a408-cd16f7da7839",
+      "relationshipType": "CONTAINS",
+      "relatedSpdxElement": "SPDXRef-package-52a10a45-d0a6-48db-a817-18d584263741"
+    },
+    {
+      "spdxElementId": "SPDXRef-package-ef7191ea-c2c0-463f-a408-cd16f7da7839",
+      "relationshipType": "CONTAINS",
+      "relatedSpdxElement": "SPDXRef-package-57bb4888-5493-4b45-a600-e504492c91e6"
+    },
+    {
+      "spdxElementId": "SPDXRef-package-ef7191ea-c2c0-463f-a408-cd16f7da7839",
+      "relationshipType": "CONTAINS",
+      "relatedSpdxElement": "SPDXRef-package-5851742b-c1ef-40ef-a8f2-91c0c33f8ebc"
+    },
+    {
+      "spdxElementId": "SPDXRef-package-ef7191ea-c2c0-463f-a408-cd16f7da7839",
+      "relationshipType": "CONTAINS",
+      "relatedSpdxElement": "SPDXRef-package-58b4ec68-d27c-4d36-8177-351bbe560b15"
+    },
+    {
+      "spdxElementId": "SPDXRef-package-ef7191ea-c2c0-463f-a408-cd16f7da7839",
+      "relationshipType": "CONTAINS",
+      "relatedSpdxElement": "SPDXRef-package-5bc7c044-ad49-4404-b822-399a7cf2cc86"
+    },
+    {
+      "spdxElementId": "SPDXRef-package-ef7191ea-c2c0-463f-a408-cd16f7da7839",
+      "relationshipType": "CONTAINS",
+      "relatedSpdxElement": "SPDXRef-package-5cccb27b-942f-405b-b6ed-aa49491439d1"
+    },
+    {
+      "spdxElementId": "SPDXRef-package-ef7191ea-c2c0-463f-a408-cd16f7da7839",
+      "relationshipType": "CONTAINS",
+      "relatedSpdxElement": "SPDXRef-package-5db42f2f-6f7a-4379-a8d0-6b6278ce0cfd"
+    },
+    {
+      "spdxElementId": "SPDXRef-package-ef7191ea-c2c0-463f-a408-cd16f7da7839",
+      "relationshipType": "CONTAINS",
+      "relatedSpdxElement": "SPDXRef-package-5edafea7-47a0-454a-b49b-b49f1db28053"
+    },
+    {
+      "spdxElementId": "SPDXRef-package-ef7191ea-c2c0-463f-a408-cd16f7da7839",
+      "relationshipType": "CONTAINS",
+      "relatedSpdxElement": "SPDXRef-package-64070398-cf5f-410d-8483-da858dbee5fa"
+    },
+    {
+      "spdxElementId": "SPDXRef-package-ef7191ea-c2c0-463f-a408-cd16f7da7839",
+      "relationshipType": "CONTAINS",
+      "relatedSpdxElement": "SPDXRef-package-6be0492d-2606-4433-b9f4-6a8712baabf2"
+    },
+    {
+      "spdxElementId": "SPDXRef-package-ef7191ea-c2c0-463f-a408-cd16f7da7839",
+      "relationshipType": "CONTAINS",
+      "relatedSpdxElement": "SPDXRef-package-6c074349-aa33-494c-be64-06ab9660fe0a"
+    },
+    {
+      "spdxElementId": "SPDXRef-package-ef7191ea-c2c0-463f-a408-cd16f7da7839",
+      "relationshipType": "CONTAINS",
+      "relatedSpdxElement": "SPDXRef-package-6cae6a38-576b-4cf0-8fc1-ac6b176dfbf9"
+    },
+    {
+      "spdxElementId": "SPDXRef-package-ef7191ea-c2c0-463f-a408-cd16f7da7839",
+      "relationshipType": "CONTAINS",
+      "relatedSpdxElement": "SPDXRef-package-6de4d3e6-0751-46e3-81e7-225d3585e503"
+    },
+    {
+      "spdxElementId": "SPDXRef-package-ef7191ea-c2c0-463f-a408-cd16f7da7839",
+      "relationshipType": "CONTAINS",
+      "relatedSpdxElement": "SPDXRef-package-6e13a78f-281e-4635-9564-49292ef2237c"
+    },
+    {
+      "spdxElementId": "SPDXRef-package-ef7191ea-c2c0-463f-a408-cd16f7da7839",
+      "relationshipType": "CONTAINS",
+      "relatedSpdxElement": "SPDXRef-package-77e47822-9076-4287-90b5-d63d71f8d613"
+    },
+    {
+      "spdxElementId": "SPDXRef-package-ef7191ea-c2c0-463f-a408-cd16f7da7839",
+      "relationshipType": "CONTAINS",
+      "relatedSpdxElement": "SPDXRef-package-78f7ff95-9cd7-400c-b0b8-dc641a8ccf12"
+    },
+    {
+      "spdxElementId": "SPDXRef-package-ef7191ea-c2c0-463f-a408-cd16f7da7839",
+      "relationshipType": "CONTAINS",
+      "relatedSpdxElement": "SPDXRef-package-7ae88af8-3d87-40b6-b70c-b976fbceda74"
+    },
+    {
+      "spdxElementId": "SPDXRef-package-ef7191ea-c2c0-463f-a408-cd16f7da7839",
+      "relationshipType": "CONTAINS",
+      "relatedSpdxElement": "SPDXRef-package-829a883c-66a5-40ab-98e0-c4a5e75c47e0"
+    },
+    {
+      "spdxElementId": "SPDXRef-package-ef7191ea-c2c0-463f-a408-cd16f7da7839",
+      "relationshipType": "CONTAINS",
+      "relatedSpdxElement": "SPDXRef-package-8395352e-b9e3-47b3-a32b-909bb38d59d2"
+    },
+    {
+      "spdxElementId": "SPDXRef-package-ef7191ea-c2c0-463f-a408-cd16f7da7839",
+      "relationshipType": "CONTAINS",
+      "relatedSpdxElement": "SPDXRef-package-8691948a-d10e-4cea-8ede-43f1ebfe3c00"
+    },
+    {
+      "spdxElementId": "SPDXRef-package-ef7191ea-c2c0-463f-a408-cd16f7da7839",
+      "relationshipType": "CONTAINS",
+      "relatedSpdxElement": "SPDXRef-package-907a4d3b-880e-4ccc-9800-5260b32894f1"
+    },
+    {
+      "spdxElementId": "SPDXRef-package-ef7191ea-c2c0-463f-a408-cd16f7da7839",
+      "relationshipType": "CONTAINS",
+      "relatedSpdxElement": "SPDXRef-package-909ae8f5-f6f5-43a5-983e-09fc81a2e543"
+    },
+    {
+      "spdxElementId": "SPDXRef-package-ef7191ea-c2c0-463f-a408-cd16f7da7839",
+      "relationshipType": "CONTAINS",
+      "relatedSpdxElement": "SPDXRef-package-940679ef-a269-4411-870d-3214fd61017b"
+    },
+    {
+      "spdxElementId": "SPDXRef-package-ef7191ea-c2c0-463f-a408-cd16f7da7839",
+      "relationshipType": "CONTAINS",
+      "relatedSpdxElement": "SPDXRef-package-96fc2ceb-8716-48c0-83be-b84a9a636a33"
+    },
+    {
+      "spdxElementId": "SPDXRef-package-ef7191ea-c2c0-463f-a408-cd16f7da7839",
+      "relationshipType": "CONTAINS",
+      "relatedSpdxElement": "SPDXRef-package-9ac9c589-ce99-4d6d-9614-8ec7ecb63257"
+    },
+    {
+      "spdxElementId": "SPDXRef-package-ef7191ea-c2c0-463f-a408-cd16f7da7839",
+      "relationshipType": "CONTAINS",
+      "relatedSpdxElement": "SPDXRef-package-9dea4a36-6749-4ee8-9239-6f9e6b85c2e8"
+    },
+    {
+      "spdxElementId": "SPDXRef-package-ef7191ea-c2c0-463f-a408-cd16f7da7839",
+      "relationshipType": "CONTAINS",
+      "relatedSpdxElement": "SPDXRef-package-9ee8ae52-74e5-46d2-b1fe-bb09f30dedf6"
+    },
+    {
+      "spdxElementId": "SPDXRef-package-ef7191ea-c2c0-463f-a408-cd16f7da7839",
+      "relationshipType": "CONTAINS",
+      "relatedSpdxElement": "SPDXRef-package-a44de3ef-9505-47f0-ae47-c989a5c4731c"
+    },
+    {
+      "spdxElementId": "SPDXRef-package-ef7191ea-c2c0-463f-a408-cd16f7da7839",
+      "relationshipType": "CONTAINS",
+      "relatedSpdxElement": "SPDXRef-package-a8aba032-2e67-420c-8bf1-861a527ca1e2"
+    },
+    {
+      "spdxElementId": "SPDXRef-package-ef7191ea-c2c0-463f-a408-cd16f7da7839",
+      "relationshipType": "CONTAINS",
+      "relatedSpdxElement": "SPDXRef-package-aa3909f6-ff55-4a62-94b4-cb7a6156c02c"
+    },
+    {
+      "spdxElementId": "SPDXRef-package-ef7191ea-c2c0-463f-a408-cd16f7da7839",
+      "relationshipType": "CONTAINS",
+      "relatedSpdxElement": "SPDXRef-package-accb15e7-46c3-4247-93e9-97cb30f78dee"
+    },
+    {
+      "spdxElementId": "SPDXRef-package-ef7191ea-c2c0-463f-a408-cd16f7da7839",
+      "relationshipType": "CONTAINS",
+      "relatedSpdxElement": "SPDXRef-package-af422e80-e18f-44a6-894b-79fafdb53804"
+    },
+    {
+      "spdxElementId": "SPDXRef-package-ef7191ea-c2c0-463f-a408-cd16f7da7839",
+      "relationshipType": "CONTAINS",
+      "relatedSpdxElement": "SPDXRef-package-bd5217ec-9d18-4d32-9977-242743722764"
+    },
+    {
+      "spdxElementId": "SPDXRef-package-ef7191ea-c2c0-463f-a408-cd16f7da7839",
+      "relationshipType": "CONTAINS",
+      "relatedSpdxElement": "SPDXRef-package-c8be0e71-ddf3-4af1-b922-57a67e75283c"
+    },
+    {
+      "spdxElementId": "SPDXRef-package-ef7191ea-c2c0-463f-a408-cd16f7da7839",
+      "relationshipType": "CONTAINS",
+      "relatedSpdxElement": "SPDXRef-package-cd744a28-37bb-4f96-9ce6-27e18a16cf55"
+    },
+    {
+      "spdxElementId": "SPDXRef-package-ef7191ea-c2c0-463f-a408-cd16f7da7839",
+      "relationshipType": "CONTAINS",
+      "relatedSpdxElement": "SPDXRef-package-ce1345db-2516-4f24-b019-7a76e7fc4f8a"
+    },
+    {
+      "spdxElementId": "SPDXRef-package-ef7191ea-c2c0-463f-a408-cd16f7da7839",
+      "relationshipType": "CONTAINS",
+      "relatedSpdxElement": "SPDXRef-package-d2ad1ecb-5dee-4c1f-8ce3-b6f8ae6e28da"
+    },
+    {
+      "spdxElementId": "SPDXRef-package-ef7191ea-c2c0-463f-a408-cd16f7da7839",
+      "relationshipType": "CONTAINS",
+      "relatedSpdxElement": "SPDXRef-package-d3ff80c2-e4cc-473e-8cc0-0494fe5d12b3"
+    },
+    {
+      "spdxElementId": "SPDXRef-package-ef7191ea-c2c0-463f-a408-cd16f7da7839",
+      "relationshipType": "CONTAINS",
+      "relatedSpdxElement": "SPDXRef-package-d49e1a7b-53d1-4273-ac4e-0470131497df"
+    },
+    {
+      "spdxElementId": "SPDXRef-package-ef7191ea-c2c0-463f-a408-cd16f7da7839",
+      "relationshipType": "CONTAINS",
+      "relatedSpdxElement": "SPDXRef-package-d9af129d-ae19-4b95-b15a-116689b5c000"
+    },
+    {
+      "spdxElementId": "SPDXRef-package-ef7191ea-c2c0-463f-a408-cd16f7da7839",
+      "relationshipType": "CONTAINS",
+      "relatedSpdxElement": "SPDXRef-package-dcafc4b9-0732-4ed2-afb1-36d21481fa64"
+    },
+    {
+      "spdxElementId": "SPDXRef-package-ef7191ea-c2c0-463f-a408-cd16f7da7839",
+      "relationshipType": "CONTAINS",
+      "relatedSpdxElement": "SPDXRef-package-dfa49660-71f7-4cb9-8003-41b7c6af5fa7"
+    },
+    {
+      "spdxElementId": "SPDXRef-package-ef7191ea-c2c0-463f-a408-cd16f7da7839",
+      "relationshipType": "CONTAINS",
+      "relatedSpdxElement": "SPDXRef-package-e2314e29-7089-4d09-8fcc-c30fa21d8167"
+    },
+    {
+      "spdxElementId": "SPDXRef-package-ef7191ea-c2c0-463f-a408-cd16f7da7839",
+      "relationshipType": "CONTAINS",
+      "relatedSpdxElement": "SPDXRef-package-e35fbea9-2bf8-4f5b-9083-ad7ce9426a34"
+    },
+    {
+      "spdxElementId": "SPDXRef-package-ef7191ea-c2c0-463f-a408-cd16f7da7839",
+      "relationshipType": "CONTAINS",
+      "relatedSpdxElement": "SPDXRef-package-e39234da-42c0-45f3-b1cb-3ae09986bd92"
+    },
+    {
+      "spdxElementId": "SPDXRef-package-ef7191ea-c2c0-463f-a408-cd16f7da7839",
+      "relationshipType": "CONTAINS",
+      "relatedSpdxElement": "SPDXRef-package-e46fddee-285a-4549-b75c-88e16a1e0ac8"
+    },
+    {
+      "spdxElementId": "SPDXRef-package-ef7191ea-c2c0-463f-a408-cd16f7da7839",
+      "relationshipType": "CONTAINS",
+      "relatedSpdxElement": "SPDXRef-package-e74d9bd0-a3b6-4f07-9df6-169129e95382"
+    },
+    {
+      "spdxElementId": "SPDXRef-package-ef7191ea-c2c0-463f-a408-cd16f7da7839",
+      "relationshipType": "CONTAINS",
+      "relatedSpdxElement": "SPDXRef-package-e77538c3-f71e-4361-9070-945b25755b4d"
+    },
+    {
+      "spdxElementId": "SPDXRef-package-ef7191ea-c2c0-463f-a408-cd16f7da7839",
+      "relationshipType": "CONTAINS",
+      "relatedSpdxElement": "SPDXRef-package-eaf142e9-b0fc-4472-9d2a-6c818ef83ecb"
+    },
+    {
+      "spdxElementId": "SPDXRef-package-ef7191ea-c2c0-463f-a408-cd16f7da7839",
+      "relationshipType": "CONTAINS",
+      "relatedSpdxElement": "SPDXRef-package-ebabe755-369a-40f2-813e-b790db975141"
+    },
+    {
+      "spdxElementId": "SPDXRef-package-ef7191ea-c2c0-463f-a408-cd16f7da7839",
+      "relationshipType": "CONTAINS",
+      "relatedSpdxElement": "SPDXRef-package-ed2f0a66-26d3-4694-9e60-ea6d99a148ba"
+    },
+    {
+      "spdxElementId": "SPDXRef-DOCUMENT",
+      "relationshipType": "DESCRIBES",
+      "relatedSpdxElement": "SPDXRef-package-ef7191ea-c2c0-463f-a408-cd16f7da7839"
+    },
+    {
+      "spdxElementId": "SPDXRef-package-ef7191ea-c2c0-463f-a408-cd16f7da7839",
+      "relationshipType": "CONTAINS",
+      "relatedSpdxElement": "SPDXRef-package-f2502613-6fe3-43f6-974f-86164f150b17"
+    },
+    {
+      "spdxElementId": "SPDXRef-package-ef7191ea-c2c0-463f-a408-cd16f7da7839",
+      "relationshipType": "CONTAINS",
+      "relatedSpdxElement": "SPDXRef-package-f33a501c-1daa-4964-8ab4-b5ff614d7d17"
+    },
+    {
+      "spdxElementId": "SPDXRef-package-ef7191ea-c2c0-463f-a408-cd16f7da7839",
+      "relationshipType": "CONTAINS",
+      "relatedSpdxElement": "SPDXRef-package-f33eea61-c8c7-40ca-ba20-7863c769b1d8"
+    },
+    {
+      "spdxElementId": "SPDXRef-package-ef7191ea-c2c0-463f-a408-cd16f7da7839",
+      "relationshipType": "CONTAINS",
+      "relatedSpdxElement": "SPDXRef-package-f4608531-a0e0-4970-be77-ae62842ad3ab"
+    },
+    {
+      "spdxElementId": "SPDXRef-package-ef7191ea-c2c0-463f-a408-cd16f7da7839",
+      "relationshipType": "CONTAINS",
+      "relatedSpdxElement": "SPDXRef-package-f57e32c1-1aca-471d-8c1e-9e97f213caf4"
+    }
+  ]
+}
