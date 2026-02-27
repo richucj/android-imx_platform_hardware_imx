@@ -2,13 +2,13 @@
   "SPDXID": "SPDXRef-DOCUMENT",
   "spdxVersion": "SPDX-2.3",
   "creationInfo": {
-    "created": "2025-11-18T05:20:36Z",
+    "created": "2026-01-26T06:43:33Z",
     "creators": [
       "Organization: NXP"
     ],
-    "licenseListVersion": "3.20"
+    "licenseListVersion": "3.26"
   },
-  "name": "android-imx_platform_hardware_imx-android-16.0.0_1.2.0",
+  "name": "android-imx_platform_hardware_imx-android-16.0.0_1.4.0",
   "dataLicense": "CC0-1.0",
   "documentNamespace": "https://nxp.com/spdx/367e54b1-87db-490c-94ca-20e4012cfbd6",
   "packages": [
@@ -166,7 +166,7 @@
     {
       "SPDXID": "SPDXRef-package-367e54b1-87db-490c-94ca-20e4012cfbd6",
       "name": "android-imx_platform_hardware_imx",
-      "versionInfo": "android-16.0.0_1.2.0",
+      "versionInfo": "android-16.0.0_1.4.0",
       "licenseConcluded": "(Apache-2.0)",
       "licenseDeclared": "(Apache-2.0)",
       "downloadLocation": "https://github.com/nxp-imx-android/android-imx_platform_hardware_imx",
