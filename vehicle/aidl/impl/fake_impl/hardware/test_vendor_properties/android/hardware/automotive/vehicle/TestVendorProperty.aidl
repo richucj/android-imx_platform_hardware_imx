@@ -123,6 +123,19 @@ enum TestVendorProperty {
     VENDOR_EXTENSION_BOOLEAN_PROPERTY = 0x0101 + 0x20000000 + 0x06000000 + 0x00200000,
 
     /**
+    * Cabin temperature in Celsius.
+    *
+    * 0x0200 | VehiclePropertyGroup::VENDOR | VehiclePropertyType::FLOAT | VehicleArea::GLOBAL
+    *
+    * Breakdown:
+    *   0x0200       = property index
+    *   0x20000000   = VehiclePropertyGroup::VENDOR
+    *   0x00600000   = VehiclePropertyType::FLOAT
+    *   0x01000000   = VehicleArea::GLOBAL
+    */
+    VENDOR_CABIN_TEMPERATURE = 0x0200 + 0x20000000 + 0x00600000 + 0x01000000,
+
+    /**
      * Property used for {@code CarVendorPropertyCustomPermissionTest}.
      *
      * VehiclePropertyGroup.VENDOR | VehicleArea.SEAT | VehiclePropertyGroup.FLOAT

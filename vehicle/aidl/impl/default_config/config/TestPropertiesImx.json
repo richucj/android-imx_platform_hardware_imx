@@ -67,6 +67,16 @@
             "changeMode": "VehiclePropertyChangeMode::ON_CHANGE"
         },
         {
+            "property": "TestVendorProperty::VENDOR_CABIN_TEMPERATURE",
+            "defaultValue": {
+                "floatValues": [24.5]
+            },
+            "access": "VehiclePropertyAccess::READ",
+            "changeMode": "VehiclePropertyChangeMode::CONTINUOUS",
+            "minSampleRate": 1,
+            "maxSampleRate": 5
+        },
+        {
             "property": "TestVendorProperty::VENDOR_EXTENSION_FLOAT_PROPERTY",
             "areas": [
                 {
