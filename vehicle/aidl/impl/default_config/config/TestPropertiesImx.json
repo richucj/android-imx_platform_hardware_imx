@@ -77,6 +77,16 @@
             "maxSampleRate": 5
         },
         {
+            "property": "TestVendorProperty::VENDOR_CABIN_FAN_SPEED",
+            "defaultValue": {
+                "floatValues": [24.5]
+            },
+            "access": "VehiclePropertyAccess::READ_WRITE",
+            "changeMode": "VehiclePropertyChangeMode::CONTINUOUS",
+            "minSampleRate": 1,
+            "maxSampleRate": 5
+        },
+        {
             "property": "TestVendorProperty::VENDOR_EXTENSION_FLOAT_PROPERTY",
             "areas": [
                 {

@@ -136,6 +136,10 @@ enum TestVendorProperty {
     VENDOR_CABIN_TEMPERATURE = 0x0200 + 0x20000000 + 0x00600000 + 0x01000000,
 
     /**
+    * 0x0201 | VehiclePropertyGroup::VENDOR | VehiclePropertyType::FLOAT | VehicleArea::GLOBAL
+    */
+    VENDOR_CABIN_FAN_SPEED = 0x0201 + 0x20000000 + 0x00600000 + 0x01000000,
+    /**
      * Property used for {@code CarVendorPropertyCustomPermissionTest}.
      *
      * VehiclePropertyGroup.VENDOR | VehicleArea.SEAT | VehiclePropertyGroup.FLOAT
